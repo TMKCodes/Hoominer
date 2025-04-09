@@ -1,0 +1,3 @@
+[submodule "algorithms/hoohash"]
+	path = algorithms/hoohash
+	url = git@github.com:Hoosat-Oy/hoohash.git
