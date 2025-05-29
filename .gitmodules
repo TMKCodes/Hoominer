@@ -1,3 +1,6 @@
 [submodule "algorithms/hoohash"]
 	path = algorithms/hoohash
 	url = git@github.com:Hoosat-Oy/hoohash.git
+[submodule "algorithms/blake3"]
+	path = algorithms/blake3
+	url = https://github.com/BLAKE3-team/BLAKE3.git
