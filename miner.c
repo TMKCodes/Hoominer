@@ -398,7 +398,18 @@ void *mining_thread(void *arg)
   {
     pthread_mutex_lock(&job_mutex);
     int is_running = job.running;
-    char *job_id = job.job_id ? strdup(job.job_id) : NULL;
+    char *job_id = NULL;
+    if (job.job_id)
+    {
+      job_id = malloc(strlen(job.job_id) + 1);
+      if (!job_id)
+      {
+        fprintf(stderr, "Memory allocation failed\n");
+        pthread_mutex_unlock(&job_mutex);
+        exit(1);
+      }
+      strcpy(job_id, job.job_id);
+    }
     if (job_id && is_running)
     {
       memcpy(state.PrevHeader, job.header, DOMAIN_HASH_SIZE);
@@ -647,18 +658,30 @@ void process_stratum_message(int sockfd, json_object *message)
 
       pthread_mutex_lock(&job_mutex);
       free(job.job_id);
-      job.job_id = strdup(json_object_get_string(job_id));
-      if (job.job_id)
+
+      const char *jid = json_object_get_string(job_id);
+      if (jid)
       {
-        memcpy(job.header, header, DOMAIN_HASH_SIZE);
-        job.timestamp = timestamp_int;
-        job.running = 1;
-        // print_hex("Stored Job Header", job.header, DOMAIN_HASH_SIZE);
+        job.job_id = malloc(strlen(jid) + 1);
+        if (job.job_id)
+        {
+          strcpy(job.job_id, jid);
+          memcpy(job.header, header, DOMAIN_HASH_SIZE);
+          job.timestamp = timestamp_int;
+          job.running = 1;
+          // print_hex("Stored Job Header", job.header, DOMAIN_HASH_SIZE);
+        }
+        else
+        {
+          printf("Failed to allocate memory for job ID\n");
+        }
       }
       else
       {
-        printf("Failed to allocate memory for job ID\n");
+        job.job_id = NULL;
+        printf("Job ID string is NULL\n");
       }
+
       pthread_mutex_unlock(&job_mutex);
     }
   }
@@ -849,15 +872,15 @@ int connect_to_stratum_server(const char *hostname, int port)
   return sockfd;
 }
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
 void parse_args(int argc, char **argv, char **pool_ip, int *pool_port, const char **username, const char **password, int *threads)
 {
   for (int i = 1; i < argc; i++)
   {
-    if (!strcmp(argv[i], "--ip") && i + 1 < argc)
-      *pool_ip = strdup(argv[++i]);
-    else if (!strcmp(argv[i], "--port") && i + 1 < argc)
-      *pool_port = atoi(argv[++i]);
-    else if (!strcmp(argv[i], "--user") && i + 1 < argc)
+    if (!strcmp(argv[i], "--user") && i + 1 < argc)
       *username = argv[++i];
     else if (!strcmp(argv[i], "--pass") && i + 1 < argc)
       *password = argv[++i];
@@ -871,7 +894,16 @@ void parse_args(int argc, char **argv, char **pool_ip, int *pool_port, const cha
         fprintf(stderr, "Invalid stratum URL format\n");
         exit(1);
       }
-      char *url = strdup(stratum_url + 14);
+
+      const char *url_part = stratum_url + 14;
+      char *url = malloc(strlen(url_part) + 1);
+      if (!url)
+      {
+        fprintf(stderr, "Memory allocation failed\n");
+        exit(1);
+      }
+      strcpy(url, url_part);
+
       char *colon = strchr(url, ':');
       if (!colon)
       {
@@ -880,13 +912,22 @@ void parse_args(int argc, char **argv, char **pool_ip, int *pool_port, const cha
         exit(1);
       }
       *colon = '\0';
-      *pool_ip = strdup(url);
+
+      *pool_ip = malloc(strlen(url) + 1);
+      if (!*pool_ip)
+      {
+        free(url);
+        fprintf(stderr, "Memory allocation failed\n");
+        exit(1);
+      }
+      strcpy(*pool_ip, url);
+
       *pool_port = atoi(colon + 1);
       free(url);
     }
     else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h"))
     {
-      printf("Usage: %s [--ip <ip>] [--port <port>] [--stratum <stratum+tcp://domain:port>] [--user <user>] [--pass <pass>] [--cpu-threads <n>]\n", argv[0]);
+      printf("Usage: %s [--stratum <stratum+tcp://domain:port>] [--user <user>] [--pass <pass>] [--cpu-threads <n>]\n", argv[0]);
       exit(0);
     }
   }
@@ -919,12 +960,21 @@ int main(int argc, char **argv)
 
   parse_args(argc, argv, &pool_ip, &pool_port, &username, &password, &num_threads);
   if (!pool_ip)
-    pool_ip = strdup("127.0.0.1");
+  {
+    printf("--stratum required, could not parse ip of the pool from the stratum address.\n");
+    return 1;
+  }
+
+  if (!username)
+  {
+    printf("--username required.\n");
+    return 1;
+  }
 
   StratumContext *ctx = malloc(sizeof(StratumContext));
   if (!ctx)
   {
-    printf("main: Failed to allocate StratumContext\n");
+    printf("Failed to allocate StratumContext\n");
     free(pool_ip);
     return 1;
   }
@@ -939,7 +989,7 @@ int main(int argc, char **argv)
 
   if (stratum_subscribe(ctx->sockfd) < 0 || stratum_authenticate(ctx->sockfd, username, password) < 0)
   {
-    printf("main: Stratum initialization failed\n");
+    printf("Stratum initialization failed\n");
     close(ctx->sockfd);
     free(pool_ip);
     free(ctx);
@@ -950,7 +1000,7 @@ int main(int argc, char **argv)
   if (pthread_create(&display_thread, NULL, hashrate_display_thread, NULL) != 0 ||
       pthread_create(&recv_thread, NULL, stratum_receive_thread, ctx) != 0)
   {
-    printf("main: Failed to create threads\n");
+    printf("Failed to create threads\n");
     pthread_cancel(display_thread);
     pthread_join(display_thread, NULL);
     pthread_cancel(recv_thread);
@@ -963,7 +1013,7 @@ int main(int argc, char **argv)
 
   if (start_mining_threads(ctx) != 0)
   {
-    printf("main: Failed to start mining threads\n");
+    printf("Failed to start mining threads\n");
     pthread_cancel(recv_thread);
     pthread_cancel(display_thread);
     pthread_join(recv_thread, NULL);
