@@ -15,7 +15,6 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
-
 #include "algorithms/hoohash/hoohash.h"
 #include <endian.h>
 

@@ -1,23 +1,23 @@
 # Define the compiler and flags
 CC = gcc
 CFLAGS = -fPIC -g -Wall -Wextra -DTEST
-LDFLAGS = -shared
+LDFLAGS =
 
 # Build and output directories
 BUILD_DIR = build
 
-# Output library name (local, can be deprecated)
-TARGET_LIB = $(BUILD_DIR)/lib-hoohash.so
+# Output static library
+TARGET_LIB = $(BUILD_DIR)/lib-hoohash.a
 
 # Miner target
-MINER_SRC = miner.c
-MINER_OBJ = $(BUILD_DIR)/miner.o
-MINER_BIN = $(BUILD_DIR)/miner
+MINER_SRC = hoominer.c
+MINER_OBJ = $(BUILD_DIR)/hoominer.o
+MINER_BIN = $(BUILD_DIR)/hoominer
 
 # Default rule
 all: hoohash $(MINER_BIN)
 
-# Call into subdirectory to build hoohash
+# Call into subdirectory to build hoohash static lib
 .PHONY: hoohash hoohash-clean
 hoohash:
 	$(MAKE) -C algorithms/hoohash
@@ -31,14 +31,15 @@ $(BUILD_DIR):
 
 # Compile miner.c to object file
 $(MINER_OBJ): $(MINER_SRC) | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -Ialgorithms/blake3/c -c $< -o $@
 
-# Link the miner binary
-$(MINER_BIN): $(MINER_OBJ)
+# Link the miner binary against static lib-hoohash.a and blake3.a
+$(MINER_BIN): $(MINER_OBJ) | $(BUILD_DIR)
 	$(CC) -o $@ $(MINER_OBJ) \
-		algorithms/hoohash/build/hoohash.o \
-		algorithms/hoohash/build/bigint.o \
-		-lm -lblake3 -lgmp -ljson-c
+		algorithms/hoohash/build/lib-hoohash.a \
+		algorithms/blake3/c/build/libblake3.a \
+		-lm -lgmp -ljson-c
+	chmod +x $@
 
 # Clean everything including hoohash
 clean: hoohash-clean
