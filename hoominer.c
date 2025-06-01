@@ -970,69 +970,78 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  StratumContext *ctx = malloc(sizeof(StratumContext));
-  if (!ctx)
-  {
-    printf("Failed to allocate StratumContext\n");
-    free(pool_ip);
-    return 1;
-  }
-  ctx->running = 1;
-  ctx->sockfd = connect_to_stratum_server(pool_ip, pool_port);
-  if (ctx->sockfd < 0)
-  {
-    free(pool_ip);
-    free(ctx);
-    return 1;
-  }
-
-  if (stratum_subscribe(ctx->sockfd) < 0 || stratum_authenticate(ctx->sockfd, username, password) < 0)
-  {
-    printf("Stratum initialization failed\n");
-    close(ctx->sockfd);
-    free(pool_ip);
-    free(ctx);
-    return 1;
-  }
-
-  pthread_t recv_thread, display_thread;
-  if (pthread_create(&display_thread, NULL, hashrate_display_thread, NULL) != 0 ||
-      pthread_create(&recv_thread, NULL, stratum_receive_thread, ctx) != 0)
-  {
-    printf("Failed to create threads\n");
-    pthread_cancel(display_thread);
-    pthread_join(display_thread, NULL);
-    pthread_cancel(recv_thread);
-    pthread_join(recv_thread, NULL);
-    close(ctx->sockfd);
-    free(pool_ip);
-    free(ctx);
-    return 1;
-  }
-
-  if (start_mining_threads(ctx) != 0)
-  {
-    printf("Failed to start mining threads\n");
-    pthread_cancel(recv_thread);
-    pthread_cancel(display_thread);
-    pthread_join(recv_thread, NULL);
-    pthread_join(display_thread, NULL);
-    close(ctx->sockfd);
-    free(pool_ip);
-    free(ctx);
-    return 1;
-  }
-
   while (program_running)
-    sleep(1);
+  {
+    StratumContext *ctx = malloc(sizeof(StratumContext));
+    if (!ctx)
+    {
+      printf("Failed to allocate StratumContext\n");
+      free(pool_ip);
+      return 1;
+    }
+    ctx->running = 1;
+    ctx->sockfd = connect_to_stratum_server(pool_ip, pool_port);
+    if (ctx->sockfd < 0)
+    {
+      printf("Failed to connect to stratum server. Retrying in 5 seconds...\n");
+      free(pool_ip);
+      free(ctx);
+      sleep(5);
+      continue;
+    }
 
-  pthread_cancel(recv_thread);
-  pthread_cancel(display_thread);
-  pthread_join(recv_thread, NULL);
-  pthread_join(display_thread, NULL);
-  close(ctx->sockfd);
+    if (stratum_subscribe(ctx->sockfd) < 0 || stratum_authenticate(ctx->sockfd, username, password) < 0)
+    {
+      printf("Stratum initialization failed. Retrying in 5 seconds...\n");
+      close(ctx->sockfd);
+      free(pool_ip);
+      free(ctx);
+      sleep(5);
+      continue;
+    }
+
+    pthread_t recv_thread, display_thread;
+    if (pthread_create(&display_thread, NULL, hashrate_display_thread, NULL) != 0 ||
+        pthread_create(&recv_thread, NULL, stratum_receive_thread, ctx) != 0)
+    {
+      printf("Failed to create threads. Retrying in 5 seconds...\n");
+      pthread_cancel(display_thread);
+      pthread_join(display_thread, NULL);
+      pthread_cancel(recv_thread);
+      pthread_join(recv_thread, NULL);
+      close(ctx->sockfd);
+      free(pool_ip);
+      free(ctx);
+      sleep(5);
+      continue;
+    }
+
+    if (start_mining_threads(ctx) != 0)
+    {
+      printf("Failed to start mining threads. Retrying in 5 seconds...\n");
+      pthread_cancel(recv_thread);
+      pthread_cancel(display_thread);
+      pthread_join(recv_thread, NULL);
+      pthread_join(display_thread, NULL);
+      close(ctx->sockfd);
+      free(pool_ip);
+      free(ctx);
+      sleep(5);
+      continue;
+    }
+
+    while (program_running && ctx->running)
+      sleep(1);
+
+    pthread_cancel(recv_thread);
+    pthread_cancel(display_thread);
+    pthread_join(recv_thread, NULL);
+    pthread_join(display_thread, NULL);
+    close(ctx->sockfd);
+    free(ctx);
+  }
+
   free(pool_ip);
-  free(ctx);
   cleanup(0);
   return 0;
 }
