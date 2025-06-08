@@ -17,6 +17,151 @@
 #include <netdb.h>
 #include "algorithms/hoohash/hoohash.h"
 #include <endian.h>
+#ifdef __CUDA__
+#include <cuda_runtime.h>
+typedef struct
+{
+  int device_id;
+  char name[256];
+} GPUDevice;
+
+GPUDevice *initialize_gpu_devices(int *device_count)
+{
+  cudaError_t err = cudaGetDeviceCount(device_count);
+
+  if (err != cudaSuccess)
+  {
+    fprintf(stderr, "CUDA initialization failed: %s\n", cudaGetErrorString(err));
+    exit(1);
+  }
+
+  if (*device_count == 0)
+  {
+    fprintf(stderr, "No CUDA-compatible devices found.\n");
+    exit(1);
+  }
+
+  printf("Found %d CUDA-compatible device(s).\n", *device_count);
+
+  GPUDevice *devices = malloc(*device_count * sizeof(GPUDevice));
+  if (!devices)
+  {
+    fprintf(stderr, "Memory allocation failed.\n");
+    exit(1);
+  }
+
+  for (int i = 0; i < *device_count; i++)
+  {
+    cudaDeviceProp device_prop;
+    cudaGetDeviceProperties(&device_prop, i);
+    devices[i].device_id = i;
+    strncpy(devices[i].name, device_prop.name, sizeof(devices[i].name) - 1);
+    devices[i].name[sizeof(devices[i].name) - 1] = '\0';
+    printf("Device %d: %s\n", i, devices[i].name);
+  }
+
+  return devices;
+}
+
+#elif __OPENCL_CL_H
+#include <CL/cl.h>
+typedef struct
+{
+  cl_device_id device_id;
+  char name[256];
+} GPUDevice;
+
+GPUDevice *initialize_gpu_devices(int *device_count)
+{
+  cl_platform_id platform_id = NULL;
+  cl_device_id *device_ids = NULL;
+  cl_uint num_platforms, num_devices;
+  cl_int err;
+
+  // Get the number of OpenCL platforms
+  err = clGetPlatformIDs(0, NULL, &num_platforms);
+  if (err != CL_SUCCESS || num_platforms == 0)
+  {
+    fprintf(stderr, "OpenCL initialization failed: No platforms found.\n");
+    exit(1);
+  }
+
+  printf("Found %u OpenCL platform(s).\n", num_platforms);
+
+  // Get the first platform
+  err = clGetPlatformIDs(1, &platform_id, NULL);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Failed to get OpenCL platform.\n");
+    exit(1);
+  }
+
+  // Get the number of devices for the platform
+  err = clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_GPU, 0, NULL, &num_devices);
+  if (err != CL_SUCCESS || num_devices == 0)
+  {
+    fprintf(stderr, "No OpenCL GPU devices found.\n");
+    exit(1);
+  }
+
+  printf("Found %u OpenCL GPU device(s).\n", num_devices);
+
+  device_ids = malloc(num_devices * sizeof(cl_device_id));
+  if (!device_ids)
+  {
+    fprintf(stderr, "Memory allocation failed.\n");
+    exit(1);
+  }
+
+  err = clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_GPU, num_devices, device_ids, NULL);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Failed to get OpenCL devices.\n");
+    free(device_ids);
+    exit(1);
+  }
+
+  GPUDevice *devices = malloc(num_devices * sizeof(GPUDevice));
+  if (!devices)
+  {
+    fprintf(stderr, "Memory allocation failed.\n");
+    free(device_ids);
+    exit(1);
+  }
+
+  for (cl_uint i = 0; i < num_devices; i++)
+  {
+    devices[i].device_id = device_ids[i];
+    err = clGetDeviceInfo(device_ids[i], CL_DEVICE_NAME, sizeof(devices[i].name), devices[i].name, NULL);
+    if (err != CL_SUCCESS)
+    {
+      fprintf(stderr, "Failed to get device name.\n");
+      free(device_ids);
+      free(devices);
+      exit(1);
+    }
+    printf("Device %u: %s\n", i, devices[i].name);
+  }
+
+  free(device_ids);
+  *device_count = num_devices;
+  return devices;
+}
+
+#else
+typedef struct
+{
+  int device_id;
+  char name[256];
+} GPUDevice;
+
+GPUDevice *initialize_gpu_devices(int *device_count)
+{
+  printf("No GPU support available. Falling back to CPU.\n");
+  *device_count = 0;
+  return NULL;
+}
+#endif
 
 #ifdef _WIN32
 #include <windows.h>
@@ -693,6 +838,9 @@ void process_stratum_message(int sockfd, json_object *message)
       {
         if (json_object_is_type(result, json_type_boolean) && json_object_get_boolean(result))
         {
+          pthread_mutex_lock(&job_mutex);
+          job.running = 0;
+          pthread_mutex_unlock(&job_mutex);
           cpu_accepted++;
         }
         else
@@ -956,6 +1104,18 @@ int main(int argc, char **argv)
   const char *username = "user";
   const char *password = "x";
   num_threads = get_cpu_threads() * 2;
+
+  int device_count = 0;
+  GPUDevice *devices = initialize_gpu_devices(&device_count);
+
+  if (devices)
+  {
+    for (int i = 0; i < device_count; i++)
+    {
+      printf("Device %d: %s\n", devices[i].device_id, devices[i].name);
+    }
+    free(devices);
+  }
 
   parse_args(argc, argv, &pool_ip, &pool_port, &username, &password, &num_threads);
   if (!pool_ip)
