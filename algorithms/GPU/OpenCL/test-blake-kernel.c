@@ -1,4 +1,5 @@
 #include <CL/cl.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -133,14 +134,18 @@ int main(int argc, char **argv)
     return 1;
   }
 
-  for (int i = 0; i < 1000; i++)
+  clock_t start, end;
+  double cpu_time_used;
+  start = clock();
+
+  for (int i = 0; i < 100000; i++)
   {
     // Prepare test data
-    char input_str[64];                                                     // Adjust size as needed
-    snprintf(input_str, sizeof(input_str), "Hello, Hoosat Network! %d", i); // Append loop variable
+    char input_str[64];
+    snprintf(input_str, sizeof(input_str), "Hello, Hoosat Network! %d", i);
 
     size_t input_len = strlen(input_str);
-    size_t out_len = 32; // Standard BLAKE3 output length
+    size_t out_len = 32;
 
     unsigned char *input = (unsigned char *)malloc(input_len);
     unsigned char *output = (unsigned char *)malloc(out_len);
@@ -149,7 +154,6 @@ int main(int argc, char **argv)
       printf("Error allocating memory for input/output\n");
       free(input);
       free(output);
-      free(binary);
       clReleaseKernel(kernel);
       clReleaseProgram(program);
       clReleaseCommandQueue(queue);
@@ -166,7 +170,6 @@ int main(int argc, char **argv)
       printf("Error creating input buffer: %d\n", err);
       free(input);
       free(output);
-      free(binary);
       clReleaseKernel(kernel);
       clReleaseProgram(program);
       clReleaseCommandQueue(queue);
@@ -182,7 +185,6 @@ int main(int argc, char **argv)
       clReleaseMemObject(input_buf);
       free(input);
       free(output);
-      free(binary);
       clReleaseKernel(kernel);
       clReleaseProgram(program);
       clReleaseCommandQueue(queue);
@@ -202,7 +204,6 @@ int main(int argc, char **argv)
       clReleaseMemObject(output_buf);
       free(input);
       free(output);
-      free(binary);
       clReleaseKernel(kernel);
       clReleaseProgram(program);
       clReleaseCommandQueue(queue);
@@ -211,7 +212,7 @@ int main(int argc, char **argv)
     }
 
     // Execute kernel
-    size_t global_size = 1; // Single work-item for single hash
+    size_t global_size = 1;
     err = clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &global_size, NULL, 0, NULL, NULL);
     if (err != CL_SUCCESS)
     {
@@ -220,7 +221,6 @@ int main(int argc, char **argv)
       clReleaseMemObject(output_buf);
       free(input);
       free(output);
-      free(binary);
       clReleaseKernel(kernel);
       clReleaseProgram(program);
       clReleaseCommandQueue(queue);
@@ -237,7 +237,6 @@ int main(int argc, char **argv)
       clReleaseMemObject(output_buf);
       free(input);
       free(output);
-      free(binary);
       clReleaseKernel(kernel);
       clReleaseProgram(program);
       clReleaseCommandQueue(queue);
@@ -255,12 +254,17 @@ int main(int argc, char **argv)
     clReleaseMemObject(output_buf);
     free(input);
     free(output);
-    free(binary);
-    clReleaseKernel(kernel);
-    clReleaseProgram(program);
-    clReleaseCommandQueue(queue);
-    clReleaseContext(context);
   }
+  end = clock();
+  cpu_time_used = ((double)(end - start)) / CLOCKS_PER_SEC;
+  printf("Execution time: %f seconds\n", cpu_time_used);
+
+  // Free binary after the loop
+  free(binary);
+  clReleaseKernel(kernel);
+  clReleaseProgram(program);
+  clReleaseCommandQueue(queue);
+  clReleaseContext(context);
 
   return 0;
 }
