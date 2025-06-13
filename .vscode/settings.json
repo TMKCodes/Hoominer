@@ -1,5 +1,7 @@
 {
   "files.associations": {
-    "cl.h": "c"
+    "cl.h": "c",
+    "string.h": "c",
+    "blake3_impl.h": "c"
   }
 }
