@@ -3,11 +3,11 @@ CC = gcc
 
 # Source files
 SRC1 = opencl-compiler.c
-SRC2 = test-blake-kernel.c
+SRC2 = test-kernel.c
 
 # Output binaries
 BIN1 = opencl-compiler
-BIN2 = test-blake-kernel
+BIN2 = test-kernel
 
 # Compiler flags
 CFLAGS = -Wall -O2
@@ -23,7 +23,7 @@ endif
 ifeq ($(OS),Windows_NT)
     LDFLAGS = -lOpenCL
     BIN1 := opencl-compiler.exe
-    BIN2 := test-blake-kernel.exe
+    BIN2 := test-kernel.exe
 endif
 
 # Default target builds both

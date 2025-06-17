@@ -1,3 +1,3 @@
 build/
 algorithms/GPU/OpenCL/opencl-compiler
-algorithms/GPU/OpenCL/test-blake-kernel
+algorithms/GPU/OpenCL/test-kernel
