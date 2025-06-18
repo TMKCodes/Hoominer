@@ -342,13 +342,18 @@ cleanup:
   return target_bytes;
 }
 
-int compare_target(uint8_t *hash, uint8_t *target, size_t len)
+int compare_target(uint8_t *hash, uint8_t *target)
 {
-  for (size_t i = 0; i < len; i++)
+  uint8_t reversed_hash[DOMAIN_HASH_SIZE];
+  for (int i = 0; i < DOMAIN_HASH_SIZE; i++)
   {
-    if (hash[i] > target[i])
+    reversed_hash[i] = hash[DOMAIN_HASH_SIZE - 1 - i];
+  }
+  for (size_t i = 0; i < DOMAIN_HASH_SIZE; i++)
+  {
+    if (reversed_hash[i] > target[i])
       return 1;
-    if (hash[i] < target[i])
+    if (reversed_hash[i] < target[i])
       return -1;
   }
   return 0;
@@ -424,7 +429,6 @@ int submit_mining_solution(int sockfd, const char *worker, const char *job_id, u
   char nonce_hex[20];
   snprintf(nonce_hex, sizeof(nonce_hex), "%016" PRIx64, nonce);
   json_object_array_add(params, json_object_new_string(nonce_hex));
-  reverse_uint8_array(hash, DOMAIN_HASH_SIZE);
   char *hash_hex = encodeHex(hash, DOMAIN_HASH_SIZE);
   json_object_array_add(params, json_object_new_string(hash_hex));
   json_object_object_add(req, "params", params);
@@ -603,10 +607,9 @@ void *mining_thread(void *arg)
       state.Nonce = nonce;
       uint8_t result[DOMAIN_HASH_SIZE];
       CalculateProofOfWorkValue(&state, result);
-      reverse_uint8_array(result, DOMAIN_HASH_SIZE);
 
       pthread_mutex_lock(&target_mutex);
-      int meets_target = compare_target(result, global_target, DOMAIN_HASH_SIZE) <= 0;
+      int meets_target = compare_target(result, global_target) <= 0;
       pthread_mutex_unlock(&target_mutex);
 
       if (meets_target)

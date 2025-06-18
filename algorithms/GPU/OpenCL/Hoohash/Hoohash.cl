@@ -1,4 +1,5 @@
 #pragma OPENCL EXTENSION cl_khr_fp64 : enable
+#pragma OPENCL SELECT_ROUNDING_MODE rte
 
 #define BLAKE3_VERSION_STRING "1.8.2"
 #define BLAKE3_KEY_LEN 32
@@ -6,8 +7,19 @@
 #define BLAKE3_BLOCK_LEN 64
 #define BLAKE3_CHUNK_LEN 1024
 #define BLAKE3_MAX_DEPTH 54
-#define BLAKE3_BLOCK_LEN_LOG2 6  // log2(64)
-#define BLAKE3_CHUNK_LEN_LOG2 10 // log2(1024)
+#define BLAKE3_BLOCK_LEN_LOG2 6
+#define BLAKE3_CHUNK_LEN_LOG2 10
+#define DOMAIN_HASH_SIZE 32
+#define RANDOM_TYPE_LEAN 0
+#define RANDOM_TYPE_XOSHIRO 1
+#define COMPLEX_TRANSFORM_MULTIPLIER 0.000001
+#define PI 3.14159265358979323846
+
+#define LT_U256(X, Y)                                                          \
+  (X.x != Y->x   ? X.x < Y->x                                                  \
+   : X.y != Y->y ? X.y < Y->y                                                  \
+   : X.z != Y->z ? X.z < Y->z                                                  \
+                 : X.w < Y->w)
 
 __constant uint IV[8] = {0x6A09E667UL, 0xBB67AE85UL, 0x3C6EF372UL,
                          0xA54FF53AUL, 0x510E527FUL, 0x9B05688CUL,
@@ -474,12 +486,12 @@ inline void compress_subtree_to_parent_node(const uchar *input,
   }
 }
 
-void blake3_hasher_update_base(blake3_hasher *self, __global const void *input,
+void blake3_hasher_update_base(blake3_hasher *self, const void *input,
                                size_t input_len, bool use_tbb) {
   if (input_len == 0) {
     return;
   }
-  const __global char *input_bytes = (const __global char *)input;
+  const char *input_bytes = (const char *)input;
   if (chunk_state_len(&self->chunk) > 0) {
     size_t take = BLAKE3_CHUNK_LEN - chunk_state_len(&self->chunk);
     if (take > input_len) {
@@ -569,7 +581,7 @@ inline void blake3_hasher_init(__private blake3_hasher *self) {
 }
 
 inline void blake3_hasher_update(__private blake3_hasher *self,
-                                 __global const uchar *input, ulong input_len) {
+                                 const void *input, ulong input_len) {
   bool use_tbb = false;
   blake3_hasher_update_base(self, input, input_len, use_tbb);
 }
@@ -594,8 +606,8 @@ inline void blake3_compress_xof(const uint cv[8],
 }
 
 void blake3_xof_many(const uint cv[8], const uchar block[BLAKE3_BLOCK_LEN],
-                     uchar block_len, ulong counter, uchar flags,
-                     __global uchar out[64], size_t outblocks) {
+                     uchar block_len, ulong counter, uchar flags, uchar out[64],
+                     size_t outblocks) {
   if (outblocks == 0) {
     return;
   }
@@ -608,8 +620,8 @@ void blake3_xof_many(const uint cv[8], const uchar block[BLAKE3_BLOCK_LEN],
   }
 }
 
-inline void output_root_bytes(const output_t *self, ulong seek,
-                              __global uchar *out, size_t out_len) {
+inline void output_root_bytes(const output_t *self, ulong seek, uchar *out,
+                              size_t out_len) {
   if (out_len == 0) {
     return;
   }
@@ -648,7 +660,7 @@ inline void output_root_bytes(const output_t *self, ulong seek,
 }
 
 void blake3_hasher_finalize_seek(const blake3_hasher *self, ulong seek,
-                                 __global uchar *out, size_t out_len) {
+                                 uchar *out, size_t out_len) {
   if (out_len == 0) {
     return;
   }
@@ -679,57 +691,267 @@ void blake3_hasher_finalize_seek(const blake3_hasher *self, ulong seek,
   output_root_bytes(&output, seek, out, out_len);
 }
 
-void blake3_hasher_finalize(const blake3_hasher *self, __global uchar *out,
+void blake3_hasher_finalize(const blake3_hasher *self, uchar *out,
                             size_t out_len) {
   blake3_hasher_finalize_seek(self, 0, out, out_len);
 }
 
-__kernel void blake3_hash(__global const uchar *input, ulong input_len,
-                          __global uchar *out, ulong out_len) {
-  // Define a fixed-size buffer for the modified input
-  uchar modified_input[BLAKE3_CHUNK_LEN]; // Assuming BLAKE3_CHUNK_LEN is the
-                                          // max input length
-
-  for (int i = 0; i < 1000000; i++) {
-    __private blake3_hasher hasher;
-    blake3_hasher_init(&hasher);
-
-    // Populate the fixed-size buffer with modified input
-    for (ulong j = 0; j < input_len && j < BLAKE3_CHUNK_LEN; j++) {
-      modified_input[j] =
-          input[j] + (uchar)(i & 0xFF); // Add `i` modulo 256 to each byte
-    }
-
-    // Copy modified input back to the original input buffer
-    for (ulong j = 0; j < input_len && j < BLAKE3_CHUNK_LEN; j++) {
-      ((__global uchar *)input)[j] = modified_input[j];
-    }
-
-    blake3_hasher_update(&hasher, input, input_len);
-    blake3_hasher_finalize(&hasher, out, out_len);
+void ConvertBytesToUint32Array(uint *H, const uchar *bytes) {
+  for (int i = 0; i < 8; i++) {
+    H[i] = ((uint)bytes[i * 4] << 24) | ((uint)bytes[i * 4 + 1] << 16) |
+           ((uint)bytes[i * 4 + 2] << 8) | (uint)bytes[i * 4 + 3];
   }
 }
 
-__kernel void blake3_test(__global const uchar *input, ulong input_len,
-                          __global uchar *out, ulong out_len) {
-  __private blake3_hasher hasher;
-  blake3_hasher_init(&hasher);
-  blake3_hasher_update(&hasher, input, 3);
+double MediumComplexNonLinear(double x) { return exp(sin(x) + cos(x)); }
 
-  // Capture debug info in out[32..95]
-  if (out_len >= 96) {
-    output_t output = chunk_state_output(&hasher.chunk);
-    uint state[16];
-    compress_pre(state, output.input_cv, (const __private uchar *)output.block,
-                 output.block_len, output.counter, output.flags | ROOT);
-    for (int i = 0; i < 16; i++) {
-      __private uchar temp[4];
-      store32(temp, state[i]);
-      for (int j = 0; j < 4; j++) {
-        out[32 + i * 4 + j] = temp[j];
+double IntermediateComplexNonLinear(double x) {
+  if (x == PI / 2 || x == 3 * PI / 2) {
+    return 0; // Avoid singularity
+  }
+  return sin(x) * cos(x) * tan(x);
+}
+
+double HighComplexNonLinear(double x) { return 1.0 / sqrt(fabs(x) + 1); }
+
+double ComplexNonLinear(double x) {
+  double transformFactorOne = fmod(x * COMPLEX_TRANSFORM_MULTIPLIER, 8) / 8;
+  double transformFactorTwo = fmod(x * COMPLEX_TRANSFORM_MULTIPLIER, 4) / 4;
+  if (transformFactorOne < 0.33) {
+    if (transformFactorTwo < 0.25) {
+      return MediumComplexNonLinear(x + (1 + transformFactorTwo));
+    } else if (transformFactorTwo < 0.5) {
+      return MediumComplexNonLinear(x - (1 + transformFactorTwo));
+    } else if (transformFactorTwo < 0.75) {
+      return MediumComplexNonLinear(x * (1 + transformFactorTwo));
+    } else {
+      return MediumComplexNonLinear(x / (1 + transformFactorTwo));
+    }
+  } else if (transformFactorOne < 0.66) {
+    if (transformFactorTwo < 0.25) {
+      return IntermediateComplexNonLinear(x + (1 + transformFactorTwo));
+    } else if (transformFactorTwo < 0.5) {
+      return IntermediateComplexNonLinear(x - (1 + transformFactorTwo));
+    } else if (transformFactorTwo < 0.75) {
+      return IntermediateComplexNonLinear(x * (1 + transformFactorTwo));
+    } else {
+      return IntermediateComplexNonLinear(x / (1 + transformFactorTwo));
+    }
+  } else {
+    if (transformFactorTwo < 0.25) {
+      return HighComplexNonLinear(x + (1 + transformFactorTwo));
+    } else if (transformFactorTwo < 0.5) {
+      return HighComplexNonLinear(x - (1 + transformFactorTwo));
+    } else if (transformFactorTwo < 0.75) {
+      return HighComplexNonLinear(x * (1 + transformFactorTwo));
+    } else {
+      return HighComplexNonLinear(x / (1 + transformFactorTwo));
+    }
+  }
+}
+
+double TransformFactor(double x) {
+  const double granularity = 1024.0;
+  return fmod(x, granularity) / granularity;
+}
+
+inline double ForComplex(double forComplex) {
+  double complexValue;
+  double rounds = 1.0;
+
+  complexValue = ComplexNonLinear(forComplex);
+  while (isnan(complexValue) || isinf(complexValue)) {
+    forComplex *= 0.1;
+    if (forComplex <= 0.1) {
+      return 0.0 * rounds;
+    }
+    rounds += 1.0;
+    complexValue = ComplexNonLinear(forComplex);
+  }
+
+  return complexValue * rounds;
+}
+
+void HoohashMatrixMultiplication(double mat[64][64], const uchar *hashBytes,
+                                 uchar *output, ulong nonce, uchar vector[64],
+                                 double product[64]) {
+  uchar scaledValues[32] = {0};
+  uchar result[32] = {0};
+  uint H[8] = {0};
+  ConvertBytesToUint32Array(H, hashBytes);
+  double hashMod =
+      (double)(H[0] ^ H[1] ^ H[2] ^ H[3] ^ H[4] ^ H[5] ^ H[6] ^ H[7]);
+  double nonceMod = (nonce & 0xFF);
+  double divider = 0.0001;
+  double multiplier = 1234;
+  double sw = 0.0;
+
+  for (int i = 0; i < 32; i++) {
+    vector[2 * i] = hashBytes[i] >> 4;
+    vector[2 * i + 1] = hashBytes[i] & 0x0F;
+  }
+
+  for (int i = 0; i < 64; i++) {
+    for (int j = 0; j < 64; j++) {
+      if (sw <= 0.02) {
+        double matrixScaledByHash = mat[i][j] * hashMod;
+        double matrixScaledByHashAndVector =
+            matrixScaledByHash * (double)vector[j];
+        double input = matrixScaledByHashAndVector + nonceMod;
+        double transformedInput = ForComplex(input);
+        double scaledByVector = transformedInput * (double)vector[j];
+        double output = scaledByVector * multiplier;
+        product[i] += output;
+      } else {
+        double matrixElementScaledByDivider = mat[i][j] * divider;
+        double output = matrixElementScaledByDivider * (double)vector[j];
+        product[i] += output;
       }
+      sw = TransformFactor(product[i]);
     }
   }
 
-  blake3_hasher_finalize(&hasher, out, BLAKE3_OUT_LEN);
+  for (int i = 0; i < 64; i += 2) {
+    ulong pval = (ulong)product[i] + (ulong)product[i + 1];
+    scaledValues[i / 2] = (uchar)(pval & 0xFF);
+  }
+
+  for (int i = 0; i < 32; i++) {
+    result[i] = hashBytes[i] ^ scaledValues[i];
+  }
+  blake3_hasher hasher;
+  blake3_hasher_init(&hasher);
+  blake3_hasher_update(&hasher, result, DOMAIN_HASH_SIZE);
+  blake3_hasher_finalize(&hasher, output, DOMAIN_HASH_SIZE);
+}
+
+inline ulong rotl(const ulong x, int k) { return (x << k) | (x >> (64 - k)); }
+
+inline ulong xoshiro256_next(global ulong4 *s) {
+  const ulong result = rotl(s->y * 5, 7) * 9;
+  const ulong t = s->y << 17;
+  s->z ^= s->x;
+  s->w ^= s->y;
+  s->y ^= s->z;
+  s->x ^= s->w;
+  s->z ^= t;
+  s->w = rotl(s->w, 45);
+  return result;
+}
+
+int compare_target(uchar *hash, uchar *target) {
+  uchar reversed_hash[DOMAIN_HASH_SIZE];
+  for (int i = 0; i < DOMAIN_HASH_SIZE; i++) {
+    reversed_hash[i] = hash[DOMAIN_HASH_SIZE - 1 - i];
+  }
+  for (size_t i = 0; i < DOMAIN_HASH_SIZE; i++) {
+    if (reversed_hash[i] > target[i])
+      return 1;
+    if (reversed_hash[i] < target[i])
+      return -1;
+  }
+  return 0;
+}
+
+typedef struct {
+  ulong nonce;
+  uchar hash[32];
+  uchar first_pass[32];
+  uchar vector[64];
+  double product[64];
+} Result;
+
+__kernel void
+Hoohash_hash(const ulong local_size, const ulong nonce_mask,
+             const ulong nonce_fixed, __constant uchar *previous_header,
+             __constant long *timestamp, __constant const double matrix[64][64],
+             __constant const uchar *target, const ulong random_type,
+             global void *restrict random_state, volatile global Result *result,
+             const ulong total_nonces) {
+  int global_id = get_global_id(0);
+  if (global_id >= total_nonces)
+    return;
+
+  // Deterministic nonce generation
+  __private ulong nonce = nonce_fixed | ((ulong)global_id & nonce_mask);
+  if (random_type == RANDOM_TYPE_XOSHIRO) {
+    global ulong4 *state = ((global ulong4 *)random_state) + global_id;
+    nonce = (xoshiro256_next(state) & nonce_mask) | nonce_fixed;
+  }
+
+  // Compute BLAKE3 hash
+  blake3_hasher hasher;
+  blake3_hasher_init(&hasher);
+  __private uchar private_header[DOMAIN_HASH_SIZE];
+  for (int i = 0; i < DOMAIN_HASH_SIZE; i++) {
+    private_header[i] = previous_header[i];
+  }
+  blake3_hasher_update(&hasher, private_header, DOMAIN_HASH_SIZE);
+  __private uchar private_timestamp[8];
+  *(long *)private_timestamp = *timestamp;
+  blake3_hasher_update(&hasher, private_timestamp, 8);
+  uchar zeroes[DOMAIN_HASH_SIZE] = {0};
+  blake3_hasher_update(&hasher, zeroes, DOMAIN_HASH_SIZE);
+  blake3_hasher_update(&hasher, &nonce, sizeof(nonce));
+  uchar first_pass[DOMAIN_HASH_SIZE];
+  blake3_hasher_finalize(&hasher, first_pass, DOMAIN_HASH_SIZE);
+
+  // Matrix multiplication
+  __private double private_matrix[64][64];
+  for (int i = 0; i < 64; i++) {
+    for (int j = 0; j < 64; j++) {
+      private_matrix[i][j] = matrix[i][j];
+    }
+  }
+  __private uchar private_final_hash[DOMAIN_HASH_SIZE];
+  uchar vector[64] = {0};
+  double product[64] = {0};
+  HoohashMatrixMultiplication(private_matrix, first_pass, private_final_hash,
+                              nonce, vector, product);
+
+  __private uchar private_target[DOMAIN_HASH_SIZE];
+  for (int i = 0; i < DOMAIN_HASH_SIZE; i++) {
+    private_target[i] = target[i];
+  }
+  if (compare_target(private_final_hash, private_target) <= 0) {
+    __private Result private_result;
+    private_result.nonce = nonce;
+    for (int i = 0; i < 32; i++) {
+      private_result.hash[i] = private_final_hash[i];
+      private_result.first_pass[i] = first_pass[i];
+    }
+    for (int i = 0; i < 64; i++) {
+      private_result.vector[i] = vector[i];
+      private_result.product[i] = product[i];
+    }
+
+    // Robust atomic update
+#ifdef cl_khr_int64_base_atomics
+    ulong old_nonce = atom_cmpxchg(&result->nonce, 0, private_result.nonce);
+    if (old_nonce == 0) {
+      for (int i = 0; i < 32; i++) {
+        result->hash[i] = private_result.hash[i];
+        result->first_pass[i] = private_result.first_pass[i];
+      }
+      for (int i = 0; i < 64; i++) {
+        result->vector[i] = private_result.vector[i];
+        result->product[i] = private_result.product[i];
+      }
+    }
+#else
+    volatile global uint *lock = (volatile global uint *)&result->nonce;
+    if (!atom_cmpxchg(lock, 0, 1)) {
+      result->nonce = private_result.nonce;
+      for (int i = 0; i < 32; i++) {
+        result->host[i] = private_result.hash[i];
+        result->first_pass[i] = private_result.first_pass[i];
+      }
+      for (int i = 0; i < 64; i++) {
+        result->vector[i] = private_result.vector[i];
+        result->product[i] = private_result.product[i];
+      }
+      atom_xchg(lock, 0); // Release lock
+    }
+#endif
+  }
 }

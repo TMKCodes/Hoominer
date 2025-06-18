@@ -1,7 +1,19 @@
 {
   "files.associations": {
     "cl.h": "c",
-    "string.h": "c",
-    "blake3_impl.h": "c"
+    "bitset": "c",
+    "coroutine": "c",
+    "string": "c",
+    "vector": "c",
+    "memory": "c",
+    "optional": "c",
+    "string_view": "c",
+    "system_error": "c",
+    "text_encoding": "c",
+    "typeindex": "c",
+    "variant": "c",
+    "chrono": "c",
+    "functional": "c",
+    "ostream": "c"
   }
 }

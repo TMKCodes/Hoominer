@@ -108,7 +108,7 @@ int main(int argc, char **argv)
   }
 
   // Build program (required to link binary)
-  err = clBuildProgram(program, 1, &device, NULL, NULL, NULL);
+  err = clBuildProgram(program, 1, &device, "-cl-std=CL2.0 -cl-fp64-correctly-rounded-divide-sqrt -cl-strict-aliasing -cl-opt-disable -g", NULL, NULL);
   if (err != CL_SUCCESS)
   {
     char buffer[4096];
@@ -138,123 +138,121 @@ int main(int argc, char **argv)
   double cpu_time_used;
   start = clock();
 
-  for (int i = 0; i < 100000; i++)
+  // Prepare test data
+  char input_str[64];
+  snprintf(input_str, sizeof(input_str), "Hello, Hoosat Network!");
+
+  size_t input_len = strlen(input_str);
+  size_t out_len = 32;
+
+  unsigned char *input = (unsigned char *)malloc(input_len);
+  unsigned char *output = (unsigned char *)malloc(out_len);
+  if (!input || !output)
   {
-    // Prepare test data
-    char input_str[64];
-    snprintf(input_str, sizeof(input_str), "Hello, Hoosat Network! %d", i);
+    printf("Error allocating memory for input/output\n");
+    free(input);
+    free(output);
+    clReleaseKernel(kernel);
+    clReleaseProgram(program);
+    clReleaseCommandQueue(queue);
+    clReleaseContext(context);
+    return 1;
+  }
+  memcpy(input, input_str, input_len);
 
-    size_t input_len = strlen(input_str);
-    size_t out_len = 32;
+  // Create buffers
+  cl_mem input_buf = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
+                                    input_len, input, &err);
+  if (err != CL_SUCCESS)
+  {
+    printf("Error creating input buffer: %d\n", err);
+    free(input);
+    free(output);
+    clReleaseKernel(kernel);
+    clReleaseProgram(program);
+    clReleaseCommandQueue(queue);
+    clReleaseContext(context);
+    return 1;
+  }
 
-    unsigned char *input = (unsigned char *)malloc(input_len);
-    unsigned char *output = (unsigned char *)malloc(out_len);
-    if (!input || !output)
-    {
-      printf("Error allocating memory for input/output\n");
-      free(input);
-      free(output);
-      clReleaseKernel(kernel);
-      clReleaseProgram(program);
-      clReleaseCommandQueue(queue);
-      clReleaseContext(context);
-      return 1;
-    }
-    memcpy(input, input_str, input_len);
+  cl_mem output_buf = clCreateBuffer(context, CL_MEM_WRITE_ONLY,
+                                     out_len, NULL, &err);
+  if (err != CL_SUCCESS)
+  {
+    printf("Error creating output buffer: %d\n", err);
+    clReleaseMemObject(input_buf);
+    free(input);
+    free(output);
+    clReleaseKernel(kernel);
+    clReleaseProgram(program);
+    clReleaseCommandQueue(queue);
+    clReleaseContext(context);
+    return 1;
+  }
 
-    // Create buffers
-    cl_mem input_buf = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-                                      input_len, input, &err);
-    if (err != CL_SUCCESS)
-    {
-      printf("Error creating input buffer: %d\n", err);
-      free(input);
-      free(output);
-      clReleaseKernel(kernel);
-      clReleaseProgram(program);
-      clReleaseCommandQueue(queue);
-      clReleaseContext(context);
-      return 1;
-    }
-
-    cl_mem output_buf = clCreateBuffer(context, CL_MEM_WRITE_ONLY,
-                                       out_len, NULL, &err);
-    if (err != CL_SUCCESS)
-    {
-      printf("Error creating output buffer: %d\n", err);
-      clReleaseMemObject(input_buf);
-      free(input);
-      free(output);
-      clReleaseKernel(kernel);
-      clReleaseProgram(program);
-      clReleaseCommandQueue(queue);
-      clReleaseContext(context);
-      return 1;
-    }
-
-    // Set kernel arguments
-    err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &input_buf);
-    err |= clSetKernelArg(kernel, 1, sizeof(cl_ulong), &input_len);
-    err |= clSetKernelArg(kernel, 2, sizeof(cl_mem), &output_buf);
-    err |= clSetKernelArg(kernel, 3, sizeof(cl_ulong), &out_len);
-    if (err != CL_SUCCESS)
-    {
-      printf("Error setting kernel arguments: %d\n", err);
-      clReleaseMemObject(input_buf);
-      clReleaseMemObject(output_buf);
-      free(input);
-      free(output);
-      clReleaseKernel(kernel);
-      clReleaseProgram(program);
-      clReleaseCommandQueue(queue);
-      clReleaseContext(context);
-      return 1;
-    }
-
-    // Execute kernel
-    size_t global_size = 1;
-    err = clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &global_size, NULL, 0, NULL, NULL);
-    if (err != CL_SUCCESS)
-    {
-      printf("Error enqueuing kernel: %d\n", err);
-      clReleaseMemObject(input_buf);
-      clReleaseMemObject(output_buf);
-      free(input);
-      free(output);
-      clReleaseKernel(kernel);
-      clReleaseProgram(program);
-      clReleaseCommandQueue(queue);
-      clReleaseContext(context);
-      return 1;
-    }
-
-    // Read output
-    err = clEnqueueReadBuffer(queue, output_buf, CL_TRUE, 0, out_len, output, 0, NULL, NULL);
-    if (err != CL_SUCCESS)
-    {
-      printf("Error reading output buffer: %d\n", err);
-      clReleaseMemObject(input_buf);
-      clReleaseMemObject(output_buf);
-      free(input);
-      free(output);
-      clReleaseKernel(kernel);
-      clReleaseProgram(program);
-      clReleaseCommandQueue(queue);
-      clReleaseContext(context);
-      return 1;
-    }
-
-    // Print result
-    printf("Input: %s\n", input_str);
-    printf("BLAKE3 hash: ");
-    printHash(output, out_len);
-
-    // Cleanup
+  // Set kernel arguments
+  err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &input_buf);
+  err |= clSetKernelArg(kernel, 1, sizeof(cl_ulong), &input_len);
+  err |= clSetKernelArg(kernel, 2, sizeof(cl_mem), &output_buf);
+  err |= clSetKernelArg(kernel, 3, sizeof(cl_ulong), &out_len);
+  if (err != CL_SUCCESS)
+  {
+    printf("Error setting kernel arguments: %d\n", err);
     clReleaseMemObject(input_buf);
     clReleaseMemObject(output_buf);
     free(input);
     free(output);
+    clReleaseKernel(kernel);
+    clReleaseProgram(program);
+    clReleaseCommandQueue(queue);
+    clReleaseContext(context);
+    return 1;
   }
+
+  // Execute kernel
+  size_t global_size = 1;
+  err = clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &global_size, NULL, 0, NULL, NULL);
+  if (err != CL_SUCCESS)
+  {
+    printf("Error enqueuing kernel: %d\n", err);
+    clReleaseMemObject(input_buf);
+    clReleaseMemObject(output_buf);
+    free(input);
+    free(output);
+    clReleaseKernel(kernel);
+    clReleaseProgram(program);
+    clReleaseCommandQueue(queue);
+    clReleaseContext(context);
+    return 1;
+  }
+
+  // Read output
+  err = clEnqueueReadBuffer(queue, output_buf, CL_TRUE, 0, out_len, output, 0, NULL, NULL);
+  if (err != CL_SUCCESS)
+  {
+    printf("Error reading output buffer: %d\n", err);
+    clReleaseMemObject(input_buf);
+    clReleaseMemObject(output_buf);
+    free(input);
+    free(output);
+    clReleaseKernel(kernel);
+    clReleaseProgram(program);
+    clReleaseCommandQueue(queue);
+    clReleaseContext(context);
+    return 1;
+  }
+
+  // Print result
+  printf("Input: %s\n", input_str);
+  printf("BLAKE3 hash: ");
+  printHash(output, out_len);
+
+  // Cleanup
+  clReleaseMemObject(input_buf);
+  clReleaseMemObject(output_buf);
+  free(input);
+  free(output);
+
   end = clock();
   cpu_time_used = ((double)(end - start)) / CLOCKS_PER_SEC;
   printf("Execution time: %f seconds\n", cpu_time_used);
