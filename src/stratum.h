@@ -1,0 +1,23 @@
+#ifndef STRATUM_H
+#define STRATUM_H
+#include <sys/select.h>
+#include <netdb.h>
+#include <arpa/inet.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#include <json-c/json.h>
+#include "hoohash-miner.h"
+
+#define BUFFER_SIZE 8192
+
+typedef struct StratumContext StratumContext;
+StratumContext *init_stratum_context();
+void cleanup_stratum_context(StratumContext *ctx);
+void *stratum_receive_thread(void *arg);
+int stratum_subscribe(int sockfd);
+int stratum_authenticate(int sockfd, const char *username, const char *password);
+int connect_to_stratum_server(const char *hostname, int port);
+
+#endif

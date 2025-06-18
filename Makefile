@@ -9,9 +9,12 @@ BUILD_DIR = build
 # Output static library
 TARGET_LIB = $(BUILD_DIR)/lib-hoohash.a
 
-# Miner target
-MINER_SRC = hoominer.c
-MINER_OBJ = $(BUILD_DIR)/hoominer.o
+# Find all .c source files under .src/
+SRC_DIR = src/
+SRCS = $(wildcard $(SRC_DIR)/*.c)
+OBJS = $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(SRCS))
+
+# Miner binary target
 MINER_BIN = $(BUILD_DIR)/hoominer
 
 # Default rule
@@ -29,13 +32,13 @@ hoohash-clean:
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-# Compile miner.c to object file
-$(MINER_OBJ): $(MINER_SRC) | $(BUILD_DIR)
+# Compile all source files from .src/ to build/*.o
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -Ialgorithms/blake3/c -c $< -o $@
 
-# Link the miner binary against static lib-hoohash.a and blake3.a
-$(MINER_BIN): $(MINER_OBJ) | $(BUILD_DIR)
-	$(CC) -o $@ $(MINER_OBJ) \
+# Link the miner binary against static libs and all objects
+$(MINER_BIN): $(OBJS) | $(BUILD_DIR)
+	$(CC) -o $@ $(OBJS) \
 		algorithms/hoohash/build/lib-hoohash.a \
 		algorithms/blake3/c/build/libblake3.a \
 		-lm -lgmp -ljson-c
