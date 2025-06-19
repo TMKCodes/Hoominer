@@ -6,6 +6,8 @@
 #include <string.h>
 #include <time.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #define DOMAIN_HASH_SIZE 32
 #define RANDOM_TYPE_XOSHIRO 1

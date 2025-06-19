@@ -81,7 +81,7 @@ void *stratum_receive_thread(void *arg)
       json_len -= (end - start + 1);
       start = end + 1;
     }
-    if (json_len > 0 && json_buffer != NULL && start != NULL)
+    if (json_len > 0 && start != NULL)
     {
       memmove(json_buffer, start, json_len);
     }

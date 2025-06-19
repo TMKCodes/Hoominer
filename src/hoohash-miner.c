@@ -1,4 +1,6 @@
 #include "hoohash-miner.h"
+#include <time.h>
+#include <linux/time.h>
 
 MiningState *init_mining_state()
 {
@@ -277,8 +279,12 @@ void *mining_opencl_thread(void *arg)
   cl_ulong nonce_mask = 0xFFFFFFFFFFFFFFFFULL;
   cl_ulong nonce_fixed = 0;
 
+  // struct timespec start_time, end_time;
+  // double elapsed_time = 0.0;
+
   while (ctx->running)
   {
+    // clock_gettime(CLOCK_MONOTONIC, &start_time);
     // Check job validity once per outer loop
     pthread_mutex_lock(&ms->job_mutex);
     int is_running = ms->job->running;
@@ -366,6 +372,10 @@ void *mining_opencl_thread(void *arg)
 
         if (meets_target <= 0)
         {
+          // clock_gettime(CLOCK_MONOTONIC, &end_time);
+          // elapsed_time = (end_time.tv_sec - start_time.tv_sec) +
+          //                (end_time.tv_nsec - start_time.tv_nsec) / 1e9;
+          // fprintf(stdout, "Device %d: Nonce found in %.6f seconds\n", mt->threadIndex, elapsed_time);
           submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, result.nonce, result.hash);
 
           // Wait for a new job before continuing mining
@@ -377,6 +387,10 @@ void *mining_opencl_thread(void *arg)
             pthread_mutex_unlock(&ms->job_mutex);
             if (job_changed)
             {
+              // clock_gettime(CLOCK_MONOTONIC, &end_time);
+              // elapsed_time = (end_time.tv_sec - start_time.tv_sec) +
+              //                (end_time.tv_nsec - start_time.tv_nsec) / 1e9;
+              // fprintf(stdout, "Device %d: New job found in %.6f seconds\n", mt->threadIndex, elapsed_time);
               break;
             }
           }
@@ -409,6 +423,7 @@ void cleanup_mining_threads(MiningState *ms)
 {
   if (ms->mining_cpu_threads)
   {
+#pragma GCC unroll 0
     for (int i = 0; i < ms->num_cpu_threads; i++)
     {
       pthread_cancel(ms->mining_cpu_threads[i]);
@@ -419,6 +434,7 @@ void cleanup_mining_threads(MiningState *ms)
   }
   if (ms->mining_opencl_threads)
   {
+#pragma GCC unroll 0
     for (int i = 0; i < 1; i++)
     {
       pthread_cancel(ms->mining_opencl_threads[i]);

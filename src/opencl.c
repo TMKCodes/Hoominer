@@ -281,6 +281,14 @@ cleanup:
   return NULL;
 }
 
+static uint64_t splitmix64(uint64_t *state)
+{
+  uint64_t z = (*state += 0x9e3779b97f4a7c15ULL);
+  z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+  z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+  return z ^ (z >> 31);
+}
+
 cl_int load_kernel_binary(OpenCLResources *resource, const char *binary_filename, const char *kernel_name)
 {
   cl_int err;
@@ -351,31 +359,53 @@ cl_int load_kernel_binary(OpenCLResources *resource, const char *binary_filename
   printf("Max local work size: %ld\n", resource->max_work_group_size);
   printf("Max global work size: %ld\n", resource->max_global_work_size);
 
-  // Generate random state
+  // Allocate random state
   if (posix_memalign((void **)&resource->random_state, 64, resource->max_global_work_size * sizeof(cl_ulong4)) != 0)
   {
     fprintf(stderr, "Random state allocation failed for %s\n", resource->device_name);
-    err = CL_OUT_OF_HOST_MEMORY;
+    clReleaseKernel(resource->kernel);
+    clReleaseProgram(resource->program);
+    return CL_OUT_OF_HOST_MEMORY;
   }
 
-  // Copy same state to all entries
-  for (size_t i = 1; i < resource->max_global_work_size; i++)
+  // Initialize random state for xoshiro256** with high-quality seeds
+  uint64_t seed_base[2];
+  int fd = open("/dev/urandom", O_RDONLY);
+  if (fd >= 0)
   {
+    if (read(fd, seed_base, sizeof(seed_base)) != sizeof(seed_base))
+    {
+      fprintf(stderr, "Warning: Failed to read full entropy from /dev/urandom\n");
+      seed_base[0] = (uint64_t)time(NULL);
+      seed_base[1] = (uint64_t)clock();
+    }
+    close(fd);
+  }
+  else
+  {
+    fprintf(stderr, "Warning: /dev/urandom unavailable, using fallback seed\n");
+    seed_base[0] = (uint64_t)time(NULL);
+    seed_base[1] = (uint64_t)clock();
+  }
 
-    unsigned int seed = (unsigned int)time(NULL);
+  // Use splitmix64 to generate unique seeds for each work item
+  for (size_t i = 0; i < resource->max_global_work_size; i++)
+  {
+    uint64_t state = seed_base[0] ^ (i * 0x9e3779b97f4a7c15ULL); // Mix index with base seed
+    state ^= seed_base[1];
 
-    // Use rand_r to generate initial entropy
-    unsigned int entropy = rand_r(&seed);
-    seed ^= entropy; // add more variability to seed
+    // Generate four 64-bit values for xoshiro256** state
+    resource->random_state[i].s[0] = splitmix64(&state);
+    resource->random_state[i].s[1] = splitmix64(&state);
+    resource->random_state[i].s[2] = splitmix64(&state);
+    resource->random_state[i].s[3] = splitmix64(&state);
 
-    // Fill random_state[0]
-    uint64_t r1 = ((uint64_t)rand_r(&seed) << 32) | rand_r(&seed);
-    uint64_t r2 = ((uint64_t)rand_r(&seed) << 32) | rand_r(&seed);
-
-    resource->random_state[i].s[0] = r1;
-    resource->random_state[i].s[1] = r2;
-    resource->random_state[i].s[2] = ((uint64_t)rand_r(&seed) << 32) | rand_r(&seed);
-    resource->random_state[i].s[3] = ((uint64_t)rand_r(&seed) << 32) | rand_r(&seed);
+    // Ensure non-zero state to avoid degenerate xoshiro state
+    if (resource->random_state[i].s[0] == 0 && resource->random_state[i].s[1] == 0 &&
+        resource->random_state[i].s[2] == 0 && resource->random_state[i].s[3] == 0)
+    {
+      resource->random_state[i].s[0] = 0x9e3779b97f4a7c15ULL; // Arbitrary non-zero value
+    }
   }
 
   printf("Kernel %s loaded for %s\n", kernel_name, resource->device_name);
@@ -395,12 +425,6 @@ cl_int run_hoohash_kernel(OpenCLResources *resource, cl_ulong local_size, cl_ulo
     fprintf(stderr, "Invalid input pointers for %s\n", resource ? resource->device_name : "unknown");
     return CL_INVALID_VALUE;
   }
-
-  // Optimize work group size using stored values
-  local_size = (local_size / resource->preferred_multiple) * resource->preferred_multiple;
-  local_size = (local_size > resource->max_work_group_size) ? resource->max_work_group_size : local_size;
-  global_size = (global_size / local_size) * local_size;
-  // global_size = (global_size > resource->max_global_work_size) ? resource->max_global_work_size : global_size;
 
   // Write to persistent buffers asynchronously
   err = clEnqueueWriteBuffer(resource->queue, resource->previous_header_buf, CL_FALSE, 0, DOMAIN_HASH_SIZE, previous_header, 0, NULL, &write_events[0]);
@@ -430,7 +454,7 @@ cl_int run_hoohash_kernel(OpenCLResources *resource, cl_ulong local_size, cl_ulo
   }
 
   // Set kernel arguments
-  cl_ulong random_type = RANDOM_TYPE_LEAN; // RANDOM_TYPE_LEAN OR RANDOM_TYPE_XOSHIRO
+  cl_ulong random_type = RANDOM_TYPE_XOSHIRO; // RANDOM_TYPE_LEAN OR RANDOM_TYPE_XOSHIRO
   err = clSetKernelArg(resource->kernel, 0, sizeof(cl_ulong), &local_size);
   err |= clSetKernelArg(resource->kernel, 1, sizeof(cl_ulong), &nonce_mask);
   err |= clSetKernelArg(resource->kernel, 2, sizeof(cl_ulong), &nonce_fixed);

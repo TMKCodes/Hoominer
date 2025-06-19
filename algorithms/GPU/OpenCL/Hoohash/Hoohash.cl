@@ -799,6 +799,7 @@ void print_hash(uchar *hash) {
 }
 
 int compare_target(uchar *hash, uchar *target) {
+#pragma unroll
   for (size_t i = 0; i < DOMAIN_HASH_SIZE; i++) {
     if (hash[i] > target[i])
       return 1;

@@ -6,6 +6,7 @@
 #include <sys/socket.h>
 #include <signal.h>
 #include <endian.h>
+#include <time.h>
 #include "stratum.h"
 #include "target.h"
 #include "opencl.h"
