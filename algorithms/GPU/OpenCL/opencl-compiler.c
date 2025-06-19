@@ -32,9 +32,9 @@ char *loadSource(const char *filename, size_t *length)
 
 int main(int argc, char **argv)
 {
-  if (argc < 3)
+  if (argc < 4)
   {
-    printf("Usage: %s kernel.cl kernel_function\n", argv[0]);
+    printf("Usage: %s kernel.cl kernel_function kernel.bin\n", argv[0]);
     return 1;
   }
 
@@ -153,12 +153,12 @@ int main(int argc, char **argv)
   }
 
   // Save binary to file
-  FILE *fp = fopen("kernel.bin", "wb");
+  FILE *fp = fopen(argv[3], "wb");
   if (fp)
   {
     fwrite(binary, 1, binary_size, fp);
     fclose(fp);
-    printf("Binary saved to kernel.bin\n");
+    printf("Binary saved to %s\n", argv[3]);
   }
   else
   {

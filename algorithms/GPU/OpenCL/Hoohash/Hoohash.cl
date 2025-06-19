@@ -772,25 +772,66 @@ inline double ForComplex(double forComplex) {
   return complexValue * rounds;
 }
 
-void HoohashMatrixMultiplication(double mat[64][64], const uchar *hashBytes,
-                                 uchar *output, ulong nonce, uchar vector[64],
+inline ulong rotl(const ulong x, int k) { return (x << k) | (x >> (64 - k)); }
+
+inline ulong xoshiro256_next(__global ulong4 *s) {
+  const ulong result = rotl(s->y * 5, 7) * 9;
+  const ulong t = s->y << 17;
+  s->z ^= s->x;
+  s->w ^= s->y;
+  s->y ^= s->z;
+  s->x ^= s->w;
+  s->z ^= t;
+  s->w = rotl(s->w, 45);
+  return result;
+}
+
+void print_hash(uchar *hash) {
+  printf("%02x%02x%02x%02x%02x%02x%02x%02x"
+         "%02x%02x%02x%02x%02x%02x%02x%02x"
+         "%02x%02x%02x%02x%02x%02x%02x%02x"
+         "%02x%02x%02x%02x%02x%02x%02x%02x\n",
+         hash[0], hash[1], hash[2], hash[3], hash[4], hash[5], hash[6], hash[7],
+         hash[8], hash[9], hash[10], hash[11], hash[12], hash[13], hash[14],
+         hash[15], hash[16], hash[17], hash[18], hash[19], hash[20], hash[21],
+         hash[22], hash[23], hash[24], hash[25], hash[26], hash[27], hash[28],
+         hash[29], hash[30], hash[31]);
+}
+
+int compare_target(uchar *hash, uchar *target) {
+  for (size_t i = 0; i < DOMAIN_HASH_SIZE; i++) {
+    if (hash[i] > target[i])
+      return 1;
+    if (hash[i] < target[i])
+      return -1;
+  }
+  return 0;
+}
+
+void HoohashMatrixMultiplication(__constant double mat[64][64],
+                                 const uchar *hashBytes, uchar *output,
+                                 ulong nonce, uchar vector[64],
                                  double product[64]) {
   uchar scaledValues[32] = {0};
   uchar result[32] = {0};
   uint H[8] = {0};
-  ConvertBytesToUint32Array(H, hashBytes);
+#pragma unroll
+  for (int i = 0; i < 8; i++) {
+    H[i] = ((uint)hashBytes[i * 4] << 24) | ((uint)hashBytes[i * 4 + 1] << 16) |
+           ((uint)hashBytes[i * 4 + 2] << 8) | (uint)hashBytes[i * 4 + 3];
+  }
   double hashMod =
       (double)(H[0] ^ H[1] ^ H[2] ^ H[3] ^ H[4] ^ H[5] ^ H[6] ^ H[7]);
   double nonceMod = (nonce & 0xFF);
   double divider = 0.0001;
   double multiplier = 1234;
-  double sw = 0.0;
-
+#pragma unroll
   for (int i = 0; i < 32; i++) {
     vector[2 * i] = hashBytes[i] >> 4;
     vector[2 * i + 1] = hashBytes[i] & 0x0F;
   }
 
+  double sw = 0.0;
   for (int i = 0; i < 64; i++) {
     for (int j = 0; j < 64; j++) {
       if (sw <= 0.02) {
@@ -810,12 +851,12 @@ void HoohashMatrixMultiplication(double mat[64][64], const uchar *hashBytes,
       sw = TransformFactor(product[i]);
     }
   }
-
+#pragma unroll
   for (int i = 0; i < 64; i += 2) {
     ulong pval = (ulong)product[i] + (ulong)product[i + 1];
     scaledValues[i / 2] = (uchar)(pval & 0xFF);
   }
-
+#pragma unroll
   for (int i = 0; i < 32; i++) {
     result[i] = hashBytes[i] ^ scaledValues[i];
   }
@@ -825,69 +866,53 @@ void HoohashMatrixMultiplication(double mat[64][64], const uchar *hashBytes,
   blake3_hasher_finalize(&hasher, output, DOMAIN_HASH_SIZE);
 }
 
-inline ulong rotl(const ulong x, int k) { return (x << k) | (x >> (64 - k)); }
-
-inline ulong xoshiro256_next(global ulong4 *s) {
-  const ulong result = rotl(s->y * 5, 7) * 9;
-  const ulong t = s->y << 17;
-  s->z ^= s->x;
-  s->w ^= s->y;
-  s->y ^= s->z;
-  s->x ^= s->w;
-  s->z ^= t;
-  s->w = rotl(s->w, 45);
-  return result;
-}
-
-int compare_target(uchar *hash, uchar *target) {
-  uchar reversed_hash[DOMAIN_HASH_SIZE];
-  for (int i = 0; i < DOMAIN_HASH_SIZE; i++) {
-    reversed_hash[i] = hash[DOMAIN_HASH_SIZE - 1 - i];
-  }
-  for (size_t i = 0; i < DOMAIN_HASH_SIZE; i++) {
-    if (reversed_hash[i] > target[i])
-      return 1;
-    if (reversed_hash[i] < target[i])
-      return -1;
-  }
-  return 0;
-}
-
 typedef struct {
   ulong nonce;
   uchar hash[32];
-  uchar first_pass[32];
-  uchar vector[64];
-  double product[64];
 } Result;
 
-__kernel void
-Hoohash_hash(const ulong local_size, const ulong nonce_mask,
-             const ulong nonce_fixed, __constant uchar *previous_header,
-             __constant long *timestamp, __constant const double matrix[64][64],
-             __constant const uchar *target, const ulong random_type,
-             global void *restrict random_state, volatile global Result *result,
-             const ulong total_nonces) {
-  int global_id = get_global_id(0);
-  if (global_id >= total_nonces)
-    return;
+__kernel void Hoohash_hash(const ulong local_size, const ulong nonce_mask,
+                           const ulong nonce_fixed,
+                           __constant uchar *previous_header,
+                           __constant long *timestamp,
+                           __constant double matrix[64][64],
+                           __constant uchar *target, const ulong random_type,
+                           global void *restrict random_state,
+                           volatile global Result *result) {
+#if defined(PAL)
+  int nonceId = get_group_id(0) * local_size + get_local_id(0);
+#else
+  int nonceId = get_global_id(0);
+#endif
 
-  // Deterministic nonce generation
-  __private ulong nonce = nonce_fixed | ((ulong)global_id & nonce_mask);
-  if (random_type == RANDOM_TYPE_XOSHIRO) {
-    global ulong4 *state = ((global ulong4 *)random_state) + global_id;
-    nonce = (xoshiro256_next(state) & nonce_mask) | nonce_fixed;
+#ifndef cl_khr_int64_base_atomics
+  if (nonceId == 0)
+    lock = 0;
+  work_group_barrier(CLK_GLOBAL_MEM_FENCE);
+#endif
+
+  ulong nonce;
+  switch (random_type) {
+  case RANDOM_TYPE_LEAN:
+    // nonce = ((ulong *)random_state)[0] + nonceId;
+    nonce = (((__global ulong *)random_state)[0]) ^ nonceId;
+    break;
+  case RANDOM_TYPE_XOSHIRO:
+  default:
+    nonce = xoshiro256_next(((global ulong4 *)random_state) + nonceId);
   }
+  nonce = (nonce & nonce_mask) | nonce_fixed;
+  // printf("Trying nonce %lu\n", nonce);
 
   // Compute BLAKE3 hash
   blake3_hasher hasher;
   blake3_hasher_init(&hasher);
-  __private uchar private_header[DOMAIN_HASH_SIZE];
-  for (int i = 0; i < DOMAIN_HASH_SIZE; i++) {
-    private_header[i] = previous_header[i];
-  }
-  blake3_hasher_update(&hasher, private_header, DOMAIN_HASH_SIZE);
-  __private uchar private_timestamp[8];
+  uchar private_previous_header[DOMAIN_HASH_SIZE];
+#pragma unroll
+  for (int i = 0; i < DOMAIN_HASH_SIZE; i++)
+    private_previous_header[i] = previous_header[i];
+  blake3_hasher_update(&hasher, private_previous_header, DOMAIN_HASH_SIZE);
+  uchar private_timestamp[8];
   *(long *)private_timestamp = *timestamp;
   blake3_hasher_update(&hasher, private_timestamp, 8);
   uchar zeroes[DOMAIN_HASH_SIZE] = {0};
@@ -897,61 +922,41 @@ Hoohash_hash(const ulong local_size, const ulong nonce_mask,
   blake3_hasher_finalize(&hasher, first_pass, DOMAIN_HASH_SIZE);
 
   // Matrix multiplication
-  __private double private_matrix[64][64];
-  for (int i = 0; i < 64; i++) {
-    for (int j = 0; j < 64; j++) {
-      private_matrix[i][j] = matrix[i][j];
-    }
-  }
-  __private uchar private_final_hash[DOMAIN_HASH_SIZE];
+  uchar private_final_hash[DOMAIN_HASH_SIZE];
   uchar vector[64] = {0};
   double product[64] = {0};
-  HoohashMatrixMultiplication(private_matrix, first_pass, private_final_hash,
-                              nonce, vector, product);
+  HoohashMatrixMultiplication(matrix, first_pass, private_final_hash, nonce,
+                              vector, product);
 
-  __private uchar private_target[DOMAIN_HASH_SIZE];
-  for (int i = 0; i < DOMAIN_HASH_SIZE; i++) {
+  // Compare with target
+  uchar private_target[DOMAIN_HASH_SIZE];
+#pragma unroll
+  for (int i = 0; i < DOMAIN_HASH_SIZE; i++)
     private_target[i] = target[i];
+
+  uchar reversed_hash[DOMAIN_HASH_SIZE];
+#pragma unroll
+  for (size_t i = 0; i < DOMAIN_HASH_SIZE; i++) {
+    reversed_hash[i] = private_final_hash[DOMAIN_HASH_SIZE - 1 - i];
   }
-  if (compare_target(private_final_hash, private_target) <= 0) {
-    __private Result private_result;
+  if (compare_target(reversed_hash, private_target) <= 0) {
+    // printf("Final nonce %lu\n", nonce);
+    // print_hash(private_final_hash);
+    // print_hash(reversed_hash);
+    // print_hash(private_target);
+    Result private_result;
     private_result.nonce = nonce;
+#pragma unroll
     for (int i = 0; i < 32; i++) {
       private_result.hash[i] = private_final_hash[i];
-      private_result.first_pass[i] = first_pass[i];
-    }
-    for (int i = 0; i < 64; i++) {
-      private_result.vector[i] = vector[i];
-      private_result.product[i] = product[i];
     }
 
-    // Robust atomic update
-#ifdef cl_khr_int64_base_atomics
-    ulong old_nonce = atom_cmpxchg(&result->nonce, 0, private_result.nonce);
-    if (old_nonce == 0) {
+    // Simplified atomic update
+    if (atom_cmpxchg(&result->nonce, 0, private_result.nonce) == 0) {
+#pragma unroll
       for (int i = 0; i < 32; i++) {
         result->hash[i] = private_result.hash[i];
-        result->first_pass[i] = private_result.first_pass[i];
-      }
-      for (int i = 0; i < 64; i++) {
-        result->vector[i] = private_result.vector[i];
-        result->product[i] = private_result.product[i];
       }
     }
-#else
-    volatile global uint *lock = (volatile global uint *)&result->nonce;
-    if (!atom_cmpxchg(lock, 0, 1)) {
-      result->nonce = private_result.nonce;
-      for (int i = 0; i < 32; i++) {
-        result->host[i] = private_result.hash[i];
-        result->first_pass[i] = private_result.first_pass[i];
-      }
-      for (int i = 0; i < 64; i++) {
-        result->vector[i] = private_result.vector[i];
-        result->product[i] = private_result.product[i];
-      }
-      atom_xchg(lock, 0); // Release lock
-    }
-#endif
   }
 }

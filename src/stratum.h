@@ -8,11 +8,29 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <json-c/json.h>
+#include <stdbool.h>
 #include "hoohash-miner.h"
 
 #define BUFFER_SIZE 8192
 
 typedef struct StratumContext StratumContext;
+typedef struct OpenCLResources OpenCLResources;
+typedef struct HashrateDisplay HashrateDisplay;
+typedef struct MiningState MiningState;
+
+struct StratumContext
+{
+  volatile int running;
+  int sockfd;
+  const char *worker;
+  int disable_cpu;
+  int disable_gpu;
+  unsigned int opencl_device_count;
+  OpenCLResources *opencl_resources;
+  HashrateDisplay *hd;
+  MiningState *ms;
+};
+
 StratumContext *init_stratum_context();
 void cleanup_stratum_context(StratumContext *ctx);
 void *stratum_receive_thread(void *arg);

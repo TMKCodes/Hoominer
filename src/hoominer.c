@@ -3,7 +3,8 @@
 #include <stdio.h>
 #include <signal.h>
 #include <pthread.h>
-#include "globals.h"
+#include <stdbool.h>
+#include "opencl.h"
 #include "stratum.h"
 #include "reporting.h"
 #include "hoohash-miner.h"
@@ -39,14 +40,23 @@ int get_cpu_threads()
 
 // Utility Functions
 
-void parse_args(int argc, char **argv, char **pool_ip, int *pool_port, const char **username, const char **password, int *threads)
+void parse_args(int argc, char **argv, char **pool_ip, int *pool_port, const char **username, const char **password,
+                const char **algorithm, int *disable_cpu, int *disable_gpu, int *threads)
 {
+  *disable_cpu = 0;
+  *disable_gpu = 0;
   for (int i = 1; i < argc; i++)
   {
     if (!strcmp(argv[i], "--user") && i + 1 < argc)
       *username = argv[++i];
     else if (!strcmp(argv[i], "--pass") && i + 1 < argc)
       *password = argv[++i];
+    else if (!strcmp(argv[i], "--algorithm") && i + 1 < argc)
+      *algorithm = argv[++i];
+    else if (!strcmp(argv[i], "--disable-cpu"))
+      *disable_cpu = 1;
+    else if (!strcmp(argv[i], "--disable-gpu"))
+      *disable_gpu = 1;
     else if (!strcmp(argv[i], "--cpu-threads") && i + 1 < argc)
       *threads = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--stratum") && i + 1 < argc)
@@ -90,15 +100,31 @@ void parse_args(int argc, char **argv, char **pool_ip, int *pool_port, const cha
     }
     else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h"))
     {
-      printf("Usage: %s [--stratum <stratum+tcp://domain:port>] [--user <user>] [--pass <pass>] [--cpu-threads <n>]\n", argv[0]);
+      printf("Usage: %s [--stratum <stratum+tcp://domain:port>] [--user <user>] [--pass <pass>] [--disable-cpu] [--cpu-threads <n>]\n", argv[0]);
       exit(0);
     }
   }
 }
 
+StratumContext *ctx = NULL;
+
 void cleanup(int sig)
 {
   printf("Cleanup because of %d signal", sig);
+  if (ctx->hd != NULL)
+  {
+    cleanup_hashrate_display(ctx);
+  }
+  if (ctx->ms != NULL)
+  {
+    if (ctx->ms->job != NULL)
+    {
+      cleanup_job(ctx->ms);
+    }
+    cleanup_mining_threads(ctx->ms);
+    cleanup_mining_state(ctx->ms);
+  }
+  cleanup_stratum_context(ctx);
 }
 
 int main(int argc, char **argv)
@@ -110,8 +136,9 @@ int main(int argc, char **argv)
   int pool_port = 5555;
   const char *username = "user";
   const char *password = "x";
+  const char *algorithm = "hoohash";
 
-  StratumContext *ctx = init_stratum_context();
+  ctx = init_stratum_context();
   if (!ctx)
   {
     printf("Failed to allocate StratumContext\n");
@@ -121,8 +148,7 @@ int main(int argc, char **argv)
   ctx->ms = init_mining_state();
 
   ctx->ms->num_cpu_threads = get_cpu_threads();
-
-  parse_args(argc, argv, &pool_ip, &pool_port, &username, &password, &ctx->ms->num_cpu_threads);
+  parse_args(argc, argv, &pool_ip, &pool_port, &username, &password, &algorithm, &ctx->disable_cpu, &ctx->disable_gpu, &ctx->ms->num_cpu_threads);
   if (!pool_ip)
   {
     printf("--stratum required, could not parse ip of the pool from the stratum address.\n");
@@ -134,6 +160,38 @@ int main(int argc, char **argv)
     printf("--username required.\n");
     return 1;
   }
+  ctx->worker = username;
+  if (ctx->disable_gpu == 0)
+  {
+    ctx->opencl_resources = initialize_all_gpus(&ctx->opencl_device_count);
+    printf("OpenCL devices found %d\n", ctx->opencl_device_count);
+    if (!ctx->opencl_resources || ctx->opencl_device_count == 0)
+    {
+      fprintf(stderr, "Failed to initialize OpenCL GPUs, not yet testing for CUDA GPUs.\n");
+      return 1;
+    }
+    // ctx->opencl_resources = opencl_resources;
+    const char *opencl_kernel_filename = NULL;
+    const char *opencl_kernel_name = NULL;
+    if (strcmp(algorithm, "hoohash") == 0)
+    {
+      opencl_kernel_filename = "./build/hoohash.bin"; // TODO: change for release
+      opencl_kernel_name = "Hoohash_hash";
+    }
+    if (opencl_kernel_filename != NULL && opencl_kernel_name != NULL)
+    {
+      for (cl_uint i = 0; i < ctx->opencl_device_count; i++)
+      {
+        cl_int load_kernel_error = load_kernel_binary(&ctx->opencl_resources[i], opencl_kernel_filename, opencl_kernel_name);
+        if (load_kernel_error != CL_SUCCESS)
+        {
+          printf("Failed to initialize OpenCL kernels, not yet testing for CUDA GPUs. Error code %d.\n", load_kernel_error);
+
+          break;
+        }
+      }
+    }
+  }
 
   while (ctx->running)
   {
@@ -142,7 +200,7 @@ int main(int argc, char **argv)
     {
       printf("Failed to connect to stratum server. Retrying in 5 seconds...\n");
       free(pool_ip);
-      cleanup_stratum_context(ctx);
+      cleanup(1);
       sleep(5);
       continue;
     }
@@ -152,7 +210,7 @@ int main(int argc, char **argv)
       printf("Stratum initialization failed. Retrying in 5 seconds...\n");
       close(ctx->sockfd);
       free(pool_ip);
-      cleanup_stratum_context(ctx);
+      cleanup(2);
       sleep(5);
       continue;
     }
@@ -168,7 +226,7 @@ int main(int argc, char **argv)
       pthread_join(recv_thread, NULL);
       close(ctx->sockfd);
       free(pool_ip);
-      cleanup_stratum_context(ctx);
+      cleanup(3);
       sleep(5);
       continue;
     }
@@ -182,7 +240,7 @@ int main(int argc, char **argv)
       pthread_join(display_thread, NULL);
       close(ctx->sockfd);
       free(pool_ip);
-      cleanup_stratum_context(ctx);
+      cleanup(4);
       sleep(5);
       continue;
     }

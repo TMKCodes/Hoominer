@@ -26,6 +26,12 @@
     "hoohash-miner.h": "c",
     "inet.h": "c",
     "stratum.h": "c",
-    "reporting.h": "c"
+    "reporting.h": "c",
+    "list": "c",
+    "iosfwd": "c",
+    "iostream": "c",
+    "ranges": "c",
+    "streambuf": "c",
+    "json.h": "c"
   }
 }

@@ -4,6 +4,7 @@
 #include <gmp.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 double difficulty_from_target(uint8_t *target, size_t len);
 uint8_t *target_from_pool_difficulty(double difficulty, size_t len);

@@ -1,44 +1,32 @@
-
-
 #define _POSIX_C_SOURCE 200112L
 #include "stratum.h"
-#include "globals.h"
 
 StratumContext *init_stratum_context()
 {
   StratumContext *ctx = malloc(sizeof(StratumContext));
   if (!ctx)
   {
-    fprintf(stderr, "Failed to allocate memory for MiningState\n");
+    fprintf(stderr, "Failed to allocate StratumContext\n");
     exit(1);
   }
-  ctx->running = 1;
-  ctx->hd = NULL;
+  ctx->disable_cpu = 0;
+  ctx->disable_gpu = 0;
+  ctx->opencl_device_count = 0;
+  ctx->opencl_resources = NULL;
+  ctx->worker = NULL;
+  ctx->sockfd = -1;
   ctx->ms = NULL;
+  ctx->hd = NULL;
+  ctx->running = true;
   return ctx;
 }
 
 void cleanup_stratum_context(StratumContext *ctx)
 {
-  if (!ctx)
-    return;
-
-  if (ctx->sockfd >= 0)
-    close(ctx->sockfd);
-
-  if (ctx->hd)
+  if (ctx)
   {
-    pthread_mutex_destroy(&ctx->hd->hashrate_mutex);
-    free(ctx->hd);
+    free(ctx);
   }
-
-  if (ctx->ms)
-  {
-    cleanup_mining_state(ctx->ms);
-    free(ctx->ms);
-  }
-
-  free(ctx);
 }
 
 void *stratum_receive_thread(void *arg)
@@ -93,8 +81,10 @@ void *stratum_receive_thread(void *arg)
       json_len -= (end - start + 1);
       start = end + 1;
     }
-    if (json_len > 0)
+    if (json_len > 0 && json_buffer != NULL && start != NULL)
+    {
       memmove(json_buffer, start, json_len);
+    }
   }
   return NULL;
 }

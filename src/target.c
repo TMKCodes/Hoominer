@@ -53,7 +53,12 @@ uint8_t *target_from_pool_difficulty(double difficulty, size_t len)
 
   size_t count;
   mpz_export(target_bytes, &count, 1, sizeof(uint8_t), 0, 0, target);
-  if (count < len)
+  if (target_bytes == NULL || len < 0 || count < 0)
+  {
+    fprintf(stderr, "Invalid input: target_bytes=%p, len=%ld, count=%ld\n",
+            (void *)target_bytes, len, count);
+  }
+  else if (count < len)
   {
     memmove(target_bytes + (len - count), target_bytes, count);
     memset(target_bytes, 0, len - count);

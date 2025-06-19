@@ -1,7 +1,7 @@
 # Define the compiler and flags
 CC = gcc
-CFLAGS = -fPIC -g -Wall -Wextra -DTEST
-LDFLAGS =
+CFLAGS = -fPIC -g -O0 -Wall -Wextra -DTEST -DDEBUG
+LDFLAGS = -lOpenCL
 
 # Build and output directories
 BUILD_DIR = build
@@ -41,9 +41,10 @@ $(MINER_BIN): $(OBJS) | $(BUILD_DIR)
 	$(CC) -o $@ $(OBJS) \
 		algorithms/hoohash/build/lib-hoohash.a \
 		algorithms/blake3/c/build/libblake3.a \
-		-lm -lgmp -ljson-c
+		-lm -lgmp -ljson-c -lOpenCL
 	chmod +x $@
 
 # Clean everything including hoohash
 clean: hoohash-clean
 	rm -rf $(BUILD_DIR)
+
