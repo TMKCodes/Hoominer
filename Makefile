@@ -1,26 +1,32 @@
-# Define the compiler and flags
-CC = gcc
-CFLAGS = -fPIC -g -O0 -Wall -Wextra -DTEST -DDEBUG
-LDFLAGS = -lOpenCL
+# Compiler
+NVCC = nvcc
 
-# Build and output directories
+# Flags
+CFLAGS = -Xcompiler "-fPIC -g -O0 -Wall -Wextra -DTEST -DDEBUG"
+INCLUDES = -Ialgorithms/blake3/c -I/opt/cuda/include
+NVCCFLAGS = $(CFLAGS) $(INCLUDES)
+LDFLAGS = -lm -lgmp -ljson-c -lOpenCL -L/opt/cuda/lib64 -lcuda -lcudart -lnvrtc
+
+# Directories
+SRC_DIR = src
 BUILD_DIR = build
 
-# Output static library
-TARGET_LIB = $(BUILD_DIR)/lib-hoohash.a
-
-# Find all .c source files under .src/
-SRC_DIR = src/
-SRCS = $(wildcard $(SRC_DIR)/*.c)
-OBJS = $(patsubst $(SRC_DIR)/%.c,$(BUILD_DIR)/%.o,$(SRCS))
-
-# Miner binary target
+# Output binary
 MINER_BIN = $(BUILD_DIR)/hoominer
+
+# Source files
+C_SRCS = $(wildcard $(SRC_DIR)/*.c)
+CU_SRCS = $(wildcard $(SRC_DIR)/*.cu)
+
+ALL_SRCS = $(C_SRCS) $(CU_SRCS)
+
+OBJS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SRCS)) \
+       $(patsubst $(SRC_DIR)/%.cu, $(BUILD_DIR)/%.cu.o, $(CU_SRCS))
 
 # Default rule
 all: hoohash $(MINER_BIN)
 
-# Call into subdirectory to build hoohash static lib
+# Build hoohash static lib
 .PHONY: hoohash hoohash-clean
 hoohash:
 	$(MAKE) -C algorithms/hoohash
@@ -28,23 +34,26 @@ hoohash:
 hoohash-clean:
 	$(MAKE) -C algorithms/hoohash clean
 
-# Create build directory if it does not exist
+# Ensure build dir exists
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-# Compile all source files from .src/ to build/*.o
+# Compile .c files with nvcc
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
-	$(CC) $(CFLAGS) -Ialgorithms/blake3/c -c $< -o $@
+	$(NVCC) $(NVCCFLAGS) -c $< -o $@
 
-# Link the miner binary against static libs and all objects
+# Compile .cu files with nvcc
+$(BUILD_DIR)/%.cu.o: $(SRC_DIR)/%.cu | $(BUILD_DIR)
+	$(NVCC) $(NVCCFLAGS) -c $< -o $@
+
+# Link final binary
 $(MINER_BIN): $(OBJS) | $(BUILD_DIR)
-	$(CC) -o $@ $(OBJS) \
+	$(NVCC) -o $@ $(OBJS) \
 		algorithms/hoohash/build/lib-hoohash.a \
 		algorithms/blake3/c/build/libblake3.a \
-		-lm -lgmp -ljson-c -lOpenCL
+		$(LDFLAGS)
 	chmod +x $@
 
-# Clean everything including hoohash
+# Clean everything
 clean: hoohash-clean
 	rm -rf $(BUILD_DIR)
-

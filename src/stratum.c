@@ -13,6 +13,8 @@ StratumContext *init_stratum_context()
   ctx->disable_gpu = 0;
   ctx->opencl_device_count = 0;
   ctx->opencl_resources = NULL;
+  ctx->cuda_device_count = 0;
+  ctx->cuda_resources = NULL;
   ctx->worker = NULL;
   ctx->sockfd = -1;
   ctx->ms = NULL;
@@ -25,6 +27,33 @@ void cleanup_stratum_context(StratumContext *ctx)
 {
   if (ctx)
   {
+    if (ctx->sockfd >= 0)
+    {
+      close(ctx->sockfd);
+      ctx->sockfd = -1;
+    }
+    if (ctx->ms)
+    {
+      cleanup_mining_state(ctx->ms);
+      ctx->ms = NULL;
+    }
+    if (ctx->hd)
+    {
+      cleanup_hashrate_display(ctx);
+      ctx->hd = NULL;
+    }
+    if (ctx->opencl_resources)
+    {
+      cleanup_all_opencl_gpus(ctx->opencl_resources, ctx->opencl_device_count);
+      ctx->opencl_resources = NULL;
+      ctx->opencl_device_count = 0;
+    }
+    if (ctx->cuda_resources)
+    {
+      cleanup_all_cuda_gpus(ctx->cuda_resources, ctx->cuda_device_count);
+      ctx->cuda_resources = NULL;
+      ctx->cuda_device_count = 0;
+    }
     free(ctx);
   }
 }

@@ -17,6 +17,7 @@ typedef struct StratumContext StratumContext;
 typedef struct OpenCLResources OpenCLResources;
 typedef struct HashrateDisplay HashrateDisplay;
 typedef struct MiningState MiningState;
+typedef struct CudaResources CudaResources;
 
 struct StratumContext
 {
@@ -26,7 +27,9 @@ struct StratumContext
   int disable_cpu;
   int disable_gpu;
   unsigned int opencl_device_count;
+  unsigned int cuda_device_count;
   OpenCLResources *opencl_resources;
+  CudaResources *cuda_resources;
   HashrateDisplay *hd;
   MiningState *ms;
 };

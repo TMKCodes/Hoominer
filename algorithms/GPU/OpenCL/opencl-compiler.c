@@ -3,33 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-char *loadSource(const char *filename, size_t *length)
-{
-  FILE *file = fopen(filename, "r");
-  if (!file)
-  {
-    perror("Failed to open file");
-    return NULL;
-  }
-
-  fseek(file, 0, SEEK_END);
-  *length = ftell(file);
-  rewind(file);
-
-  char *source = (char *)malloc(*length + 1);
-  if (!source)
-  {
-    fclose(file);
-    perror("Failed to allocate memory for source");
-    return NULL;
-  }
-
-  fread(source, 1, *length, file);
-  source[*length] = '\0';
-  fclose(file);
-  return source;
-}
-
 int main(int argc, char **argv)
 {
   if (argc < 4)

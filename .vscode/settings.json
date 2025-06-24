@@ -1,0 +1,10 @@
+{
+  "files.associations": {
+    "cuda_runtime.h": "c",
+    "hoohash.h": "c",
+    "bit": "cpp",
+    "hoohash-miner.h": "c",
+    "compare": "cpp",
+    "iosfwd": "cpp"
+  }
+}

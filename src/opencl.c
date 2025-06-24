@@ -7,11 +7,97 @@
 
 #include "opencl.h"
 
-OpenCLResources *initialize_selected_gpus(cl_uint *device_indices, cl_uint num_selected, cl_uint *device_count)
+static uint64_t splitmix64(uint64_t *state)
+{
+  uint64_t z = (*state += 0x9e3779b97f4a7c15ULL);
+  z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
+  z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
+  return z ^ (z >> 31);
+}
+
+cl_int create_xoshiro_random_state(OpenCLResources *resource)
+{
+  if (posix_memalign((void **)&resource->random_state, 64, resource->max_global_work_size * sizeof(cl_ulong4)) != 0)
+  {
+    fprintf(stderr, "Random state allocation failed for %s\n", resource->device_name);
+    clReleaseKernel(resource->kernel);
+    clReleaseProgram(resource->program);
+    return CL_OUT_OF_HOST_MEMORY;
+  }
+
+  // Initialize random state for xoshiro256** with high-quality seeds
+  uint64_t seed_base[2];
+  int fd = open("/dev/urandom", O_RDONLY);
+  if (fd >= 0)
+  {
+    if (read(fd, seed_base, sizeof(seed_base)) != sizeof(seed_base))
+    {
+      fprintf(stderr, "Warning: Failed to read full entropy from /dev/urandom\n");
+      seed_base[0] = (uint64_t)time(NULL);
+      seed_base[1] = (uint64_t)clock();
+    }
+    close(fd);
+  }
+  else
+  {
+    fprintf(stderr, "Warning: /dev/urandom unavailable, using fallback seed\n");
+    seed_base[0] = (uint64_t)time(NULL);
+    seed_base[1] = (uint64_t)clock();
+  }
+
+  // Use splitmix64 to generate unique seeds for each work item
+  for (size_t i = 0; i < resource->max_global_work_size; i++)
+  {
+    uint64_t state = seed_base[0] ^ (i * 0x9e3779b97f4a7c15ULL); // Mix index with base seed
+    state ^= seed_base[1];
+
+    // Generate four 64-bit values for xoshiro256** state
+    resource->random_state[i].s[0] = splitmix64(&state);
+    resource->random_state[i].s[1] = splitmix64(&state);
+    resource->random_state[i].s[2] = splitmix64(&state);
+    resource->random_state[i].s[3] = splitmix64(&state);
+
+    // Ensure non-zero state to avoid degenerate xoshiro state
+    if (resource->random_state[i].s[0] == 0 && NULL == 0 &&
+        resource->random_state[i].s[2] == 0 && NULL == 0)
+    {
+      resource->random_state[i].s[0] = 0x9e3779b97f4a7c15ULL; // Arbitrary non-zero value
+    }
+  }
+  return CL_SUCCESS;
+}
+
+cl_int calculate_work_sizes(OpenCLResources *resource)
+{
+  // Query work group sizes
+  cl_int err;
+  err = clGetDeviceInfo(resource->device, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(size_t), &resource->max_work_group_size, NULL);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Work group query failed for %s: %d\n", resource->device_name, err);
+    clReleaseKernel(resource->kernel);
+    clReleaseProgram(resource->program);
+    return err;
+  }
+  err = clGetKernelWorkGroupInfo(resource->kernel, resource->device, CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE,
+                                 sizeof(size_t), &resource->preferred_multiple, NULL);
+  if (err != CL_SUCCESS)
+  {
+    resource->preferred_multiple = 64; // Fallback
+  }
+  cl_uint compute_units;
+  clGetDeviceInfo(resource->device, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cl_uint), &compute_units, NULL);
+  resource->max_global_work_size = compute_units * resource->max_work_group_size * 10;
+  printf("Max local work size: %ld\n", resource->max_work_group_size);
+  printf("Max global work size: %ld\n", resource->max_global_work_size);
+  return CL_SUCCESS;
+}
+
+OpenCLResources *initialize_selected_opencl_gpus(cl_uint *device_indices, cl_uint num_selected, cl_uint *device_count)
 {
   cl_platform_id platform;
   cl_device_id *devices;
-  cl_uint num_platforms, num_devices;
+  cl_uint num_platforms, num_devices, non_nvidia_count;
   cl_int err;
 
   *device_count = 0;
@@ -35,15 +121,6 @@ OpenCLResources *initialize_selected_gpus(cl_uint *device_indices, cl_uint num_s
     return NULL;
   }
 
-  for (cl_uint i = 0; i < num_selected; i++)
-  {
-    if (device_indices[i] >= num_devices)
-    {
-      fprintf(stderr, "Invalid device index %u: Only %u devices\n", device_indices[i], num_devices);
-      return NULL;
-    }
-  }
-
   devices = malloc(num_devices * sizeof(cl_device_id));
   if (!devices)
   {
@@ -59,10 +136,65 @@ OpenCLResources *initialize_selected_gpus(cl_uint *device_indices, cl_uint num_s
     return NULL;
   }
 
+  // Count non-NVIDIA devices and validate indices
+  cl_uint *non_nvidia_indices = malloc(num_devices * sizeof(cl_uint));
+  if (!non_nvidia_indices)
+  {
+    fprintf(stderr, "Memory allocation failed\n");
+    free(devices);
+    return NULL;
+  }
+  non_nvidia_count = 0;
+  for (cl_uint i = 0; i < num_devices; i++)
+  {
+    char vendor[128];
+    err = clGetDeviceInfo(devices[i], CL_DEVICE_VENDOR, sizeof(vendor), vendor, NULL);
+    if (err != CL_SUCCESS)
+    {
+      fprintf(stderr, "Vendor query failed for device %u: %d\n", i, err);
+      free(non_nvidia_indices);
+      free(devices);
+      return NULL;
+    }
+    if (strstr(vendor, "NVIDIA") == NULL)
+    {
+      non_nvidia_indices[non_nvidia_count++] = i;
+    }
+  }
+
+  if (non_nvidia_count == 0)
+  {
+    free(non_nvidia_indices);
+    free(devices);
+    return NULL;
+  }
+
+  // Validate selected indices
+  for (cl_uint i = 0; i < num_selected; i++)
+  {
+    cl_uint valid = 0;
+    for (cl_uint j = 0; j < non_nvidia_count; j++)
+    {
+      if (device_indices[i] == non_nvidia_indices[j])
+      {
+        valid = 1;
+        break;
+      }
+    }
+    if (!valid || device_indices[i] >= num_devices)
+    {
+      fprintf(stderr, "Invalid device index %u: Only %u non-NVIDIA devices\n", device_indices[i], non_nvidia_count);
+      free(non_nvidia_indices);
+      free(devices);
+      return NULL;
+    }
+  }
+
   OpenCLResources *res = calloc(num_selected, sizeof(OpenCLResources));
   if (!res)
   {
     fprintf(stderr, "Memory allocation failed\n");
+    free(non_nvidia_indices);
     free(devices);
     return NULL;
   }
@@ -94,34 +226,57 @@ OpenCLResources *initialize_selected_gpus(cl_uint *device_indices, cl_uint num_s
     }
 
     // Check if out-of-order queue is supported
-    cl_command_queue_properties queue_properties = 0;
-    cl_command_queue_properties device_queue_props;
+    cl_command_queue_properties device_queue_props = 0;
     err = clGetDeviceInfo(res[i].device, CL_DEVICE_QUEUE_PROPERTIES, sizeof(cl_command_queue_properties), &device_queue_props, NULL);
     if (err != CL_SUCCESS)
     {
       fprintf(stderr, "Device %u queue properties query failed: %d\n", idx, err);
       goto cleanup;
     }
-    if (device_queue_props & CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE)
-    {
-      queue_properties = CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE;
-    }
 
-    res[i].queue = clCreateCommandQueue(res[i].context, res[i].device, queue_properties, &err);
+    cl_queue_properties properties[] = {
+        CL_QUEUE_PROPERTIES,
+        (device_queue_props & CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE) ? CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE : 0,
+        0};
+
+    res[i].queue = clCreateCommandQueueWithProperties(res[i].context, res[i].device, properties, &err);
     if (err != CL_SUCCESS)
     {
-      fprintf(stderr, "Device %u queue failed: %d\n", idx, err);
+      fprintf(stderr, "Device %u queue creation failed: %d\n", idx, err);
       clReleaseContext(res[i].context);
+      goto cleanup;
+    }
+
+    // Calculate work sizes and initialize random state
+    err = calculate_work_sizes(&res[i]);
+    if (err != CL_SUCCESS)
+    {
+      fprintf(stderr, "Calculate work sizes failed for %s: %d\n", res[i].device_name, err);
       goto cleanup;
     }
 
     // Initialize persistent buffers
     res[i].previous_header_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, DOMAIN_HASH_SIZE, NULL, &err);
+    if (err != CL_SUCCESS)
+      goto cleanup;
+
     res[i].timestamp_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, sizeof(cl_long), NULL, &err);
+    if (err != CL_SUCCESS)
+      goto cleanup;
+
     res[i].matrix_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, 64 * 64 * sizeof(double), NULL, &err);
+    if (err != CL_SUCCESS)
+      goto cleanup;
+
     res[i].target_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, DOMAIN_HASH_SIZE, NULL, &err);
+    if (err != CL_SUCCESS)
+      goto cleanup;
+
     res[i].result_buf = clCreateBuffer(res[i].context, CL_MEM_READ_WRITE, sizeof(OpenCLResult), NULL, &err);
-    res[i].random_state_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, MAX_GLOBAL_SIZE * sizeof(cl_ulong4), NULL, &err);
+    if (err != CL_SUCCESS)
+      goto cleanup;
+
+    res[i].random_state_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, res[i].max_global_work_size * sizeof(cl_ulong4), NULL, &err);
     if (err != CL_SUCCESS)
     {
       fprintf(stderr, "Device %u buffer creation failed: %d\n", idx, err);
@@ -131,6 +286,7 @@ OpenCLResources *initialize_selected_gpus(cl_uint *device_indices, cl_uint num_s
     printf("Initialized GPU %u: %s\n", idx, res[i].device_name);
   }
 
+  free(non_nvidia_indices);
   free(devices);
   *device_count = num_selected;
   return res;
@@ -138,25 +294,34 @@ OpenCLResources *initialize_selected_gpus(cl_uint *device_indices, cl_uint num_s
 cleanup:
   for (cl_uint j = 0; j < num_selected; j++)
   {
-    clReleaseMemObject(res[j].previous_header_buf);
-    clReleaseMemObject(res[j].timestamp_buf);
-    clReleaseMemObject(res[j].matrix_buf);
-    clReleaseMemObject(res[j].target_buf);
-    clReleaseMemObject(res[j].result_buf);
-    clReleaseMemObject(res[j].random_state_buf);
-    clReleaseCommandQueue(res[j].queue);
-    clReleaseContext(res[j].context);
+    if (res[j].previous_header_buf)
+      clReleaseMemObject(res[j].previous_header_buf);
+    if (res[j].timestamp_buf)
+      clReleaseMemObject(res[j].timestamp_buf);
+    if (res[j].matrix_buf)
+      clReleaseMemObject(res[j].matrix_buf);
+    if (res[j].target_buf)
+      clReleaseMemObject(res[j].target_buf);
+    if (res[j].result_buf)
+      clReleaseMemObject(res[j].result_buf);
+    if (res[j].random_state_buf)
+      clReleaseMemObject(res[j].random_state_buf);
+    if (res[j].queue)
+      clReleaseCommandQueue(res[j].queue);
+    if (res[j].context)
+      clReleaseContext(res[j].context);
   }
+  free(non_nvidia_indices);
   free(devices);
   free(res);
   return NULL;
 }
 
-OpenCLResources *initialize_all_gpus(cl_uint *device_count)
+OpenCLResources *initalize_all_opencl_gpus(cl_uint *device_count)
 {
   cl_platform_id platform;
   cl_device_id *devices;
-  cl_uint num_platforms, num_devices;
+  cl_uint num_platforms, num_devices, non_nvidia_count;
   cl_int err;
 
   *device_count = 0;
@@ -189,21 +354,56 @@ OpenCLResources *initialize_all_gpus(cl_uint *device_count)
     return NULL;
   }
 
-  OpenCLResources *res = calloc(num_devices, sizeof(OpenCLResources));
-  if (!res)
+  // Count non-NVIDIA devices
+  cl_uint *non_nvidia_indices = malloc(num_devices * sizeof(cl_uint));
+  if (!non_nvidia_indices)
   {
     fprintf(stderr, "Memory allocation failed\n");
     free(devices);
     return NULL;
   }
-
+  non_nvidia_count = 0;
   for (cl_uint i = 0; i < num_devices; i++)
   {
-    res[i].device = devices[i];
+    char vendor[128];
+    err = clGetDeviceInfo(devices[i], CL_DEVICE_VENDOR, sizeof(vendor), vendor, NULL);
+    if (err != CL_SUCCESS)
+    {
+      fprintf(stderr, "Vendor query failed for device %u: %d\n", i, err);
+      free(non_nvidia_indices);
+      free(devices);
+      return NULL;
+    }
+    if (strstr(vendor, "NVIDIA") == NULL)
+    {
+      non_nvidia_indices[non_nvidia_count++] = i;
+    }
+  }
+
+  if (non_nvidia_count == 0)
+  {
+    free(non_nvidia_indices);
+    free(devices);
+    return NULL;
+  }
+
+  OpenCLResources *res = calloc(non_nvidia_count, sizeof(OpenCLResources));
+  if (!res)
+  {
+    fprintf(stderr, "Memory allocation failed\n");
+    free(non_nvidia_indices);
+    free(devices);
+    return NULL;
+  }
+
+  for (cl_uint i = 0; i < non_nvidia_count; i++)
+  {
+    cl_uint idx = non_nvidia_indices[i];
+    res[i].device = devices[idx];
     err = clGetDeviceInfo(res[i].device, CL_DEVICE_NAME, sizeof(res[i].device_name), res[i].device_name, NULL);
     if (err != CL_SUCCESS)
     {
-      fprintf(stderr, "Device %u name query failed: %d\n", i, err);
+      fprintf(stderr, "Device %u name query failed: %d\n", idx, err);
       goto cleanup;
     }
 
@@ -211,85 +411,212 @@ OpenCLResources *initialize_all_gpus(cl_uint *device_count)
     err = clGetDeviceInfo(res[i].device, CL_DEVICE_EXTENSIONS, sizeof(extensions), extensions, NULL);
     if (err != CL_SUCCESS || !strstr(extensions, "cl_khr_fp64"))
     {
-      fprintf(stderr, "Device %u (%s) lacks cl_khr_fp64: %d\n", i, res[i].device_name, err);
+      fprintf(stderr, "Device %u (%s) lacks cl_khr_fp64: %d\n", idx, res[i].device_name, err);
       goto cleanup;
     }
 
     res[i].context = clCreateContext(NULL, 1, &res[i].device, NULL, NULL, &err);
     if (err != CL_SUCCESS)
     {
-      fprintf(stderr, "Device %u context failed: %d\n", i, err);
+      fprintf(stderr, "Device %u context failed: %d\n", idx, err);
       goto cleanup;
     }
 
     // Check if out-of-order queue is supported
-    cl_command_queue_properties queue_properties = 0;
-    cl_command_queue_properties device_queue_props;
+    cl_command_queue_properties device_queue_props = 0;
     err = clGetDeviceInfo(res[i].device, CL_DEVICE_QUEUE_PROPERTIES, sizeof(cl_command_queue_properties), &device_queue_props, NULL);
     if (err != CL_SUCCESS)
     {
-      fprintf(stderr, "Device %u queue properties query failed: %d\n", i, err);
+      fprintf(stderr, "Device %u queue properties query failed: %d\n", idx, err);
       goto cleanup;
     }
-    if (device_queue_props & CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE)
-    {
-      queue_properties = CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE;
-    }
 
-    res[i].queue = clCreateCommandQueue(res[i].context, res[i].device, queue_properties, &err);
+    cl_queue_properties properties[] = {
+        CL_QUEUE_PROPERTIES,
+        (device_queue_props & CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE) ? CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE : 0,
+        0};
+
+    res[i].queue = clCreateCommandQueueWithProperties(res[i].context, res[i].device, properties, &err);
     if (err != CL_SUCCESS)
     {
-      fprintf(stderr, "Device %u queue failed: %d\n", i, err);
+      fprintf(stderr, "Device %u creation failed: %d\n", idx, err);
       clReleaseContext(res[i].context);
       goto cleanup;
     }
 
-    // Initialize persistent buffers
-    res[i].previous_header_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, DOMAIN_HASH_SIZE, NULL, &err);
-    res[i].timestamp_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, sizeof(cl_long), NULL, &err);
-    res[i].matrix_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, 64 * 64 * sizeof(double), NULL, &err);
-    res[i].target_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, DOMAIN_HASH_SIZE, NULL, &err);
-    res[i].result_buf = clCreateBuffer(res[i].context, CL_MEM_READ_WRITE, sizeof(OpenCLResult), NULL, &err);
-    res[i].random_state_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, MAX_GLOBAL_SIZE * sizeof(cl_ulong4), NULL, &err);
+    // Calculate work sizes and initialize random state
+    err = calculate_work_sizes(&res[i]);
     if (err != CL_SUCCESS)
     {
-      fprintf(stderr, "Device %u buffer creation failed: %d\n", i, err);
+      fprintf(stderr, "Calculate work sizes failed for %s: %d\n", res[i].device_name, err);
       goto cleanup;
     }
 
-    printf("Initialized GPU %u: %s\n", i, res[i].device_name);
+    // Initialize buffers
+    res[i].previous_header_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, DOMAIN_HASH_SIZE, NULL, &err);
+    if (err != CL_SUCCESS)
+      goto cleanup;
+
+    res[i].timestamp_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, sizeof(cl_long), NULL, &err);
+    if (err != CL_SUCCESS)
+      goto cleanup;
+
+    res[i].matrix_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, 64 * 64 * sizeof(double), NULL, &err);
+    if (err != CL_SUCCESS)
+      goto cleanup;
+
+    res[i].target_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, DOMAIN_HASH_SIZE, NULL, &err);
+    if (err != CL_SUCCESS)
+      goto cleanup;
+
+    res[i].result_buf = clCreateBuffer(res[i].context, CL_MEM_READ_WRITE, sizeof(OpenCLResult), NULL, &err);
+    if (err != CL_SUCCESS)
+      goto cleanup;
+
+    res[i].random_state_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, res[i].max_global_work_size * sizeof(cl_ulong4), NULL, &err);
+    if (err != CL_SUCCESS)
+    {
+      fprintf(stderr, "Device %u buffer creation failed: %d\n", idx, err);
+      goto cleanup;
+    }
+
+    printf("Initialized GPU %u: %s\n", idx, res[i].device_name);
   }
 
+  free(non_nvidia_indices);
   free(devices);
-  *device_count = num_devices;
+  *device_count = non_nvidia_count;
   return res;
 
 cleanup:
-  for (cl_uint j = 0; j < num_devices; j++)
+  for (cl_uint j = 0; j < non_nvidia_count; j++)
   {
-    clReleaseMemObject(res[j].previous_header_buf);
-    clReleaseMemObject(res[j].timestamp_buf);
-    clReleaseMemObject(res[j].matrix_buf);
-    clReleaseMemObject(res[j].target_buf);
-    clReleaseMemObject(res[j].result_buf);
-    clReleaseMemObject(res[j].random_state_buf);
-    clReleaseCommandQueue(res[j].queue);
-    clReleaseContext(res[j].context);
+    if (res[j].previous_header_buf)
+      clReleaseMemObject(res[j].previous_header_buf);
+    if (res[j].timestamp_buf)
+      clReleaseMemObject(res[j].timestamp_buf);
+    if (res[j].matrix_buf)
+      clReleaseMemObject(res[j].matrix_buf);
+    if (res[j].target_buf)
+      clReleaseMemObject(res[j].target_buf);
+    if (res[j].result_buf)
+      clReleaseMemObject(res[j].result_buf);
+    if (res[j].random_state_buf)
+      clReleaseMemObject(res[j].random_state_buf);
+    if (res[j].queue)
+      clReleaseCommandQueue(res[j].queue);
+    if (res[j].context)
+      clReleaseContext(res[j].context);
   }
+  free(non_nvidia_indices);
   free(devices);
   free(res);
   return NULL;
 }
 
-static uint64_t splitmix64(uint64_t *state)
+cl_int compile_opencl_kernel_from_xxd_header(OpenCLResources *resource, const unsigned char *kernel, unsigned int kernel_length, const char *kernel_name, const char **required_extensions, size_t num_required_extensions)
 {
-  uint64_t z = (*state += 0x9e3779b97f4a7c15ULL);
-  z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
-  z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
-  return z ^ (z >> 31);
+  cl_int err;
+  char *source = malloc(kernel_length + 1);
+  if (!source)
+  {
+    fprintf(stderr, "Failed to allocate memory for kernel source\n");
+    return CL_OUT_OF_HOST_MEMORY;
+  }
+  memcpy(source, kernel, kernel_length);
+  source[kernel_length] = '\0';
+  const char *src_ptr = source;
+  size_t source_len = (size_t)kernel_length;
+
+  printf("Kernel source size: %u bytes\n", kernel_length);
+  printf("Attempting to create kernel: %s\n", kernel_name);
+
+  // Query device capabilities
+  char version[128];
+  char extensions[2048];
+  clGetDeviceInfo(resource->device, CL_DEVICE_OPENCL_C_VERSION, sizeof(version), version, NULL);
+  clGetDeviceInfo(resource->device, CL_DEVICE_EXTENSIONS, sizeof(extensions), extensions, NULL);
+  printf("Device OpenCL C version: %s\n", version);
+  printf("Device extensions: %s\n", extensions);
+
+  // Check required extensions
+  for (size_t i = 0; i < num_required_extensions; i++)
+  {
+    if (!strstr(extensions, required_extensions[i]))
+    {
+      fprintf(stderr, "Device %s does not support required extension: %s\n", resource->device_name, required_extensions[i]);
+      free(source);
+      return CL_INVALID_DEVICE; // Return CL_INVALID_DEVICE for missing extension
+    }
+  }
+
+  // Create program
+  resource->program = clCreateProgramWithSource(resource->context, 1, &src_ptr, &source_len, &err);
+  free(source);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Program creation failed for %s: %d\n", resource->device_name, err);
+    return err;
+  }
+
+  // Compile program
+  const char *build_options = "";
+  err = clBuildProgram(resource->program, 1, &resource->device, build_options, NULL, NULL);
+  if (err != CL_SUCCESS)
+  {
+    char log[4096];
+    clGetProgramBuildInfo(resource->program, resource->device, CL_PROGRAM_BUILD_LOG, sizeof(log), log, NULL);
+    fprintf(stderr, "Build failed for %s with options '%s': %s\n", resource->device_name, build_options, log);
+    clReleaseProgram(resource->program);
+    return err;
+  }
+
+  // List available kernels to debug CL_INVALID_KERNEL_NAME
+  cl_uint num_kernels;
+  err = clCreateKernelsInProgram(resource->program, 0, NULL, &num_kernels);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Failed to query kernels: %d\n", err);
+  }
+  else
+  {
+    cl_kernel *kernels = malloc(sizeof(cl_kernel) * num_kernels);
+    err = clCreateKernelsInProgram(resource->program, num_kernels, kernels, NULL);
+    if (err == CL_SUCCESS)
+    {
+      for (cl_uint i = 0; i < num_kernels; i++)
+      {
+        char kernel_name_buf[256];
+        clGetKernelInfo(kernels[i], CL_KERNEL_FUNCTION_NAME, sizeof(kernel_name_buf), kernel_name_buf, NULL);
+        printf("Kernel %u: %s\n", i, kernel_name_buf);
+        clReleaseKernel(kernels[i]);
+      }
+    }
+    free(kernels);
+  }
+
+  // Create kernel
+  resource->kernel = clCreateKernel(resource->program, kernel_name, &err);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Kernel creation failed for %s: %d\n", resource->device_name, err);
+    clReleaseProgram(resource->program);
+    return err;
+  }
+
+  err = create_xoshiro_random_state(resource);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Generating random state for xoshiro failed for %s: %d\n", resource->device_name, err);
+    clReleaseProgram(resource->program);
+    return err;
+  }
+
+  printf("Kernel %s compiled for %s\n", kernel_name, resource->device_name);
+  return CL_SUCCESS;
 }
 
-cl_int load_kernel_binary(OpenCLResources *resource, const char *binary_filename, const char *kernel_name)
+cl_int load_opencl_kernel_binary(OpenCLResources *resource, const char *binary_filename, const char *kernel_name)
 {
   cl_int err;
   FILE *file = fopen(binary_filename, "rb");
@@ -338,83 +665,27 @@ cl_int load_kernel_binary(OpenCLResources *resource, const char *binary_filename
     return err;
   }
 
-  // Query work group sizes
-  err = clGetDeviceInfo(resource->device, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(size_t), &resource->max_work_group_size, NULL);
+  err = calculate_work_sizes(resource);
   if (err != CL_SUCCESS)
   {
-    fprintf(stderr, "Work group query failed for %s: %d\n", resource->device_name, err);
-    clReleaseKernel(resource->kernel);
+    fprintf(stderr, "Calculate worksizes failed for %s: %d\n", resource->device_name, err);
     clReleaseProgram(resource->program);
     return err;
   }
-  err = clGetKernelWorkGroupInfo(resource->kernel, resource->device, CL_KERNEL_PREFERRED_WORK_GROUP_SIZE_MULTIPLE,
-                                 sizeof(size_t), &resource->preferred_multiple, NULL);
+  err = create_xoshiro_random_state(resource);
   if (err != CL_SUCCESS)
   {
-    resource->preferred_multiple = 64; // Fallback
-  }
-  cl_uint compute_units;
-  clGetDeviceInfo(resource->device, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cl_uint), &compute_units, NULL);
-  resource->max_global_work_size = compute_units * resource->max_work_group_size * 10;
-  printf("Max local work size: %ld\n", resource->max_work_group_size);
-  printf("Max global work size: %ld\n", resource->max_global_work_size);
-
-  // Allocate random state
-  if (posix_memalign((void **)&resource->random_state, 64, resource->max_global_work_size * sizeof(cl_ulong4)) != 0)
-  {
-    fprintf(stderr, "Random state allocation failed for %s\n", resource->device_name);
-    clReleaseKernel(resource->kernel);
+    fprintf(stderr, "Generating random state for xoshiro failed for %s: %d\n", resource->device_name, err);
     clReleaseProgram(resource->program);
-    return CL_OUT_OF_HOST_MEMORY;
+    return err;
   }
-
-  // Initialize random state for xoshiro256** with high-quality seeds
-  uint64_t seed_base[2];
-  int fd = open("/dev/urandom", O_RDONLY);
-  if (fd >= 0)
-  {
-    if (read(fd, seed_base, sizeof(seed_base)) != sizeof(seed_base))
-    {
-      fprintf(stderr, "Warning: Failed to read full entropy from /dev/urandom\n");
-      seed_base[0] = (uint64_t)time(NULL);
-      seed_base[1] = (uint64_t)clock();
-    }
-    close(fd);
-  }
-  else
-  {
-    fprintf(stderr, "Warning: /dev/urandom unavailable, using fallback seed\n");
-    seed_base[0] = (uint64_t)time(NULL);
-    seed_base[1] = (uint64_t)clock();
-  }
-
-  // Use splitmix64 to generate unique seeds for each work item
-  for (size_t i = 0; i < resource->max_global_work_size; i++)
-  {
-    uint64_t state = seed_base[0] ^ (i * 0x9e3779b97f4a7c15ULL); // Mix index with base seed
-    state ^= seed_base[1];
-
-    // Generate four 64-bit values for xoshiro256** state
-    resource->random_state[i].s[0] = splitmix64(&state);
-    resource->random_state[i].s[1] = splitmix64(&state);
-    resource->random_state[i].s[2] = splitmix64(&state);
-    resource->random_state[i].s[3] = splitmix64(&state);
-
-    // Ensure non-zero state to avoid degenerate xoshiro state
-    if (resource->random_state[i].s[0] == 0 && resource->random_state[i].s[1] == 0 &&
-        resource->random_state[i].s[2] == 0 && resource->random_state[i].s[3] == 0)
-    {
-      resource->random_state[i].s[0] = 0x9e3779b97f4a7c15ULL; // Arbitrary non-zero value
-    }
-  }
-
   printf("Kernel %s loaded for %s\n", kernel_name, resource->device_name);
   return CL_SUCCESS;
 }
 
-cl_int run_hoohash_kernel(OpenCLResources *resource, cl_ulong local_size, cl_ulong global_size,
-                          unsigned char *previous_header, unsigned char *target, double matrix[64][64],
-                          unsigned long timestamp, cl_ulong nonce_mask, cl_ulong nonce_fixed, OpenCLResult *result)
+cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong local_size, cl_ulong global_size,
+                                 unsigned char *previous_header, unsigned char *target, double matrix[64][64],
+                                 unsigned long timestamp, cl_ulong nonce_mask, cl_ulong nonce_fixed, OpenCLResult *result)
 {
   cl_int err;
   cl_event write_events[5], kernel_event, read_event;
@@ -446,7 +717,7 @@ cl_int run_hoohash_kernel(OpenCLResources *resource, cl_ulong local_size, cl_ulo
     goto cleanup;
   }
 
-  err = clEnqueueWriteBuffer(resource->queue, resource->random_state_buf, CL_FALSE, 0, global_size * sizeof(cl_ulong4), resource->random_state, 0, NULL, NULL);
+  err = clEnqueueWriteBuffer(resource->queue, resource->random_state_buf, CL_FALSE, 0, resource->max_global_work_size * sizeof(cl_ulong4), resource->random_state, 0, NULL, NULL);
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Random state buffer write failed for %s: %d\n", resource->device_name, err);
@@ -524,7 +795,7 @@ void cleanup_opencl_resources(OpenCLResources *resource)
   clReleaseContext(resource->context);
 }
 
-void cleanup_all_gpus(OpenCLResources *resources, cl_uint device_count)
+void cleanup_all_opencl_gpus(OpenCLResources *resources, cl_uint device_count)
 {
   if (!resources)
     return;

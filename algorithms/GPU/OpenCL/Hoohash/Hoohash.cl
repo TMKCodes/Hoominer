@@ -15,12 +15,6 @@
 #define COMPLEX_TRANSFORM_MULTIPLIER 0.000001
 #define PI 3.14159265358979323846
 
-#define LT_U256(X, Y)                                                          \
-  (X.x != Y->x   ? X.x < Y->x                                                  \
-   : X.y != Y->y ? X.y < Y->y                                                  \
-   : X.z != Y->z ? X.z < Y->z                                                  \
-                 : X.w < Y->w)
-
 __constant uint IV[8] = {0x6A09E667UL, 0xBB67AE85UL, 0x3C6EF372UL,
                          0xA54FF53AUL, 0x510E527FUL, 0x9B05688CUL,
                          0x1F83D9ABUL, 0x5BE0CD19UL};
@@ -811,8 +805,9 @@ int compare_target(uchar *hash, uchar *target) {
 
 void HoohashMatrixMultiplication(__constant double mat[64][64],
                                  const uchar *hashBytes, uchar *output,
-                                 ulong nonce, uchar vector[64],
-                                 double product[64]) {
+                                 ulong nonce) {
+  uchar vector[64] = {0};
+  double product[64] = {0};
   uchar scaledValues[32] = {0};
   uchar result[32] = {0};
   uint H[8] = {0};
@@ -926,8 +921,7 @@ __kernel void Hoohash_hash(const ulong local_size, const ulong nonce_mask,
   uchar private_final_hash[DOMAIN_HASH_SIZE];
   uchar vector[64] = {0};
   double product[64] = {0};
-  HoohashMatrixMultiplication(matrix, first_pass, private_final_hash, nonce,
-                              vector, product);
+  HoohashMatrixMultiplication(matrix, first_pass, private_final_hash, nonce);
 
   // Compare with target
   uchar private_target[DOMAIN_HASH_SIZE];
