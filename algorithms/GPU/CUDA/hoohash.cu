@@ -926,7 +926,7 @@ __device__ inline ulong xoshiro256_next(ulong4 *s)
     return result;
 }
 
-__device__ void print_hash(const unsigned char *hash)
+__device__ void print_hash(unsigned char *hash)
 {
     printf("%02x%02x%02x%02x%02x%02x%02x%02x"
            "%02x%02x%02x%02x%02x%02x%02x%02x"
@@ -1055,7 +1055,6 @@ extern "C" __global__ void Hoohash_hash(
         nonce = xoshiro256_next(((ulong4 *)random_state) + nonceId);
     }
     nonce = (nonce & nonce_mask) | nonce_fixed;
-
     // Hash computation
     blake3_hasher hasher;
     blake3_hasher_init(&hasher);
@@ -1081,7 +1080,6 @@ extern "C" __global__ void Hoohash_hash(
         reversed_hash[i] = final_hash[DOMAIN_HASH_SIZE - 1 - i];
     }
 
-    // Early return if not better than target
     if (compare_target(reversed_hash, target) <= 0)
     {
         // Try atomic write if better hash found

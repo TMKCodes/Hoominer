@@ -6,8 +6,6 @@
 
 #define DOMAIN_HASH_SIZE 32
 #define RANDOM_TYPE_XOSHIRO 1
-#define MAX_ITERATIONS 18446744073709551615
-
 unsigned char *loadBinary(const char *filename, size_t *length)
 {
   FILE *file = fopen(filename, "rb");

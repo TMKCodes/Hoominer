@@ -13,7 +13,6 @@
 #define RANDOM_TYPE_XOSHIRO 1
 #define RANDOM_TYPE_LEAN 0
 #define MAX_GLOBAL_SIZE 524288
-#define MAX_ITERATIONS 18446744073709551615UL
 
 typedef struct OpenCLResult OpenCLResult;
 typedef struct OpenCLResources OpenCLResources;

@@ -118,7 +118,7 @@ CudaResources *initialize_selected_cuda_gpus(unsigned int *device_indices, unsig
       goto cleanup;
     }
     strncpy(res[i].device_name, res[i].device_prop.name, sizeof(res[i].device_name) - 1);
-    res[i].device_id = idx; // Set device_id
+    res[i].device_id = idx;
 
     if (res[i].device_prop.computeMode == cudaComputeModeProhibited || res[i].device_prop.major < 2)
     {
@@ -133,12 +133,11 @@ CudaResources *initialize_selected_cuda_gpus(unsigned int *device_indices, unsig
       goto cleanup;
     }
 
-    res[i].max_grid_size = res[i].device_prop.maxGridSize[0];
-    res[i].max_block_size = res[i].device_prop.maxThreadsPerBlock;
+    res[i].max_block_size = 256;
+    res[i].max_grid_size = (NONCE_TARGET + res[i].max_block_size - 1) / res[i].max_block_size;
     printf("Max grid size: %ld\n", res[i].max_grid_size);
     printf("Max block size: %ld\n", res[i].max_block_size);
 
-    // Allocate device memory with individual error checks
     err = cudaMalloc(&res[i].previous_header, DOMAIN_HASH_SIZE);
     if (err != cudaSuccess)
     {
@@ -169,12 +168,18 @@ CudaResources *initialize_selected_cuda_gpus(unsigned int *device_indices, unsig
       fprintf(stderr, "Device %u result allocation failed: %s\n", idx, cudaGetErrorString(err));
       goto cleanup;
     }
-    err = cudaMalloc((void **)&res[i].random_state, res[i].max_block_size * 4 * sizeof(unsigned long long));
+    err = cudaMalloc(&res[i].random_state, res[i].max_block_size * 4 * sizeof(unsigned long long));
     if (err != cudaSuccess)
     {
-      fprintf(stderr, "cudaMalloc failed for random state: %s\n", cudaGetErrorString(err));
+      fprintf(stderr, "Device %u random_state allocation failed: %s\n", idx, cudaGetErrorString(err));
       goto cleanup;
     }
+    // err = cudaMalloc(&res[i].printf_buffer, PRINTF_BUFFER_SIZE);
+    // if (err != cudaSuccess)
+    // {
+    //   fprintf(stderr, "Device %u printf_buffer allocation failed: %s\n", idx, cudaGetErrorString(err));
+    //   goto cleanup;
+    // }
 
     err = create_xoshiro_random_state(&res[i]);
     if (err != cudaSuccess)
@@ -198,6 +203,7 @@ cleanup:
     cudaFree(res[j].target);
     cudaFree(res[j].result);
     cudaFree(res[j].random_state);
+    // cudaFree(res[j].printf_buffer);
     free(res[j].h_random_state);
     cudaStreamDestroy(res[j].stream);
   }
@@ -240,8 +246,8 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count)
       fprintf(stderr, "Device %u properties query failed: %s\n", i, cudaGetErrorString(err));
       goto cleanup;
     }
-    strncpy(res[i].device_name, res[i].device_prop.name, sizeof(res[i].device_name) - 1);
-    res[i].device_id = i; // Set device_id
+    strncpy(res[i].device_name, res[i].device_prop.name, sizeof(res[i].device_name) - err);
+    res[i].device_id = i;
 
     if (res[i].device_prop.computeMode == cudaComputeModeProhibited || res[i].device_prop.major < 2)
     {
@@ -256,12 +262,11 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count)
       goto cleanup;
     }
 
-    res[i].max_grid_size = res[i].device_prop.maxGridSize[0];
-    res[i].max_block_size = res[i].device_prop.maxThreadsPerBlock;
+    res[i].max_block_size = 256;
+    res[i].max_grid_size = (NONCE_TARGET + res[i].max_block_size - 1) / res[i].max_block_size;
     printf("Max grid size: %ld\n", res[i].max_grid_size);
     printf("Max block size: %ld\n", res[i].max_block_size);
 
-    // Allocate device memory with individual error checks
     err = cudaMalloc(&res[i].previous_header, DOMAIN_HASH_SIZE);
     if (err != cudaSuccess)
     {
@@ -298,6 +303,12 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count)
       fprintf(stderr, "Device %u random_state allocation failed: %s\n", i, cudaGetErrorString(err));
       goto cleanup;
     }
+    // err = cudaMalloc(&res[i].printf_buffer, PRINTF_BUFFER_SIZE);
+    // if (err != cudaSuccess)
+    // {
+    //   fprintf(stderr, "Device %u printf_buffer allocation failed: %s\n", i, cudaGetErrorString(err));
+    //   goto cleanup;
+    // }
 
     err = create_xoshiro_random_state(&res[i]);
     if (err != cudaSuccess)
@@ -321,6 +332,7 @@ cleanup:
     cudaFree(res[j].target);
     cudaFree(res[j].result);
     cudaFree(res[j].random_state);
+    // cudaFree(res[j].printf_buffer);
     free(res[j].h_random_state);
     cudaStreamDestroy(res[j].stream);
   }
@@ -349,7 +361,6 @@ cudaError_t compile_cuda_kernel_from_xxd_header(CudaResources *resource, const c
     return err;
   }
 
-  // Check required extensions
   for (size_t i = 0; i < num_required_extensions; i++)
   {
     if (strcmp(required_extensions[i], "double_precision") == 0 && resource->device_prop.major < 2)
@@ -359,7 +370,6 @@ cudaError_t compile_cuda_kernel_from_xxd_header(CudaResources *resource, const c
     }
   }
 
-  // Create NVRTC program
   nvrtcResult nvrtc_err = nvrtcCreateProgram(&prog, (const char *)source, "hoohash.cu", 0, NULL, NULL);
   if (nvrtc_err != NVRTC_SUCCESS)
   {
@@ -367,7 +377,6 @@ cudaError_t compile_cuda_kernel_from_xxd_header(CudaResources *resource, const c
     return cudaErrorInvalidSource;
   }
 
-  // Set compilation options based on device compute capability
   char arch_option[32];
   snprintf(arch_option, sizeof(arch_option), "--gpu-architecture=compute_%d%d", resource->device_prop.major, resource->device_prop.minor);
   const char *cuda_include_path = getenv("CUDA_INCLUDE_PATH") ?: "/usr/local/cuda/include";
@@ -381,10 +390,10 @@ cudaError_t compile_cuda_kernel_from_xxd_header(CudaResources *resource, const c
       "--use_fast_math",
       "--std=c++17",
       cuda_include_option,
-      std_include_option};
+      std_include_option,
+      "-rdc=true"}; // Enable relocatable device code for printf support
 
-  // Compile the program
-  nvrtc_err = nvrtcCompileProgram(prog, 4, opts); // Update to 4 options
+  nvrtc_err = nvrtcCompileProgram(prog, 6, opts);
   if (nvrtc_err != NVRTC_SUCCESS)
   {
     fprintf(stderr, "NVRTC compilation failed for %s: %s\n", resource->device_name, nvrtcGetErrorString(nvrtc_err));
@@ -401,7 +410,6 @@ cudaError_t compile_cuda_kernel_from_xxd_header(CudaResources *resource, const c
     return cudaErrorInvalidSource;
   }
 
-  // Get PTX
   nvrtc_err = nvrtcGetPTXSize(prog, &ptx_size);
   if (nvrtc_err != NVRTC_SUCCESS)
   {
@@ -429,7 +437,6 @@ cudaError_t compile_cuda_kernel_from_xxd_header(CudaResources *resource, const c
 
   nvrtcDestroyProgram(&prog);
 
-  // Load PTX into CUDA module
   cu_err = cuModuleLoadData(&resource->module, ptx);
   free(ptx);
   if (cu_err != CUDA_SUCCESS)
@@ -511,6 +518,42 @@ cudaError_t load_cuda_kernel_binary(CudaResources *resource, const char *cubin_f
   return cudaSuccess;
 }
 
+// cudaError_t retrieve_kernel_printf(CudaResources *resource)
+// {
+//   cudaError_t err;
+//   char *h_printf_buffer = (char *)malloc(PRINTF_BUFFER_SIZE);
+//   if (!h_printf_buffer)
+//   {
+//     fprintf(stderr, "Host printf buffer allocation failed for %s\n", resource->device_name);
+//     return cudaErrorMemoryAllocation;
+//   }
+
+//   err = cudaMemcpyAsync(h_printf_buffer, resource->printf_buffer, PRINTF_BUFFER_SIZE, cudaMemcpyDeviceToHost, resource->stream);
+//   if (err != cudaSuccess)
+//   {
+//     fprintf(stderr, "Printf buffer copy failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
+//     free(h_printf_buffer);
+//     return err;
+//   }
+
+//   err = cudaStreamSynchronize(resource->stream);
+//   if (err != cudaSuccess)
+//   {
+//     fprintf(stderr, "Stream synchronization failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
+//     free(h_printf_buffer);
+//     return err;
+//   }
+
+//   h_printf_buffer[PRINTF_BUFFER_SIZE - 1] = '\0';
+//   if (strlen(h_printf_buffer) > 0)
+//   {
+//     printf("Kernel printf output from %s:\n%s\n", resource->device_name, h_printf_buffer);
+//   }
+
+//   free(h_printf_buffer);
+//   return cudaSuccess;
+// }
+
 cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *previous_header, unsigned char *target, double matrix[64][64],
                                     unsigned long timestamp, unsigned long nonce_mask, unsigned long nonce_fixed, CudaResult *result)
 {
@@ -529,7 +572,13 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
     return err;
   }
 
-  // Async data transfers
+  // err = cudaMemsetAsync(resource->printf_buffer, 0, PRINTF_BUFFER_SIZE, resource->stream);
+  // if (err != cudaSuccess)
+  // {
+  //   fprintf(stderr, "Printf buffer reset failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
+  //   return err;
+  // }
+
   err = cudaMemcpyAsync(resource->previous_header, previous_header, DOMAIN_HASH_SIZE, cudaMemcpyHostToDevice, resource->stream);
   if (err != cudaSuccess)
   {
@@ -594,16 +643,21 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
                                    resource->stream,
                                    args,
                                    NULL);
+  if (cu_err != CUDA_SUCCESS)
+  {
+    const char *err_str;
+    cuGetErrorString(cu_err, &err_str);
+    fprintf(stderr, "Kernel launch failed for %s: %s\n", resource->device_name, err_str);
+    return cudaErrorLaunchFailure;
+  }
 
-  // Check kernel launch error
   err = cudaGetLastError();
   if (err != cudaSuccess)
   {
-    fprintf(stderr, "Kernel launch failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
+    fprintf(stderr, "Kernel launch error for %s: %s\n", resource->device_name, cudaGetErrorString(err));
     return err;
   }
 
-  // Copy result back to host
   err = cudaMemcpyAsync(result, resource->result, sizeof(CudaResult), cudaMemcpyDeviceToHost, resource->stream);
   if (err != cudaSuccess)
   {
@@ -611,13 +665,19 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
     return err;
   }
 
-  // Wait for all operations to complete
   err = cudaStreamSynchronize(resource->stream);
   if (err != cudaSuccess)
   {
     fprintf(stderr, "Stream synchronization failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
     return err;
   }
+
+  // err = retrieve_kernel_printf(resource);
+  // if (err != cudaSuccess)
+  // {
+  //   fprintf(stderr, "Failed to retrieve kernel printf for %s: %s\n", resource->device_name, cudaGetErrorString(err));
+  //   return err;
+  // }
 
   return cudaSuccess;
 }
@@ -635,6 +695,7 @@ void cleanup_cuda_resources(CudaResources *resource)
   cudaFree(resource->target);
   cudaFree(resource->result);
   cudaFree(resource->random_state);
+  // cudaFree(resource->printf_buffer);
   cuModuleUnload(resource->module);
   cudaStreamDestroy(resource->stream);
 }

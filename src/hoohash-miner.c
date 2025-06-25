@@ -257,12 +257,6 @@ void *mining_opencl_thread(void *arg)
   MiningState *ms = ctx->ms;
   State state = {0};
   char *current_job_id = NULL;
-  uint8_t *local_target = malloc(DOMAIN_HASH_SIZE);
-  if (!local_target)
-  {
-    fprintf(stderr, "Device %d: Failed to allocate local_target\n", mt->threadIndex);
-    exit(1);
-  }
   cl_ulong local_size = ctx->opencl_resources->max_work_group_size;
   cl_ulong global_size = ctx->opencl_resources->max_global_work_size;
   cl_ulong nonce_mask = 0xFFFFFFFFFFFFFFFFULL;
@@ -270,12 +264,6 @@ void *mining_opencl_thread(void *arg)
 
   while (ctx->running)
   {
-    pthread_mutex_lock(&ms->target_mutex);
-    if (ms->global_target)
-      memcpy(local_target, ms->global_target, DOMAIN_HASH_SIZE);
-    else
-      memset(local_target, 0, DOMAIN_HASH_SIZE);
-    pthread_mutex_unlock(&ms->target_mutex);
 
     QueuedJob current_job = {0};
     if (!get_current_job(ms, &current_job, &current_job_id))
@@ -302,18 +290,19 @@ void *mining_opencl_thread(void *arg)
 
       OpenCLResult result = {0};
       cl_int status = run_opencl_hoohash_kernel(&ctx->opencl_resources[mt->threadIndex], local_size, global_size,
-                                                state.PrevHeader, local_target, state.mat, state.Timestamp,
+                                                state.PrevHeader, ms->global_target, state.mat, state.Timestamp,
                                                 nonce_mask, nonce_fixed, &result);
+
+      pthread_mutex_lock(&ctx->hd->hashrate_mutex);
+      ctx->hd->nonces_processed += global_size;
+      pthread_mutex_unlock(&ctx->hd->hashrate_mutex);
+
       if (status != CL_SUCCESS)
       {
         fprintf(stderr, "Device %d: Kernel execution failed: %d\n", mt->threadIndex, status);
         nonce_fixed += global_size;
         break;
       }
-
-      pthread_mutex_lock(&ctx->hd->hashrate_mutex);
-      ctx->hd->nonces_processed += global_size;
-      pthread_mutex_unlock(&ctx->hd->hashrate_mutex);
 
       if (result.nonce != 0)
       {
@@ -333,7 +322,6 @@ void *mining_opencl_thread(void *arg)
   }
 
   free(current_job_id);
-  free(local_target);
   return NULL;
 }
 
@@ -344,24 +332,12 @@ void *mining_cuda_thread(void *arg)
   MiningState *ms = ctx->ms;
   State state = {0};
   char *current_job_id = NULL;
-  uint8_t *local_target = malloc(DOMAIN_HASH_SIZE);
-  if (!local_target)
-  {
-    fprintf(stderr, "Device %d: Failed to allocate local_target\n", mt->threadIndex);
-    exit(1);
-  }
-  cl_ulong global_size = ctx->cuda_resources->max_block_size;
+  cl_ulong hashes_per_cuda_call = ctx->cuda_resources->max_grid_size * ctx->cuda_resources->max_block_size;
   cl_ulong nonce_mask = 0xFFFFFFFFFFFFFFFFULL;
-  cl_ulong nonce_fixed = (cl_ulong)mt->threadIndex * global_size;
+  cl_ulong nonce_fixed = (cl_ulong)mt->threadIndex * hashes_per_cuda_call;
 
   while (ctx->running)
   {
-    pthread_mutex_lock(&ms->target_mutex);
-    if (ms->global_target)
-      memcpy(local_target, ms->global_target, DOMAIN_HASH_SIZE);
-    else
-      memset(local_target, 0, DOMAIN_HASH_SIZE);
-    pthread_mutex_unlock(&ms->target_mutex);
 
     QueuedJob current_job = {0};
     if (!get_current_job(ms, &current_job, &current_job_id))
@@ -388,22 +364,22 @@ void *mining_cuda_thread(void *arg)
 
       CudaResult result = {0};
       cl_int status = run_cuda_hoohash_kernel(&ctx->cuda_resources[mt->threadIndex],
-                                              state.PrevHeader, local_target, state.mat, state.Timestamp,
+                                              state.PrevHeader, ms->global_target, state.mat, state.Timestamp,
                                               nonce_mask, nonce_fixed, &result);
+
+      pthread_mutex_lock(&ctx->hd->hashrate_mutex);
+      ctx->hd->nonces_processed += hashes_per_cuda_call;
+      pthread_mutex_unlock(&ctx->hd->hashrate_mutex);
+
       if (status != CL_SUCCESS)
       {
         fprintf(stderr, "Device %d: Kernel execution failed: %d\n", mt->threadIndex, status);
-        nonce_fixed += global_size;
+        nonce_fixed += hashes_per_cuda_call;
         break;
       }
 
-      pthread_mutex_lock(&ctx->hd->hashrate_mutex);
-      ctx->hd->nonces_processed += global_size;
-      pthread_mutex_unlock(&ctx->hd->hashrate_mutex);
-
       if (result.nonce != 0)
       {
-        printf("Nonce: %llu, PoW Hash: %s\n", result.nonce, encodeHex(result.hash, 32));
         pthread_mutex_lock(&ms->target_mutex);
         int meets_target = compare_target(result.hash, ms->global_target, DOMAIN_HASH_SIZE);
         pthread_mutex_unlock(&ms->target_mutex);
@@ -415,12 +391,11 @@ void *mining_cuda_thread(void *arg)
         }
       }
 
-      nonce_fixed += global_size;
+      nonce_fixed += hashes_per_cuda_call;
     }
   }
 
   free(current_job_id);
-  free(local_target);
   return NULL;
 }
 

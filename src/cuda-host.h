@@ -21,7 +21,8 @@ extern "C"
 #define DOMAIN_HASH_SIZE 32
 #define RANDOM_TYPE_XOSHIRO 1
 #define RANDOM_TYPE_LEAN 0
-#define MAX_ITERATIONS 18446744073709551615UL
+#define PRINTF_BUFFER_SIZE (1024 * 1024) // 1MB printf buffer
+#define NONCE_TARGET 100000
 
   // Forward declarations
   typedef struct CudaResult CudaResult;
@@ -49,6 +50,7 @@ extern "C"
     unsigned long long *random_state;
     CudaResult *result;
     unsigned long long *h_random_state; // Host-side random state
+    char *printf_buffer;                // Device printf buffer
     size_t max_grid_size;
     size_t max_block_size;
     int device_id; // Store device ID for cudaSetDevice
@@ -64,6 +66,7 @@ extern "C"
   void cleanup_all_cuda_gpus(CudaResources *resources, unsigned int device_count);
   cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *previous_header, unsigned char *target, double matrix[64][64],
                                       unsigned long timestamp, unsigned long nonce_mask, unsigned long nonce_fixed, CudaResult *result);
+  cudaError_t retrieve_kernel_printf(CudaResources *resource);
 
 #ifdef __cplusplus
 }
