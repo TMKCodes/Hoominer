@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <json-c/json.h>
 #include <stdbool.h>
+#include "datatypes.h"
 #include "hoohash-miner.h"
 
 #define BUFFER_SIZE 8192
@@ -26,16 +27,18 @@ struct StratumContext
   const char *worker;
   int disable_cpu;
   int disable_gpu;
+  unsigned int cpu_device_count;
   unsigned int opencl_device_count;
   unsigned int cuda_device_count;
   OpenCLResources *opencl_resources;
   CudaResources *cuda_resources;
   HashrateDisplay *hd;
   MiningState *ms;
+  pthread_t recv_thread;
+  IntFifo mining_submit_fifo;
 };
 
 StratumContext *init_stratum_context();
-void cleanup_stratum_context(StratumContext *ctx);
 void *stratum_receive_thread(void *arg);
 int stratum_subscribe(int sockfd);
 int stratum_authenticate(int sockfd, const char *username, const char *password);

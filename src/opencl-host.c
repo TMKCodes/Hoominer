@@ -4,8 +4,9 @@
 #include <string.h>
 #include <errno.h>
 #include <time.h>
+#include <pciaccess.h>
 
-#include "opencl.h"
+#include "opencl-host.h"
 
 static uint64_t splitmix64(uint64_t *state)
 {
@@ -15,17 +16,62 @@ static uint64_t splitmix64(uint64_t *state)
   return z ^ (z >> 31);
 }
 
+// cl_int create_xoshiro_random_state(OpenCLResources *resource)
+// {
+//   // if (posix_memalign((void **)&resource->random_state, 64, sizeof(cl_ulong4)) != 0)
+//   // {
+//   //   fprintf(stderr, "Random state allocation failed for %s\n", resource->device_name);
+//   //   clReleaseKernel(resource->kernel);
+//   //   clReleaseProgram(resource->program);
+//   //   return CL_OUT_OF_HOST_MEMORY;
+//   // }
+
+//   // Initialize random state for xoshiro256** with high-quality seeds
+//   uint64_t seed_base;
+//   int fd = open("/dev/urandom", O_RDONLY);
+//   if (fd >= 0)
+//   {
+//     if (read(fd, &seed_base, sizeof(seed_base)) != sizeof(seed_base))
+//     {
+//       fprintf(stderr, "Warning: Failed to read full entropy from /dev/urandom\n");
+//       seed_base = (uint64_t)time(NULL);
+//     }
+//     close(fd);
+//   }
+//   else
+//   {
+//     fprintf(stderr, "Warning: /dev/urandom unavailable, using fallback seed\n");
+//     seed_base = (uint64_t)time(NULL);
+//   }
+//   resource->random_state.x = seed_base;
+//   resource->random_state.y = splitmix64(&seed_base);
+//   resource->random_state.z = splitmix64(&seed_base);
+//   resource->random_state.w = splitmix64(&seed_base);
+
+//   // // Use splitmix64 to generate unique seeds for each work item
+//   // for (size_t i = 0; i < resource->; i++)
+//   // {
+//   //   uint64_t state = seed_base[0] ^ (i * 0x9e3779b97f4a7c15ULL); // Mix index with base seed
+//   //   state ^= seed_base[1];
+
+//   //   // Generate four 64-bit values for xoshiro256** state
+//   //   resource->random_state[i].s[0] = splitmix64(&state);
+//   //   resource->random_state[i].s[1] = splitmix64(&state);
+//   //   resource->random_state[i].s[2] = splitmix64(&state);
+//   //   resource->random_state[i].s[3] = splitmix64(&state);
+
+//   //   // Ensure non-zero state to avoid degenerate xoshiro state
+//   //   if (resource->random_state[i].s[0] == 0 && NULL == 0 &&
+//   //       resource->random_state[i].s[2] == 0 && NULL == 0)
+//   //   {
+//   //     resource->random_state[i].s[0] = 0x9e3779b97f4a7c15ULL; // Arbitrary non-zero value
+//   //   }
+//   // }
+//   return CL_SUCCESS;
+// }
+
 cl_int create_xoshiro_random_state(OpenCLResources *resource)
 {
-  if (posix_memalign((void **)&resource->random_state, 64, resource->max_global_work_size * sizeof(cl_ulong4)) != 0)
-  {
-    fprintf(stderr, "Random state allocation failed for %s\n", resource->device_name);
-    clReleaseKernel(resource->kernel);
-    clReleaseProgram(resource->program);
-    return CL_OUT_OF_HOST_MEMORY;
-  }
-
-  // Initialize random state for xoshiro256** with high-quality seeds
   uint64_t seed_base[2];
   int fd = open("/dev/urandom", O_RDONLY);
   if (fd >= 0)
@@ -45,25 +91,21 @@ cl_int create_xoshiro_random_state(OpenCLResources *resource)
     seed_base[1] = (uint64_t)clock();
   }
 
-  // Use splitmix64 to generate unique seeds for each work item
-  for (size_t i = 0; i < resource->max_global_work_size; i++)
+  uint64_t state = seed_base[0] ^ seed_base[1];
+  resource->random_state.x = splitmix64(&state);
+  resource->random_state.y = splitmix64(&state);
+  resource->random_state.z = splitmix64(&state);
+  resource->random_state.w = splitmix64(&state);
+
+  if (resource->random_state.x == 0 && resource->random_state.y == 0 &&
+      resource->random_state.z == 0 && resource->random_state.w == 0)
   {
-    uint64_t state = seed_base[0] ^ (i * 0x9e3779b97f4a7c15ULL); // Mix index with base seed
-    state ^= seed_base[1];
-
-    // Generate four 64-bit values for xoshiro256** state
-    resource->random_state[i].s[0] = splitmix64(&state);
-    resource->random_state[i].s[1] = splitmix64(&state);
-    resource->random_state[i].s[2] = splitmix64(&state);
-    resource->random_state[i].s[3] = splitmix64(&state);
-
-    // Ensure non-zero state to avoid degenerate xoshiro state
-    if (resource->random_state[i].s[0] == 0 && NULL == 0 &&
-        resource->random_state[i].s[2] == 0 && NULL == 0)
-    {
-      resource->random_state[i].s[0] = 0x9e3779b97f4a7c15ULL; // Arbitrary non-zero value
-    }
+    resource->random_state.x = 0x9e3779b97f4a7c15ULL;
+    resource->random_state.y = 0x9e3779b97f4a7c15ULL;
+    resource->random_state.z = 0x9e3779b97f4a7c15ULL;
+    resource->random_state.w = 0x9e3779b97f4a7c15ULL;
   }
+
   return CL_SUCCESS;
 }
 
@@ -87,7 +129,7 @@ cl_int calculate_work_sizes(OpenCLResources *resource)
   }
   cl_uint compute_units;
   clGetDeviceInfo(resource->device, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cl_uint), &compute_units, NULL);
-  resource->max_global_work_size = compute_units * resource->max_work_group_size * 10;
+  resource->max_global_work_size = compute_units * resource->max_work_group_size;
   printf("Max local work size: %ld\n", resource->max_work_group_size);
   printf("Max global work size: %ld\n", resource->max_global_work_size);
   return CL_SUCCESS;
@@ -317,6 +359,62 @@ cleanup:
   return NULL;
 }
 
+static cl_uint get_pci_bus_id_from_libpciaccess(cl_uint device_idx)
+{
+  struct pci_device_iterator *iter = NULL;
+  struct pci_device *dev = NULL;
+  cl_uint pci_bus_id = 0;
+  int current_idx = -1;
+  int ret;
+
+  // Initialize libpciaccess
+  ret = pci_system_init();
+  if (ret != 0)
+  {
+    fprintf(stderr, "Failed to initialize libpciaccess: %d\n", ret);
+    return 0;
+  }
+
+  // Create iterator for PCI devices
+  iter = pci_slot_match_iterator_create(NULL);
+  if (!iter)
+  {
+    fprintf(stderr, "Failed to create libpciaccess iterator\n");
+    pci_system_cleanup();
+    return 0;
+  }
+
+  // Iterate through PCI devices
+  for (dev = pci_device_next(iter); dev; dev = pci_device_next(iter))
+  {
+    // Filter for AMD devices (vendor ID 0x1002)
+    if (dev->vendor_id == 0x1002)
+    {
+      // Check for VGA or Display controller (class 0x03XX)
+      if ((dev->device_class & 0xFF00) == 0x0300)
+      {
+        current_idx++;
+        if (current_idx == (int)device_idx)
+        {
+          // Found the matching device
+          pci_bus_id = dev->bus;
+          break;
+        }
+      }
+    }
+  }
+
+  if (pci_bus_id == 0)
+  {
+    fprintf(stderr, "Could not find PCI-BUS-ID for device %u (%s) via libpciaccess\n", device_idx);
+  }
+
+  // Cleanup
+  pci_iterator_destroy(iter);
+  pci_system_cleanup();
+  return pci_bus_id;
+}
+
 OpenCLResources *initalize_all_opencl_gpus(cl_uint *device_count)
 {
   cl_platform_id platform;
@@ -407,18 +505,58 @@ OpenCLResources *initalize_all_opencl_gpus(cl_uint *device_count)
       goto cleanup;
     }
 
-    char extensions[1024];
+    // Retrieve vendor for PCI-BUS-ID logic
+    char vendor[128];
+    err = clGetDeviceInfo(res[i].device, CL_DEVICE_VENDOR, sizeof(vendor), vendor, NULL);
+    if (err != CL_SUCCESS)
+    {
+      fprintf(stderr, "Device %u (%s) vendor query failed: %d\n", idx, res[i].device_name, err);
+      goto cleanup;
+    }
+
+    // Retrieve PCI-BUS-ID for AMD devices
+    cl_uint pci_bus_id = 0;
+    char extensions[2048]; // Declare extensions before use
+    if (strstr(vendor, "AMD") || strstr(vendor, "Advanced Micro Devices"))
+    {
+      // Check if CL_DEVICE_TOPOLOGY_AMD is supported
+      err = clGetDeviceInfo(res[i].device, CL_DEVICE_EXTENSIONS, sizeof(extensions), extensions, NULL);
+      if (err == CL_SUCCESS && strstr(extensions, "cl_amd_device_topology"))
+      {
+        err = clGetDeviceInfo(res[i].device, 0x4037 /* CL_DEVICE_TOPOLOGY_AMD */, sizeof(cl_uint), &pci_bus_id, NULL);
+      }
+      else
+      {
+        err = CL_INVALID_VALUE; // Extension not supported
+      }
+    }
+    else
+    {
+      err = CL_INVALID_VALUE; // No known extension for other vendors
+    }
+
+    if (err != CL_SUCCESS)
+    {
+      // fprintf(stderr, "Warning: Could not retrieve PCI-BUS-ID for device %u (%s, Vendor: %s): %d (extension %s)\n",
+      //         idx, res[i].device_name, vendor, err,
+      //         strstr(vendor, "AMD") ? "cl_amd_device_topology not supported" : "no known PCI-BUS-ID extension");
+      // Fallback to libpci for PCI-BUS-ID
+      pci_bus_id = get_pci_bus_id_from_libpciaccess(idx);
+    }
+    res[i].pci_bus_id = pci_bus_id;
+
     err = clGetDeviceInfo(res[i].device, CL_DEVICE_EXTENSIONS, sizeof(extensions), extensions, NULL);
     if (err != CL_SUCCESS || !strstr(extensions, "cl_khr_fp64"))
     {
-      fprintf(stderr, "Device %u (%s) lacks cl_khr_fp64: %d\n", idx, res[i].device_name, err);
+      fprintf(stderr, "Device %u (%s, PCI-BUS-ID: %u) lacks cl_khr_fp64: %d\n",
+              idx, res[i].device_name, res[i].pci_bus_id, err);
       goto cleanup;
     }
 
     res[i].context = clCreateContext(NULL, 1, &res[i].device, NULL, NULL, &err);
     if (err != CL_SUCCESS)
     {
-      fprintf(stderr, "Device %u context failed: %d\n", idx, err);
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) context failed: %d\n", idx, res[i].pci_bus_id, err);
       goto cleanup;
     }
 
@@ -427,7 +565,7 @@ OpenCLResources *initalize_all_opencl_gpus(cl_uint *device_count)
     err = clGetDeviceInfo(res[i].device, CL_DEVICE_QUEUE_PROPERTIES, sizeof(cl_command_queue_properties), &device_queue_props, NULL);
     if (err != CL_SUCCESS)
     {
-      fprintf(stderr, "Device %u queue properties query failed: %d\n", idx, err);
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) queue properties query failed: %d\n", idx, res[i].pci_bus_id, err);
       goto cleanup;
     }
 
@@ -439,7 +577,7 @@ OpenCLResources *initalize_all_opencl_gpus(cl_uint *device_count)
     res[i].queue = clCreateCommandQueueWithProperties(res[i].context, res[i].device, properties, &err);
     if (err != CL_SUCCESS)
     {
-      fprintf(stderr, "Device %u creation failed: %d\n", idx, err);
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) creation failed: %d\n", idx, res[i].pci_bus_id, err);
       clReleaseContext(res[i].context);
       goto cleanup;
     }
@@ -448,7 +586,7 @@ OpenCLResources *initalize_all_opencl_gpus(cl_uint *device_count)
     err = calculate_work_sizes(&res[i]);
     if (err != CL_SUCCESS)
     {
-      fprintf(stderr, "Calculate work sizes failed for %s: %d\n", res[i].device_name, err);
+      fprintf(stderr, "Calculate work sizes failed for %s (PCI-BUS-ID: %u): %d\n", res[i].device_name, res[i].pci_bus_id, err);
       goto cleanup;
     }
 
@@ -476,11 +614,11 @@ OpenCLResources *initalize_all_opencl_gpus(cl_uint *device_count)
     res[i].random_state_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, res[i].max_global_work_size * sizeof(cl_ulong4), NULL, &err);
     if (err != CL_SUCCESS)
     {
-      fprintf(stderr, "Device %u buffer creation failed: %d\n", idx, err);
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) buffer creation failed: %d\n", idx, res[i].pci_bus_id, err);
       goto cleanup;
     }
 
-    printf("Initialized GPU %u: %s\n", idx, res[i].device_name);
+    printf("Initialized GPU %u (PCI-BUS-ID: %u): %s\n", idx, res[i].pci_bus_id, res[i].device_name);
   }
 
   free(non_nvidia_indices);
@@ -528,7 +666,7 @@ cl_int compile_opencl_kernel_from_xxd_header(OpenCLResources *resource, const un
   const char *src_ptr = source;
   size_t source_len = (size_t)kernel_length;
 
-  printf("Kernel source size: %u bytes\n", kernel_length);
+  // printf("Kernel source size: %u bytes\n", kernel_length);
   printf("Attempting to create kernel: %s\n", kernel_name);
 
   // Query device capabilities
@@ -536,8 +674,8 @@ cl_int compile_opencl_kernel_from_xxd_header(OpenCLResources *resource, const un
   char extensions[2048];
   clGetDeviceInfo(resource->device, CL_DEVICE_OPENCL_C_VERSION, sizeof(version), version, NULL);
   clGetDeviceInfo(resource->device, CL_DEVICE_EXTENSIONS, sizeof(extensions), extensions, NULL);
-  printf("Device OpenCL C version: %s\n", version);
-  printf("Device extensions: %s\n", extensions);
+  // printf("Device OpenCL C version: %s\n", version);
+  // printf("Device extensions: %s\n", extensions);
 
   // Check required extensions
   for (size_t i = 0; i < num_required_extensions; i++)
@@ -588,7 +726,7 @@ cl_int compile_opencl_kernel_from_xxd_header(OpenCLResources *resource, const un
       {
         char kernel_name_buf[256];
         clGetKernelInfo(kernels[i], CL_KERNEL_FUNCTION_NAME, sizeof(kernel_name_buf), kernel_name_buf, NULL);
-        printf("Kernel %u: %s\n", i, kernel_name_buf);
+        // printf("Kernel %u: %s\n", i, kernel_name_buf);
         clReleaseKernel(kernels[i]);
       }
     }
@@ -600,14 +738,6 @@ cl_int compile_opencl_kernel_from_xxd_header(OpenCLResources *resource, const un
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Kernel creation failed for %s: %d\n", resource->device_name, err);
-    clReleaseProgram(resource->program);
-    return err;
-  }
-
-  err = create_xoshiro_random_state(resource);
-  if (err != CL_SUCCESS)
-  {
-    fprintf(stderr, "Generating random state for xoshiro failed for %s: %d\n", resource->device_name, err);
     clReleaseProgram(resource->program);
     return err;
   }
@@ -672,18 +802,18 @@ cl_int load_opencl_kernel_binary(OpenCLResources *resource, const char *binary_f
     clReleaseProgram(resource->program);
     return err;
   }
-  err = create_xoshiro_random_state(resource);
-  if (err != CL_SUCCESS)
-  {
-    fprintf(stderr, "Generating random state for xoshiro failed for %s: %d\n", resource->device_name, err);
-    clReleaseProgram(resource->program);
-    return err;
-  }
+  // err = create_xoshiro_random_state(resource);
+  // if (err != CL_SUCCESS)
+  // {
+  //   fprintf(stderr, "Generating random state for xoshiro failed for %s: %d\n", resource->device_name, err);
+  //   clReleaseProgram(resource->program);
+  //   return err;
+  // }
   printf("Kernel %s loaded for %s\n", kernel_name, resource->device_name);
   return CL_SUCCESS;
 }
 
-cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong local_size, cl_ulong global_size,
+cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work_size, cl_ulong local_work_size,
                                  unsigned char *previous_header, unsigned char *target, double matrix[64][64],
                                  unsigned long timestamp, cl_ulong nonce_mask, cl_ulong nonce_fixed, OpenCLResult *result)
 {
@@ -695,6 +825,13 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong local_size,
   {
     fprintf(stderr, "Invalid input pointers for %s\n", resource ? resource->device_name : "unknown");
     return CL_INVALID_VALUE;
+  }
+
+  err = create_xoshiro_random_state(resource);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Generating random state for xoshiro failed for %s: %d\n", resource->device_name, err);
+    return err;
   }
 
   // Write to persistent buffers asynchronously
@@ -717,7 +854,7 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong local_size,
     goto cleanup;
   }
 
-  err = clEnqueueWriteBuffer(resource->queue, resource->random_state_buf, CL_FALSE, 0, resource->max_global_work_size * sizeof(cl_ulong4), resource->random_state, 0, NULL, NULL);
+  err = clEnqueueWriteBuffer(resource->queue, resource->random_state_buf, CL_FALSE, 0, sizeof(cl_ulong4), &resource->random_state, 0, NULL, NULL);
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Random state buffer write failed for %s: %d\n", resource->device_name, err);
@@ -725,8 +862,8 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong local_size,
   }
 
   // Set kernel arguments
-  cl_ulong random_type = RANDOM_TYPE_XOSHIRO; // RANDOM_TYPE_LEAN OR RANDOM_TYPE_XOSHIRO
-  err = clSetKernelArg(resource->kernel, 0, sizeof(cl_ulong), &local_size);
+  cl_ulong random_type = RANDOM_TYPE_LEAN; // RANDOM_TYPE_LEAN OR RANDOM_TYPE_XOSHIRO
+  err = clSetKernelArg(resource->kernel, 0, sizeof(cl_ulong), &local_work_size);
   err |= clSetKernelArg(resource->kernel, 1, sizeof(cl_ulong), &nonce_mask);
   err |= clSetKernelArg(resource->kernel, 2, sizeof(cl_ulong), &nonce_fixed);
   err |= clSetKernelArg(resource->kernel, 3, sizeof(cl_mem), &resource->previous_header_buf);
@@ -743,7 +880,7 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong local_size,
   }
 
   // Execute kernel asynchronously
-  err = clEnqueueNDRangeKernel(resource->queue, resource->kernel, 1, NULL, &global_size, &local_size, 5, write_events, &kernel_event);
+  err = clEnqueueNDRangeKernel(resource->queue, resource->kernel, 1, NULL, &global_work_size, &local_work_size, 5, write_events, &kernel_event);
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Kernel execution failed for %s: %d\n", resource->device_name, err);
@@ -782,7 +919,6 @@ void cleanup_opencl_resources(OpenCLResources *resource)
   if (!resource)
     return;
 
-  free(resource->random_state);
   clReleaseMemObject(resource->previous_header_buf);
   clReleaseMemObject(resource->timestamp_buf);
   clReleaseMemObject(resource->matrix_buf);

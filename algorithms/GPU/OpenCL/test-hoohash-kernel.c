@@ -285,7 +285,6 @@ int run_kernel(cl_context context, cl_command_queue queue, cl_program program, c
     err |= clSetKernelArg(kernel, 7, sizeof(cl_ulong), &random_type);
     err |= clSetKernelArg(kernel, 8, sizeof(cl_mem), &random_state_buf);
     err |= clSetKernelArg(kernel, 9, sizeof(cl_mem), &result_buf);
-    err |= clSetKernelArg(kernel, 10, sizeof(cl_ulong), &global_size);
     if (err != CL_SUCCESS)
     {
       printf("Error setting kernel arguments: %d\n", err);

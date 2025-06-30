@@ -22,7 +22,6 @@ extern "C"
 #define RANDOM_TYPE_XOSHIRO 1
 #define RANDOM_TYPE_LEAN 0
 #define PRINTF_BUFFER_SIZE (1024 * 1024) // 1MB printf buffer
-#define NONCE_TARGET 100000
 
   // Forward declarations
   typedef struct CudaResult CudaResult;
@@ -48,13 +47,14 @@ extern "C"
     double *matrix;
     unsigned char *target;
     unsigned long long *random_state;
-    CudaResult *result;
-    unsigned long long *h_random_state; // Host-side random state
+    unsigned long long *h_random_state; // Host-side random state (single state)
     char *printf_buffer;                // Device printf buffer
-    size_t max_grid_size;
-    size_t max_block_size;
-    int device_id; // Store device ID for cudaSetDevice
+    size_t optimal_block_size;          // Optimal threads per block
+    size_t optimal_grid_size;           // Optimal blocks in grid
+    int device_id;                      // Store device ID for cudaSetDevice
     char device_name[256];
+    unsigned int pci_bus_id;
+    CudaResult *result;
   };
 
   // Function declarations

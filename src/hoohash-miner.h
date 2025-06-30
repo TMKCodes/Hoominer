@@ -10,7 +10,7 @@
 #include "stratum.h"
 #include "target.h"
 #include "cuda-host.h"
-#include "opencl.h"
+#include "opencl-host.h"
 #include "reporting.h"
 #include "../algorithms/hoohash/hoohash.h"
 
@@ -111,12 +111,10 @@ uint64_t little_endian_to_uint64(const uint8_t *buffer);
 void smallJobHeader(const uint64_t *ids, uint8_t *headerData);
 int hex_to_bytes(const char *hex, uint8_t *bytes, size_t len);
 void print_hex(const char *label, const uint8_t *data, size_t len);
-int submit_mining_solution(int sockfd, const char *worker, const char *job_id, uint64_t nonce, uint8_t *hash, MiningState *ms);
+int submit_mining_solution(int sockfd, const char *worker, const char *job_id, uint64_t nonce, uint8_t *hash, MiningState *ms, StratumContext *ctx, int reporting_index);
 void *mining_cpu_thread(void *arg);
 void *mining_opencl_thread(void *arg);
 void *mining_cuda_thread(void *arg);
-void cleanup_job(MiningState *ms);
-void cleanup_mining_threads(MiningState *ms);
 int start_mining_threads(StratumContext *ctx, MiningState *ms);
 void process_stratum_message(json_object *message, StratumContext *ctx, MiningState *ms);
 

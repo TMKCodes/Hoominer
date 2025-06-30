@@ -5,8 +5,7 @@ NVCC = nvcc
 CFLAGS = -Xcompiler "-fPIC -g -O0 -Wall -Wextra -DTEST -DDEBUG"
 INCLUDES = -Ialgorithms/blake3/c -I/opt/cuda/include
 NVCCFLAGS = $(CFLAGS) $(INCLUDES)
-LDFLAGS = -lm -lgmp -ljson-c -lOpenCL -L/opt/cuda/lib64 -lcuda -lcudart -lnvrtc
-
+LDFLAGS = -lm -lgmp -ljson-c -lOpenCL -L/opt/cuda/lib64 -lcuda -lcudart -lnvrtc  -lpciaccess
 # Directories
 SRC_DIR = src
 BUILD_DIR = build

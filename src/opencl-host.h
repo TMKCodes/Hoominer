@@ -1,5 +1,5 @@
-#ifndef OPENCL_H
-#define OPENCL_H
+#ifndef OPENCL_HOST_H
+#define OPENCL_HOST_H
 #include <CL/cl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,8 +45,9 @@ struct OpenCLResources
   size_t max_work_group_size;
   size_t preferred_multiple;
   size_t max_global_work_size;
-  cl_ulong4 *random_state;
+  cl_ulong4 random_state;
   char device_name[256];
+  cl_uint pci_bus_id;
 };
 
 OpenCLResources *initialize_selected_opencl_gpus(cl_uint *device_indices, cl_uint num_selected, cl_uint *device_count);
@@ -57,7 +58,7 @@ void cleanup_opencl_resources(OpenCLResources *resource);
 void cleanup_all_opencl_gpus(OpenCLResources *resources, cl_uint device_count);
 
 // Move to hoohash-miner?
-cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong local_size, cl_ulong global_size, unsigned char *previous_header,
+cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work_size, cl_ulong local_work_size, unsigned char *previous_header,
                                  unsigned char *target, double matrix[64][64], unsigned long timestamp, cl_ulong nonce_mask,
                                  cl_ulong nonce_fixed, OpenCLResult *result);
 #endif

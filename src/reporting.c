@@ -1,49 +1,115 @@
 #include "reporting.h"
 
-HashrateDisplay *init_hashrate_display()
+ReportingDevice *init_reporting_device(uint32_t device_id, char *device_name)
+{
+  ReportingDevice *device = malloc(sizeof(ReportingDevice));
+  if (!device)
+  {
+    return NULL;
+  }
+
+  device->device_id = device_id;
+  device->device_name = device_name;
+  device->nonces_processed = 0;
+  device->accepted = 0;
+  device->rejected = 0;
+  device->stales = 0;
+
+  if (pthread_mutex_init(&device->device_mutex, NULL) != 0)
+  {
+    free(device);
+    return NULL;
+  }
+
+  return device;
+}
+
+HashrateDisplay *init_hashrate_display(uint32_t initial_capacity)
 {
   HashrateDisplay *hd = malloc(sizeof(HashrateDisplay));
   if (!hd)
+  {
     return NULL;
+  }
 
-  hd->nonces_processed = 0;
-  hd->accepted = 0;
-  hd->rejected = 0;
-
-  // Initialize the mutex, return NULL on failure
-  if (pthread_mutex_init(&hd->hashrate_mutex, NULL) != 0)
+  hd->devices = calloc(initial_capacity, sizeof(ReportingDevice *));
+  if (!hd->devices)
   {
     free(hd);
     return NULL;
   }
 
+  hd->device_count = 0;
+  hd->device_capacity = initial_capacity;
   hd->running = 1;
+
+  if (pthread_mutex_init(&hd->hashrate_mutex, NULL) != 0)
+  {
+    free(hd->devices);
+    free(hd);
+    return NULL;
+  }
 
   return hd;
 }
 
-void cleanup_hashrate_display(StratumContext *ctx)
+int add_reporting_device(HashrateDisplay *hd, ReportingDevice *device)
 {
-  if (ctx && ctx->hd)
+  if (!hd || !device)
   {
-    pthread_mutex_destroy(&ctx->hd->hashrate_mutex);
-    free(ctx->hd);
-    ctx->hd = NULL; // Prevent double-free
+    return -1;
   }
+
+  if (hd->device_count >= hd->device_capacity)
+  {
+    uint32_t new_capacity = hd->device_capacity ? hd->device_capacity * 2 : 4;
+    ReportingDevice **new_devices = realloc(hd->devices, new_capacity * sizeof(ReportingDevice *));
+    if (!new_devices)
+    {
+      return -1;
+    }
+    hd->devices = new_devices;
+    hd->device_capacity = new_capacity;
+  }
+
+  hd->devices[hd->device_count++] = device;
+  return 0;
+}
+
+void free_hashrate_display(HashrateDisplay *hd)
+{
+  if (!hd)
+  {
+    return;
+  }
+
+  pthread_mutex_lock(&hd->hashrate_mutex);
+  for (uint32_t i = 0; i < hd->device_count; i++)
+  {
+    pthread_mutex_destroy(&hd->devices[i]->device_mutex);
+    free(hd->devices[i]);
+  }
+  free(hd->devices);
+  pthread_mutex_unlock(&hd->hashrate_mutex);
+  pthread_mutex_destroy(&hd->hashrate_mutex);
+  free(hd);
 }
 
 void *hashrate_display_thread(void *arg)
 {
   StratumContext *ctx = (StratumContext *)arg;
   HashrateDisplay *hd = ctx->hd;
-  int seconds = 5;
+  const int seconds = 1;
+
   while (ctx->running)
   {
     sleep(seconds);
     pthread_mutex_lock(&hd->hashrate_mutex);
-    double hashrate = hd->nonces_processed / seconds;
-    hd->nonces_processed = 0;
-    pthread_mutex_unlock(&hd->hashrate_mutex);
+    if (hd->device_count == 0)
+    {
+      pthread_mutex_unlock(&hd->hashrate_mutex);
+      continue;
+    }
 
     time_t t = time(NULL);
     struct tm tm;
@@ -51,55 +117,52 @@ void *hashrate_display_thread(void *arg)
     char time_str[9];
     strftime(time_str, sizeof(time_str), "%H:%M:%S", &tm);
 
-    printf("[%-6s] ======================================================================================\n", time_str);
-    printf("[%-6s] |[hoohash]\t\t\t\t| Accepted shares \t| Rejected shares \t|\n", time_str);
-    printf("[%-6s] ", time_str);
-    if (hashrate > 1000000000000)
+    printf("[%-8s] ==================================================================================================== \n", time_str);
+    printf("[%-8s] | Device ID \t\t | Hashrate \t\t| Accepted shares | Stale shares    | Rejected shares |\n", time_str);
+
+    for (uint32_t i = 0; i < hd->device_count; i++)
     {
-      printf("|Hashrate: %.2f TH/s\t\t|  ", hashrate);
-    }
-    else if (hashrate > 1000000000)
-    {
-      printf("|Hashrate: %.2f GH/s\t\t|  ", hashrate / 1000.0);
-    }
-    else if (hashrate > 1000000)
-    {
-      printf("|Hashrate: %.2f MH/s\t\t|  ", hashrate / 1000.0);
-    }
-    else if (hashrate > 1000)
-    {
-      printf("|Hashrate: %.2f KH/s\t\t|  ", hashrate / 1000.0);
-    }
-    else
-    {
-      printf("|Hashrate: %.2f H/s\t\t|  ", hashrate);
-    }
-    if (hd->accepted > 1000000000000)
-    {
-      printf("%ld \t| ", hd->accepted);
-    }
-    else if (hd->accepted > 1000)
-    {
-      printf("%ld \t\t| ", hd->accepted);
-    }
-    else
-    {
-      printf("%ld \t\t\t| ", hd->accepted);
-    }
-    if (hd->rejected > 1000000000000)
-    {
-      printf("%ld \t|\n", hd->rejected);
-    }
-    else if (hd->rejected > 1000)
-    {
-      printf("%ld \t\t|\n", hd->rejected);
-    }
-    else
-    {
-      printf("%ld \t\t\t|\n", hd->rejected);
+      ReportingDevice *device = hd->devices[i];
+      pthread_mutex_lock(&device->device_mutex);
+      double hashrate = device->nonces_processed / (double)seconds;
+      device->nonces_processed = 0;
+      pthread_mutex_unlock(&device->device_mutex);
+      if (strcmp(device->device_name, "CPU") == 0)
+      {
+        printf("[%-8s] | %s \t\t | ", time_str, device->device_name);
+      }
+      else
+      {
+        printf("[%-8s] | %s\t | ", time_str, device->device_name);
+      }
+
+      if (hashrate > 1000000000000.0)
+      {
+        printf("%-6.2f TH/s \t\t| ", hashrate / 1000000000000.0);
+      }
+      else if (hashrate > 1000000000.0)
+      {
+        printf("%-6.2f GH/s \t\t| ", hashrate / 1000000000.0);
+      }
+      else if (hashrate > 1000000.0)
+      {
+        printf("%-6.2f MH/s \t\t| ", hashrate / 1000000.0);
+      }
+      else if (hashrate > 1000.0)
+      {
+        printf("%-6.2f KH/s \t\t| ", hashrate / 1000.0);
+      }
+      else
+      {
+        printf("%-6.2f H/s  \t\t| ", hashrate);
+      }
+
+      printf("%-15ld | %-15ld | %-15ld |\n", device->accepted, device->stales, device->rejected);
     }
 
-    printf("[%-6s] ======================================================================================\n", time_str);
+    pthread_mutex_unlock(&hd->hashrate_mutex);
+    printf("[%-8s] ====================================================================================================\n", time_str);
   }
+
   return NULL;
 }

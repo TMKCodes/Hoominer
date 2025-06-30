@@ -31,32 +31,6 @@ MiningState *init_mining_state()
   return state;
 }
 
-void cleanup_mining_state(MiningState *state)
-{
-  if (state)
-  {
-    pthread_mutex_lock(&state->job_queue.queue_mutex);
-    for (int i = 0; i < JOB_QUEUE_SIZE; i++)
-    {
-      if (state->job_queue.jobs[i].job_id)
-      {
-        free(state->job_queue.jobs[i].job_id);
-        state->job_queue.jobs[i].job_id = NULL;
-      }
-    }
-    pthread_mutex_unlock(&state->job_queue.queue_mutex);
-    pthread_mutex_destroy(&state->job_queue.queue_mutex);
-    pthread_cond_destroy(&state->job_queue.queue_cond);
-
-    if (state->global_target)
-      free(state->global_target);
-
-    pthread_mutex_destroy(&state->job_mutex);
-    pthread_mutex_destroy(&state->target_mutex);
-    free(state);
-  }
-}
-
 void uint64_to_little_endian(uint64_t value, uint8_t *buffer)
 {
   value = htole64(value);
@@ -98,7 +72,7 @@ void print_hex(const char *label, const uint8_t *data, size_t len)
   printf("\n");
 }
 
-int submit_mining_solution(int sockfd, const char *worker, const char *job_id, uint64_t nonce, uint8_t *hash, MiningState *ms)
+int submit_mining_solution(int sockfd, const char *worker, const char *job_id, uint64_t nonce, uint8_t *hash, MiningState *ms, StratumContext *ctx, int reporting_index)
 {
   pthread_mutex_lock(&ms->job_queue.queue_mutex);
   for (int i = 0; i < JOB_QUEUE_SIZE; i++)
@@ -151,6 +125,7 @@ int submit_mining_solution(int sockfd, const char *worker, const char *job_id, u
   msg_with_newline[len] = '\n';
   msg_with_newline[len + 1] = '\0';
 
+  enqueue_int_fifo(&ctx->mining_submit_fifo, reporting_index);
   int ret = send(sockfd, msg_with_newline, len + 1, 0);
   free(msg_with_newline);
   free(hash_hex);
@@ -190,77 +165,15 @@ static int get_current_job(MiningState *ms, QueuedJob *job, char **current_job_i
 void *mining_cpu_thread(void *arg)
 {
   MiningThread *mt = (MiningThread *)arg;
-  State state = {0};
-  char *current_job_id = NULL;
-  StratumContext *ctx = mt->ctx;
-  MiningState *ms = ctx->ms;
-  QueuedJob current_job = {0};
-
-  while (ctx->running)
-  {
-    if (!get_current_job(ms, &current_job, &current_job_id))
-    {
-      usleep(100000);
-      continue;
-    }
-
-    memcpy(state.PrevHeader, current_job.header, DOMAIN_HASH_SIZE);
-    state.Timestamp = current_job.timestamp;
-    memcpy(state.mat, current_job.matrix, sizeof(double) * 64 * 64);
-
-    uint64_t nonce = mt->threadIndex;
-    uint64_t step = ms->num_cpu_threads;
-
-    while (ctx->running)
-    {
-      pthread_mutex_lock(&ms->job_queue.queue_mutex);
-      int job_valid = ms->job_queue.head != ms->job_queue.tail &&
-                      ms->job_queue.jobs[ms->job_queue.head].running &&
-                      !ms->job_queue.jobs[ms->job_queue.head].completed &&
-                      strcmp(ms->job_queue.jobs[ms->job_queue.head].job_id, current_job_id) == 0;
-      pthread_mutex_unlock(&ms->job_queue.queue_mutex);
-
-      if (!job_valid)
-        break;
-
-      state.Nonce = nonce;
-      uint8_t result[DOMAIN_HASH_SIZE];
-      CalculateProofOfWorkValue(&state, result);
-
-      pthread_mutex_lock(&ms->target_mutex);
-      int meets_target = compare_target(result, ms->global_target, DOMAIN_HASH_SIZE);
-      pthread_mutex_unlock(&ms->target_mutex);
-
-      pthread_mutex_lock(&mt->ctx->hd->hashrate_mutex);
-      mt->ctx->hd->nonces_processed++;
-      pthread_mutex_unlock(&mt->ctx->hd->hashrate_mutex);
-
-      if (meets_target <= 0)
-      {
-        submit_mining_solution(mt->ctx->sockfd, ctx->worker, current_job_id, nonce, result, ms);
-        break;
-      }
-
-      nonce += step;
-    }
-  }
-
-  free(current_job_id);
-  free(mt);
-  return NULL;
-}
-
-void *mining_opencl_thread(void *arg)
-{
-  MiningThread *mt = (MiningThread *)arg;
   StratumContext *ctx = mt->ctx;
   MiningState *ms = ctx->ms;
   State state = {0};
   char *current_job_id = NULL;
-  cl_ulong local_size = ctx->opencl_resources->max_work_group_size;
-  cl_ulong global_size = ctx->opencl_resources->max_global_work_size;
-  cl_ulong nonce_mask = 0xFFFFFFFFFFFFFFFFULL;
-  cl_ulong nonce_fixed = (cl_ulong)mt->threadIndex * global_size;
+  int reporting_index = 0;
+  ReportingDevice *cpu_reporting_device = ctx->hd->devices[reporting_index];
+
+  uint64_t nonce = mt->threadIndex;
+  uint64_t step = ms->num_cpu_threads;
 
   while (ctx->running)
   {
@@ -278,6 +191,74 @@ void *mining_opencl_thread(void *arg)
 
     while (ctx->running)
     {
+
+      pthread_mutex_lock(&ms->job_queue.queue_mutex);
+      int job_valid = ms->job_queue.head != ms->job_queue.tail &&
+                      ms->job_queue.jobs[ms->job_queue.head].running &&
+                      !ms->job_queue.jobs[ms->job_queue.head].completed &&
+                      strcmp(ms->job_queue.jobs[ms->job_queue.head].job_id, current_job_id) == 0;
+      pthread_mutex_unlock(&ms->job_queue.queue_mutex);
+
+      if (!job_valid)
+        break;
+
+      state.Nonce = nonce;
+      uint8_t result[DOMAIN_HASH_SIZE];
+      CalculateProofOfWorkValue(&state, result);
+
+      pthread_mutex_lock(&ctx->hd->hashrate_mutex);
+      cpu_reporting_device->nonces_processed++;
+      pthread_mutex_unlock(&ctx->hd->hashrate_mutex);
+
+      pthread_mutex_lock(&ms->target_mutex);
+      int meets_target = compare_target(result, ms->global_target, DOMAIN_HASH_SIZE);
+      pthread_mutex_unlock(&ms->target_mutex);
+
+      if (meets_target <= 0)
+      {
+        submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, state.Nonce, result, ms, ctx, reporting_index);
+        break;
+      }
+
+      nonce += step;
+    }
+  }
+
+  free(current_job_id);
+  return NULL;
+}
+
+void *mining_opencl_thread(void *arg)
+{
+  MiningThread *mt = (MiningThread *)arg;
+  StratumContext *ctx = mt->ctx;
+  MiningState *ms = ctx->ms;
+  State state = {0};
+  char *current_job_id = NULL;
+  cl_ulong local_work_size = ctx->opencl_resources->max_work_group_size;
+  cl_ulong global_work_size = ctx->opencl_resources->max_global_work_size;
+  cl_ulong nonce_mask = 0xFFFFFFFFFFFFFFFFULL;
+  cl_ulong nonce_fixed = (cl_ulong)mt->threadIndex * global_work_size;
+  int reporting_index = ctx->cpu_device_count + mt->threadIndex;
+  ReportingDevice *opencl_reporting_device = ctx->hd->devices[reporting_index];
+
+  while (ctx->running)
+  {
+
+    QueuedJob current_job = {0};
+    if (!get_current_job(ms, &current_job, &current_job_id))
+    {
+      usleep(100000);
+      continue;
+    }
+
+    memcpy(state.PrevHeader, current_job.header, DOMAIN_HASH_SIZE);
+    state.Timestamp = current_job.timestamp;
+    memcpy(state.mat, current_job.matrix, sizeof(double) * 64 * 64);
+
+    while (ctx->running)
+    {
+
       pthread_mutex_lock(&ms->job_queue.queue_mutex);
       int job_valid = ms->job_queue.head != ms->job_queue.tail &&
                       ms->job_queue.jobs[ms->job_queue.head].running &&
@@ -289,35 +270,34 @@ void *mining_opencl_thread(void *arg)
         break;
 
       OpenCLResult result = {0};
-      cl_int status = run_opencl_hoohash_kernel(&ctx->opencl_resources[mt->threadIndex], local_size, global_size,
-                                                state.PrevHeader, ms->global_target, state.mat, state.Timestamp,
-                                                nonce_mask, nonce_fixed, &result);
+      cl_int status = run_opencl_hoohash_kernel(&ctx->opencl_resources[mt->threadIndex], global_work_size, local_work_size, state.PrevHeader, ms->global_target, state.mat, state.Timestamp, nonce_mask, nonce_fixed, &result);
 
       pthread_mutex_lock(&ctx->hd->hashrate_mutex);
-      ctx->hd->nonces_processed += global_size;
+      opencl_reporting_device->nonces_processed += global_work_size;
       pthread_mutex_unlock(&ctx->hd->hashrate_mutex);
 
       if (status != CL_SUCCESS)
       {
         fprintf(stderr, "Device %d: Kernel execution failed: %d\n", mt->threadIndex, status);
-        nonce_fixed += global_size;
+        nonce_fixed += global_work_size;
         break;
       }
 
       if (result.nonce != 0)
       {
+
         pthread_mutex_lock(&ms->target_mutex);
         int meets_target = compare_target(result.hash, ms->global_target, DOMAIN_HASH_SIZE);
         pthread_mutex_unlock(&ms->target_mutex);
 
         if (meets_target <= 0)
         {
-          submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, result.nonce, result.hash, ms);
+          submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, result.nonce, result.hash, ms, ctx, reporting_index);
           break;
         }
       }
 
-      nonce_fixed += global_size;
+      nonce_fixed += global_work_size;
     }
   }
 
@@ -332,9 +312,11 @@ void *mining_cuda_thread(void *arg)
   MiningState *ms = ctx->ms;
   State state = {0};
   char *current_job_id = NULL;
-  cl_ulong hashes_per_cuda_call = ctx->cuda_resources->max_grid_size * ctx->cuda_resources->max_block_size;
+  cl_ulong hashes_per_cuda_call = ctx->cuda_resources->optimal_grid_size * ctx->cuda_resources->optimal_block_size;
   cl_ulong nonce_mask = 0xFFFFFFFFFFFFFFFFULL;
   cl_ulong nonce_fixed = (cl_ulong)mt->threadIndex * hashes_per_cuda_call;
+  int reporting_index = ctx->cpu_device_count + ctx->opencl_device_count + mt->threadIndex;
+  ReportingDevice *cuda_reporting_device = ctx->hd->devices[reporting_index];
 
   while (ctx->running)
   {
@@ -368,7 +350,7 @@ void *mining_cuda_thread(void *arg)
                                               nonce_mask, nonce_fixed, &result);
 
       pthread_mutex_lock(&ctx->hd->hashrate_mutex);
-      ctx->hd->nonces_processed += hashes_per_cuda_call;
+      cuda_reporting_device->nonces_processed += hashes_per_cuda_call;
       pthread_mutex_unlock(&ctx->hd->hashrate_mutex);
 
       if (status != CL_SUCCESS)
@@ -380,15 +362,8 @@ void *mining_cuda_thread(void *arg)
 
       if (result.nonce != 0)
       {
-        pthread_mutex_lock(&ms->target_mutex);
-        int meets_target = compare_target(result.hash, ms->global_target, DOMAIN_HASH_SIZE);
-        pthread_mutex_unlock(&ms->target_mutex);
-
-        if (meets_target <= 0)
-        {
-          submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, result.nonce, result.hash, ms);
-          break;
-        }
+        submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, result.nonce, result.hash, ms, ctx, reporting_index);
+        break;
       }
 
       nonce_fixed += hashes_per_cuda_call;
@@ -399,70 +374,14 @@ void *mining_cuda_thread(void *arg)
   return NULL;
 }
 
-void cleanup_job(MiningState *ms)
-{
-  pthread_mutex_lock(&ms->job_queue.queue_mutex);
-  for (int i = 0; i < JOB_QUEUE_SIZE; i++)
-  {
-    if (ms->job_queue.jobs[i].job_id)
-    {
-      free(ms->job_queue.jobs[i].job_id);
-      ms->job_queue.jobs[i].job_id = NULL;
-      ms->job_queue.jobs[i].running = 0;
-      ms->job_queue.jobs[i].completed = 0;
-    }
-  }
-  ms->job_queue.head = 0;
-  ms->job_queue.tail = 0;
-  pthread_mutex_unlock(&ms->job_queue.queue_mutex);
-}
-
-void cleanup_mining_threads(MiningState *ms)
-{
-  if (ms->mining_cpu_threads != NULL)
-  {
-    for (int i = 0; i < ms->num_cpu_threads; i++)
-    {
-      pthread_cancel(ms->mining_cpu_threads[i]);
-      pthread_join(ms->mining_cpu_threads[i], NULL);
-    }
-    free(ms->mining_cpu_threads);
-    ms->mining_cpu_threads = NULL;
-  }
-  if (ms->mining_opencl_threads != NULL)
-  {
-    for (int i = 0; i < ms->num_opencl_threads; i++)
-    {
-      pthread_cancel(ms->mining_opencl_threads[i]);
-      pthread_join(ms->mining_opencl_threads[i], NULL);
-    }
-    free(ms->mining_opencl_threads);
-    ms->mining_opencl_threads = NULL;
-  }
-  if (ms->mining_cuda_threads != NULL)
-  {
-    for (int i = 0; i < ms->num_cuda_threads; i++)
-    {
-      pthread_cancel(ms->mining_cuda_threads[i]);
-      pthread_join(ms->mining_cuda_threads[i], NULL);
-    }
-    free(ms->mining_cuda_threads);
-    ms->mining_cuda_threads = NULL;
-  }
-}
-
 int start_mining_threads(StratumContext *ctx, MiningState *ms)
 {
-  ctx->hd->accepted = 0;
-  ctx->hd->rejected = 0;
-  ctx->hd->nonces_processed = 0;
-  if (!ctx->disable_cpu)
+  if (ctx->disable_cpu == 0)
   {
     ms->mining_cpu_threads = malloc(ms->num_cpu_threads * sizeof(pthread_t));
     if (!ms->mining_cpu_threads)
     {
       printf("start_mining_threads: Failed to allocate mining_threads\n");
-      cleanup_job(ms);
       return 1;
     }
     for (int i = 0; i < ms->num_cpu_threads; i++)
@@ -471,7 +390,6 @@ int start_mining_threads(StratumContext *ctx, MiningState *ms)
       if (!mt)
       {
         printf("start_mining_threads: Failed to allocate MiningThread\n");
-        cleanup_mining_threads(ms);
         return 1;
       }
       mt->threadIndex = i;
@@ -480,19 +398,17 @@ int start_mining_threads(StratumContext *ctx, MiningState *ms)
       {
         printf("start_mining_threads: Failed to create thread %d\n", i);
         free(mt);
-        cleanup_mining_threads(ms);
         return 1;
       }
     }
   }
-  if (!ctx->disable_gpu)
+  if (ctx->disable_gpu == 0)
   {
     ms->num_opencl_threads = ctx->opencl_device_count;
     ms->mining_opencl_threads = malloc(ms->num_opencl_threads * sizeof(pthread_t));
     if (!ms->mining_opencl_threads)
     {
       printf("start_mining_threads: Failed to allocate mining_threads\n");
-      cleanup_job(ms);
       return 1;
     }
     for (int i = 0; i < ms->num_opencl_threads; i++)
@@ -501,7 +417,6 @@ int start_mining_threads(StratumContext *ctx, MiningState *ms)
       if (!mt)
       {
         printf("start_mining_threads: Failed to allocate MiningThread\n");
-        cleanup_mining_threads(ms);
         return 1;
       }
       mt->threadIndex = i;
@@ -510,7 +425,6 @@ int start_mining_threads(StratumContext *ctx, MiningState *ms)
       {
         printf("start_mining_threads: Failed to create thread %d\n", i);
         free(mt);
-        cleanup_mining_threads(ms);
         return 1;
       }
     }
@@ -519,7 +433,6 @@ int start_mining_threads(StratumContext *ctx, MiningState *ms)
     if (!ms->mining_cuda_threads)
     {
       printf("start_mining_threads: Failed to allocate mining_threads\n");
-      cleanup_job(ms);
       return 1;
     }
     for (int i = 0; i < ms->num_cuda_threads; i++)
@@ -528,7 +441,6 @@ int start_mining_threads(StratumContext *ctx, MiningState *ms)
       if (!mt)
       {
         printf("start_mining_threads: Failed to allocate MiningThread\n");
-        cleanup_mining_threads(ms);
         return 1;
       }
       mt->threadIndex = i;
@@ -537,7 +449,6 @@ int start_mining_threads(StratumContext *ctx, MiningState *ms)
       {
         printf("start_mining_threads: Failed to create thread %d\n", i);
         free(mt);
-        cleanup_mining_threads(ms);
         return 1;
       }
     }
@@ -690,17 +601,53 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
   }
   else
   {
+    // const char *result_str = json_object_to_json_string(message);
+    // printf("Result: %s\n", result_str);
     json_object *result;
-    if (json_object_object_get_ex(message, "result", &result))
+    json_object *error;
+    int device_index;
+    int devices = ctx->cpu_device_count + ctx->opencl_device_count + ctx->cuda_device_count;
+    dequeue_int_fifo(&ctx->mining_submit_fifo, &device_index);
+    if (devices >= device_index)
     {
-      if (json_object_is_type(result, json_type_boolean))
+      // printf("device index %d\n", device_index);
+      ReportingDevice *device = ctx->hd->devices[device_index];
+      if (json_object_object_get_ex(message, "error", &error))
       {
-        pthread_mutex_lock(&ms->job_queue.queue_mutex);
-        if (json_object_get_boolean(result))
-          ctx->hd->accepted++;
-        else
-          ctx->hd->rejected++;
-        pthread_mutex_unlock(&ms->job_queue.queue_mutex);
+        if (!json_object_is_type(error, json_type_null))
+        {
+          if (json_object_is_type(error, json_type_array))
+          {
+            json_object *code = json_object_array_get_idx(error, 0);
+            json_object *msg = json_object_array_get_idx(error, 1);
+            int err_code = json_object_get_int(code);
+            const char *err_msg = json_object_get_string(msg);
+            if (err_code == 21)
+            {
+              pthread_mutex_lock(&ms->job_queue.queue_mutex);
+              device->stales++;
+              pthread_mutex_unlock(&ms->job_queue.queue_mutex);
+            }
+            else
+            {
+              pthread_mutex_lock(&ms->job_queue.queue_mutex);
+              device->rejected++;
+              pthread_mutex_unlock(&ms->job_queue.queue_mutex);
+            }
+          }
+        }
+      }
+      if (json_object_object_get_ex(message, "result", &result))
+      {
+        if (json_object_is_type(result, json_type_boolean))
+        {
+          pthread_mutex_lock(&ms->job_queue.queue_mutex);
+          if (json_object_get_boolean(result))
+            device->accepted++;
+          else
+            device->rejected++;
+          pthread_mutex_unlock(&ms->job_queue.queue_mutex);
+        }
       }
     }
   }

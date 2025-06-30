@@ -1,4 +1,8 @@
-#pragma OPENCL EXTENSION cl_khr_fp64 : enable
+#define DOMAIN_HASH_SIZE 32
+#define RANDOM_TYPE_LEAN 0
+#define RANDOM_TYPE_XOSHIRO 1
+#define COMPLEX_TRANSFORM_MULTIPLIER 0.000001
+#define PI 3.14159265358979323846
 
 #define BLAKE3_VERSION_STRING "1.8.2"
 #define BLAKE3_KEY_LEN 32
@@ -6,12 +10,17 @@
 #define BLAKE3_BLOCK_LEN 64
 #define BLAKE3_CHUNK_LEN 1024
 #define BLAKE3_MAX_DEPTH 54
-#define BLAKE3_BLOCK_LEN_LOG2 6  // log2(64)
-#define BLAKE3_CHUNK_LEN_LOG2 10 // log2(1024)
+#define BLAKE3_BLOCK_LEN_LOG2 6
+#define BLAKE3_CHUNK_LEN_LOG2 10
 
-__constant uint IV[8] = {0x6A09E667UL, 0xBB67AE85UL, 0x3C6EF372UL,
-                         0xA54FF53AUL, 0x510E527FUL, 0x9B05688CUL,
-                         0x1F83D9ABUL, 0x5BE0CD19UL};
+#define IV_0 0x6A09E667UL
+#define IV_1 0xBB67AE85UL
+#define IV_2 0x3C6EF372UL
+#define IV_3 0xA54FF53AUL
+#define IV_4 0x510E527FUL
+#define IV_5 0x9B05688CUL
+#define IV_6 0x1F83D9ABUL
+#define IV_7 0x5BE0CD19UL
 
 enum blake3_flags {
   CHUNK_START = 1 << 0,
@@ -46,16 +55,6 @@ typedef struct {
   char block_len;
   char flags;
 } output_t;
-
-__constant uchar MSG_SCHEDULE[7][16] = {
-    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
-    {2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8},
-    {3, 4, 10, 12, 13, 2, 7, 14, 6, 5, 9, 0, 11, 15, 8, 1},
-    {10, 7, 12, 9, 14, 3, 13, 15, 4, 0, 11, 2, 5, 8, 1, 6},
-    {12, 13, 9, 11, 15, 10, 14, 8, 7, 2, 5, 3, 0, 1, 6, 4},
-    {9, 14, 11, 5, 8, 12, 15, 1, 13, 3, 0, 10, 2, 6, 4, 7},
-    {11, 15, 5, 0, 1, 9, 8, 6, 14, 10, 2, 12, 3, 4, 7, 13},
-};
 
 inline void chunk_state_init(blake3_chunk_state *self, const uint key[8],
                              uchar flags) {
@@ -132,23 +131,81 @@ inline void g(uint *state, size_t a, size_t b, size_t c, size_t d, uint x,
   state[b] = rotr32(state[b] ^ state[c], 7);
 }
 
-inline void round_fn(uint state[16], const uint *msg, size_t round) {
-  g(state, 0, 4, 8, 12, msg[MSG_SCHEDULE[round][0]],
-    msg[MSG_SCHEDULE[round][1]]);
-  g(state, 1, 5, 9, 13, msg[MSG_SCHEDULE[round][2]],
-    msg[MSG_SCHEDULE[round][3]]);
-  g(state, 2, 6, 10, 14, msg[MSG_SCHEDULE[round][4]],
-    msg[MSG_SCHEDULE[round][5]]);
-  g(state, 3, 7, 11, 15, msg[MSG_SCHEDULE[round][6]],
-    msg[MSG_SCHEDULE[round][7]]);
-  g(state, 0, 5, 10, 15, msg[MSG_SCHEDULE[round][8]],
-    msg[MSG_SCHEDULE[round][9]]);
-  g(state, 1, 6, 11, 12, msg[MSG_SCHEDULE[round][10]],
-    msg[MSG_SCHEDULE[round][11]]);
-  g(state, 2, 7, 8, 13, msg[MSG_SCHEDULE[round][12]],
-    msg[MSG_SCHEDULE[round][13]]);
-  g(state, 3, 4, 9, 14, msg[MSG_SCHEDULE[round][14]],
-    msg[MSG_SCHEDULE[round][15]]);
+inline void round_fn(uint *state, const uint *msg, uint round) {
+  switch (round) {
+  case 0:
+    g(state, 0, 4, 8, 12, msg[0], msg[1]);
+    g(state, 1, 5, 9, 13, msg[2], msg[3]);
+    g(state, 2, 6, 10, 14, msg[4], msg[5]);
+    g(state, 3, 7, 11, 15, msg[6], msg[7]);
+    g(state, 0, 5, 10, 15, msg[8], msg[9]);
+    g(state, 1, 6, 11, 12, msg[10], msg[11]);
+    g(state, 2, 7, 8, 13, msg[12], msg[13]);
+    g(state, 3, 4, 9, 14, msg[14], msg[15]);
+    break;
+  case 1:
+    g(state, 0, 4, 8, 12, msg[2], msg[6]);
+    g(state, 1, 5, 9, 13, msg[3], msg[10]);
+    g(state, 2, 6, 10, 14, msg[7], msg[0]);
+    g(state, 3, 7, 11, 15, msg[4], msg[13]);
+    g(state, 0, 5, 10, 15, msg[1], msg[11]);
+    g(state, 1, 6, 11, 12, msg[12], msg[5]);
+    g(state, 2, 7, 8, 13, msg[9], msg[14]);
+    g(state, 3, 4, 9, 14, msg[15], msg[8]);
+    break;
+  case 2:
+    g(state, 0, 4, 8, 12, msg[3], msg[4]);
+    g(state, 1, 5, 9, 13, msg[10], msg[12]);
+    g(state, 2, 6, 10, 14, msg[13], msg[2]);
+    g(state, 3, 7, 11, 15, msg[7], msg[14]);
+    g(state, 0, 5, 10, 15, msg[6], msg[5]);
+    g(state, 1, 6, 11, 12, msg[9], msg[0]);
+    g(state, 2, 7, 8, 13, msg[11], msg[15]);
+    g(state, 3, 4, 9, 14, msg[8], msg[1]);
+    break;
+  case 3:
+    g(state, 0, 4, 8, 12, msg[10], msg[7]);
+    g(state, 1, 5, 9, 13, msg[12], msg[9]);
+    g(state, 2, 6, 10, 14, msg[14], msg[3]);
+    g(state, 3, 7, 11, 15, msg[13], msg[15]);
+    g(state, 0, 5, 10, 15, msg[4], msg[0]);
+    g(state, 1, 6, 11, 12, msg[11], msg[2]);
+    g(state, 2, 7, 8, 13, msg[5], msg[8]);
+    g(state, 3, 4, 9, 14, msg[1], msg[6]);
+    break;
+  case 4:
+    g(state, 0, 4, 8, 12, msg[12], msg[13]);
+    g(state, 1, 5, 9, 13, msg[9], msg[11]);
+    g(state, 2, 6, 10, 14, msg[15], msg[10]);
+    g(state, 3, 7, 11, 15, msg[14], msg[8]);
+    g(state, 0, 5, 10, 15, msg[7], msg[2]);
+    g(state, 1, 6, 11, 12, msg[5], msg[3]);
+    g(state, 2, 7, 8, 13, msg[0], msg[1]);
+    g(state, 3, 4, 9, 14, msg[6], msg[4]);
+    break;
+  case 5:
+    g(state, 0, 4, 8, 12, msg[9], msg[14]);
+    g(state, 1, 5, 9, 13, msg[11], msg[5]);
+    g(state, 2, 6, 10, 14, msg[8], msg[12]);
+    g(state, 3, 7, 11, 15, msg[15], msg[1]);
+    g(state, 0, 5, 10, 15, msg[13], msg[3]);
+    g(state, 1, 6, 11, 12, msg[0], msg[10]);
+    g(state, 2, 7, 8, 13, msg[2], msg[6]);
+    g(state, 3, 4, 9, 14, msg[4], msg[7]);
+    break;
+  case 6:
+    g(state, 0, 4, 8, 12, msg[11], msg[15]);
+    g(state, 1, 5, 9, 13, msg[5], msg[0]);
+    g(state, 2, 6, 10, 14, msg[1], msg[9]);
+    g(state, 3, 7, 11, 15, msg[8], msg[6]);
+    g(state, 0, 5, 10, 15, msg[14], msg[10]);
+    g(state, 1, 6, 11, 12, msg[2], msg[12]);
+    g(state, 2, 7, 8, 13, msg[3], msg[4]);
+    g(state, 3, 4, 9, 14, msg[7], msg[13]);
+    break;
+  default:
+    break;
+  }
 }
 
 inline void compress_pre(uint state[16], const uint cv[8],
@@ -161,27 +218,29 @@ inline void compress_pre(uint state[16], const uint cv[8],
   for (int i = 0; i < 16; i++) {
     block_words[i] = load32(block + 4 * i);
   }
-  for (int i = 0; i < 8; i++) {
-    state[i] = cv[i];
-    state[i + 8] = IV[i];
-  }
+  state[0] = cv[0];
+  state[1] = cv[1];
+  state[2] = cv[2];
+  state[3] = cv[3];
+  state[4] = cv[4];
+  state[5] = cv[5];
+  state[6] = cv[6];
+  state[7] = cv[7];
+
+  state[8] = IV_0;
+  state[9] = IV_1;
+  state[10] = IV_2;
+  state[11] = IV_3;
+  state[12] = IV_4;
+  state[13] = IV_5;
+  state[14] = IV_6;
+  state[15] = IV_7;
   state[12] = counter_low(counter);
   state[13] = counter_high(counter);
   state[14] = (uint)block_len;
   state[15] = (uint)flags;
   for (int i = 0; i < 7; i++) {
     round_fn(state, block_words, i);
-  }
-}
-
-inline void
-blake3_compress_in_place_portable(uint cv[8],
-                                  const uchar block[BLAKE3_BLOCK_LEN],
-                                  uchar block_len, ulong counter, uchar flags) {
-  uint state[16];
-  compress_pre(state, cv, block, block_len, counter, flags);
-  for (int i = 0; i < 8; i++) {
-    cv[i] = state[i] ^ state[i + 8];
   }
 }
 
@@ -198,7 +257,11 @@ inline void blake3_compress_in_place(uint cv[8],
                                      const uchar block[BLAKE3_BLOCK_LEN],
                                      uchar block_len, ulong counter,
                                      uchar flags) {
-  blake3_compress_in_place_portable(cv, block, block_len, counter, flags);
+  uint state[16];
+  compress_pre(state, cv, block, block_len, counter, flags);
+  for (int i = 0; i < 8; i++) {
+    cv[i] = state[i] ^ state[i + 8];
+  }
 }
 
 inline void store32(void *dst, uint w) {
@@ -320,9 +383,9 @@ inline ulong round_down_to_power_of_2(ulong x) {
   return x - (x >> 1);
 }
 
-void hash_one_portable(const uchar *input, size_t blocks, const uint key[8],
-                       ulong counter, uchar flags, uchar flags_start,
-                       uchar flags_end, uchar out[BLAKE3_OUT_LEN]) {
+void hash_one(const uchar *input, size_t blocks, const uint key[8],
+              ulong counter, uchar flags, uchar flags_start, uchar flags_end,
+              uchar out[BLAKE3_OUT_LEN]) {
   uint cv[8];
   for (int i = 0; i < 8; i++) {
     cv[i] = key[i];
@@ -332,8 +395,7 @@ void hash_one_portable(const uchar *input, size_t blocks, const uint key[8],
     if (blocks == 1) {
       block_flags |= flags_end;
     }
-    blake3_compress_in_place_portable(cv, input, BLAKE3_BLOCK_LEN, counter,
-                                      block_flags);
+    blake3_compress_in_place(cv, input, BLAKE3_BLOCK_LEN, counter, block_flags);
     input = &input[BLAKE3_BLOCK_LEN];
     blocks -= 1;
     block_flags = flags;
@@ -341,15 +403,13 @@ void hash_one_portable(const uchar *input, size_t blocks, const uint key[8],
   store_cv_words(out, cv);
 }
 
-inline void blake3_hash_many_portable(const uchar *const *inputs,
-                                      size_t num_inputs, size_t blocks,
-                                      const uint key[8], ulong counter,
-                                      bool increment_counter, uchar flags,
-                                      uchar flags_start, uchar flags_end,
-                                      uchar *out) {
+inline void blake3_hash_many(const uchar *const *inputs, size_t num_inputs,
+                             size_t blocks, const uint key[8], ulong counter,
+                             bool increment_counter, uchar flags,
+                             uchar flags_start, uchar flags_end, uchar *out) {
   while (num_inputs > 0) {
-    hash_one_portable(inputs[0], blocks, key, counter, flags, flags_start,
-                      flags_end, out);
+    hash_one(inputs[0], blocks, key, counter, flags, flags_start, flags_end,
+             out);
     if (increment_counter) {
       counter += 1;
     }
@@ -357,15 +417,6 @@ inline void blake3_hash_many_portable(const uchar *const *inputs,
     num_inputs -= 1;
     out = &out[BLAKE3_OUT_LEN];
   }
-}
-
-inline void blake3_hash_many(const uchar *const *inputs, size_t num_inputs,
-                             size_t blocks, const uint key[8], ulong counter,
-                             bool increment_counter, uchar flags,
-                             uchar flags_start, uchar flags_end, uchar *out) {
-  blake3_hash_many_portable(inputs, num_inputs, blocks, key, counter,
-                            increment_counter, flags, flags_start, flags_end,
-                            out);
 }
 
 inline size_t compress_parents_parallel(const uchar *child_chaining_values,
@@ -474,12 +525,12 @@ inline void compress_subtree_to_parent_node(const uchar *input,
   }
 }
 
-void blake3_hasher_update_base(blake3_hasher *self, __global const void *input,
+void blake3_hasher_update_base(blake3_hasher *self, const void *input,
                                size_t input_len, bool use_tbb) {
   if (input_len == 0) {
     return;
   }
-  const __global char *input_bytes = (const __global char *)input;
+  const char *input_bytes = (const char *)input;
   if (chunk_state_len(&self->chunk) > 0) {
     size_t take = BLAKE3_CHUNK_LEN - chunk_state_len(&self->chunk);
     if (take > input_len) {
@@ -561,23 +612,20 @@ inline void hasher_init_base(blake3_hasher *self, const uint key[8],
 }
 
 inline void blake3_hasher_init(__private blake3_hasher *self) {
-  uint local_IV[8];
-  for (int i = 0; i < 8; i++) {
-    local_IV[i] = IV[i];
-  }
+  uint local_IV[8] = {IV_0, IV_1, IV_2, IV_3, IV_4, IV_5, IV_6, IV_7};
   hasher_init_base(self, local_IV, 0);
 }
 
 inline void blake3_hasher_update(__private blake3_hasher *self,
-                                 __global const uchar *input, ulong input_len) {
+                                 const void *input, ulong input_len) {
   bool use_tbb = false;
   blake3_hasher_update_base(self, input, input_len, use_tbb);
 }
 
-inline void blake3_compress_xof_portable(const uint cv[8],
-                                         const uchar block[BLAKE3_BLOCK_LEN],
-                                         uchar block_len, ulong counter,
-                                         uchar flags, uchar out[64]) {
+inline void blake3_compress_xof(const uint cv[8],
+                                const uchar block[BLAKE3_BLOCK_LEN],
+                                uchar block_len, ulong counter, uchar flags,
+                                uchar out[64]) {
   uint state[16];
   compress_pre(state, cv, block, block_len, counter, flags);
   for (int i = 0; i < 8; i++) {
@@ -586,16 +634,9 @@ inline void blake3_compress_xof_portable(const uint cv[8],
   }
 }
 
-inline void blake3_compress_xof(const uint cv[8],
-                                const uchar block[BLAKE3_BLOCK_LEN],
-                                uchar block_len, ulong counter, uchar flags,
-                                uchar out[64]) {
-  blake3_compress_xof_portable(cv, block, block_len, counter, flags, out);
-}
-
 void blake3_xof_many(const uint cv[8], const uchar block[BLAKE3_BLOCK_LEN],
-                     uchar block_len, ulong counter, uchar flags,
-                     __global uchar out[64], size_t outblocks) {
+                     uchar block_len, ulong counter, uchar flags, uchar out[64],
+                     size_t outblocks) {
   if (outblocks == 0) {
     return;
   }
@@ -608,8 +649,8 @@ void blake3_xof_many(const uint cv[8], const uchar block[BLAKE3_BLOCK_LEN],
   }
 }
 
-inline void output_root_bytes(const output_t *self, ulong seek,
-                              __global uchar *out, size_t out_len) {
+inline void output_root_bytes(const output_t *self, ulong seek, uchar *out,
+                              size_t out_len) {
   if (out_len == 0) {
     return;
   }
@@ -648,7 +689,7 @@ inline void output_root_bytes(const output_t *self, ulong seek,
 }
 
 void blake3_hasher_finalize_seek(const blake3_hasher *self, ulong seek,
-                                 __global uchar *out, size_t out_len) {
+                                 uchar *out, size_t out_len) {
   if (out_len == 0) {
     return;
   }
@@ -679,57 +720,7 @@ void blake3_hasher_finalize_seek(const blake3_hasher *self, ulong seek,
   output_root_bytes(&output, seek, out, out_len);
 }
 
-void blake3_hasher_finalize(const blake3_hasher *self, __global uchar *out,
+void blake3_hasher_finalize(const blake3_hasher *self, uchar *out,
                             size_t out_len) {
   blake3_hasher_finalize_seek(self, 0, out, out_len);
-}
-
-__kernel void blake3_hash(__global const uchar *input, ulong input_len,
-                          __global uchar *out, ulong out_len) {
-  // Define a fixed-size buffer for the modified input
-  uchar modified_input[BLAKE3_CHUNK_LEN]; // Assuming BLAKE3_CHUNK_LEN is the
-                                          // max input length
-
-  for (int i = 0; i < 1000000; i++) {
-    __private blake3_hasher hasher;
-    blake3_hasher_init(&hasher);
-
-    // Populate the fixed-size buffer with modified input
-    for (ulong j = 0; j < input_len && j < BLAKE3_CHUNK_LEN; j++) {
-      modified_input[j] =
-          input[j] + (uchar)(i & 0xFF); // Add `i` modulo 256 to each byte
-    }
-
-    // Copy modified input back to the original input buffer
-    for (ulong j = 0; j < input_len && j < BLAKE3_CHUNK_LEN; j++) {
-      ((__global uchar *)input)[j] = modified_input[j];
-    }
-
-    blake3_hasher_update(&hasher, input, input_len);
-    blake3_hasher_finalize(&hasher, out, out_len);
-  }
-}
-
-__kernel void blake3_test(__global const uchar *input, ulong input_len,
-                          __global uchar *out, ulong out_len) {
-  __private blake3_hasher hasher;
-  blake3_hasher_init(&hasher);
-  blake3_hasher_update(&hasher, input, 3);
-
-  // Capture debug info in out[32..95]
-  if (out_len >= 96) {
-    output_t output = chunk_state_output(&hasher.chunk);
-    uint state[16];
-    compress_pre(state, output.input_cv, (const __private uchar *)output.block,
-                 output.block_len, output.counter, output.flags | ROOT);
-    for (int i = 0; i < 16; i++) {
-      __private uchar temp[4];
-      store32(temp, state[i]);
-      for (int j = 0; j < 4; j++) {
-        out[32 + i * 4 + j] = temp[j];
-      }
-    }
-  }
-
-  blake3_hasher_finalize(&hasher, out, BLAKE3_OUT_LEN);
 }

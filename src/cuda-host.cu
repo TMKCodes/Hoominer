@@ -9,6 +9,54 @@
 
 #include "cuda-host.h"
 
+// Function to calculate optimal grid and block dimensions
+static void calculate_optimal_dimensions(CudaResources *resource)
+{
+  const int warp_size = 32;
+  int sm_count = resource->device_prop.multiProcessorCount;
+  int max_threads_per_block = resource->device_prop.maxThreadsPerBlock;
+  int max_threads_per_sm = resource->device_prop.maxThreadsPerMultiProcessor;
+
+  // Start with a typical block size
+  int threads_per_block = 256;
+  int max_active_blocks_per_sm = 0;
+
+  // Estimate optimal blocks per SM
+  cudaError_t err = cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+      &max_active_blocks_per_sm, resource->kernel, threads_per_block, 0);
+
+  if (err != cudaSuccess)
+  {
+    fprintf(stderr, "Occupancy calc failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
+    max_active_blocks_per_sm = 2;
+  }
+
+  // Choose target blocks per SM
+  int target_blocks_per_sm = max_active_blocks_per_sm >= 2 ? max_active_blocks_per_sm : 2;
+
+  // Adjust threads per block to stay within per-SM thread limit
+  int max_possible_threads = max_threads_per_sm / target_blocks_per_sm;
+  threads_per_block = (threads_per_block > max_possible_threads) ? max_possible_threads : threads_per_block;
+  threads_per_block = (threads_per_block / warp_size) * warp_size;
+
+  // Clamp to device limits
+  if (threads_per_block > max_threads_per_block)
+    threads_per_block = max_threads_per_block - (max_threads_per_block % warp_size);
+  if (threads_per_block < warp_size)
+    threads_per_block = warp_size;
+
+  // Compute total grid size
+  int grid_size = sm_count * target_blocks_per_sm;
+  if (grid_size > resource->device_prop.maxGridSize[0])
+    grid_size = resource->device_prop.maxGridSize[0];
+
+  resource->optimal_block_size = threads_per_block;
+  resource->optimal_grid_size = grid_size;
+
+  printf("Calculated for %s: block_size=%d, grid_size=%d\n",
+         resource->device_name, threads_per_block, grid_size);
+}
+
 static uint64_t splitmix64(uint64_t *state)
 {
   uint64_t z = (*state += 0x9e3779b97f4a7c15ULL);
@@ -19,7 +67,7 @@ static uint64_t splitmix64(uint64_t *state)
 
 static cudaError_t create_xoshiro_random_state(CudaResources *resource)
 {
-  size_t total_bytes = resource->max_block_size * 4 * sizeof(unsigned long long);
+  size_t total_bytes = 4 * sizeof(unsigned long long);
   resource->h_random_state = (unsigned long long *)malloc(total_bytes);
   if (resource->h_random_state == NULL)
   {
@@ -46,21 +94,19 @@ static cudaError_t create_xoshiro_random_state(CudaResources *resource)
     seed_base[1] = (uint64_t)clock();
   }
 
-  for (size_t i = 0; i < resource->max_block_size; i++)
+  uint64_t state = seed_base[0] ^ seed_base[1];
+  resource->h_random_state[0] = splitmix64(&state);
+  resource->h_random_state[1] = splitmix64(&state);
+  resource->h_random_state[2] = splitmix64(&state);
+  resource->h_random_state[3] = splitmix64(&state);
+
+  if (resource->h_random_state[0] == 0 && resource->h_random_state[1] == 0 &&
+      resource->h_random_state[2] == 0 && resource->h_random_state[3] == 0)
   {
-    uint64_t state = seed_base[0] ^ (i * 0x9e3779b97f4a7c15ULL);
-    state ^= seed_base[1];
-
-    resource->h_random_state[i * 4 + 0] = splitmix64(&state);
-    resource->h_random_state[i * 4 + 1] = splitmix64(&state);
-    resource->h_random_state[i * 4 + 2] = splitmix64(&state);
-    resource->h_random_state[i * 4 + 3] = splitmix64(&state);
-
-    if (resource->h_random_state[i * 4 + 0] == 0 && resource->h_random_state[i * 4 + 1] == 0 &&
-        resource->h_random_state[i * 4 + 2] == 0 && resource->h_random_state[i * 4 + 3] == 0)
-    {
-      resource->h_random_state[i * 4 + 0] = 0x9e3779b97f4a7c15ULL;
-    }
+    resource->h_random_state[0] = 0x9e3779b97f4a7c15ULL;
+    resource->h_random_state[1] = 0x9e3779b97f4a7c15ULL;
+    resource->h_random_state[2] = 0x9e3779b97f4a7c15ULL;
+    resource->h_random_state[3] = 0x9e3779b97f4a7c15ULL;
   }
 
   return cudaSuccess;
@@ -77,7 +123,6 @@ CudaResources *initialize_selected_cuda_gpus(unsigned int *device_indices, unsig
     fprintf(stderr, "Invalid input: No device indices\n");
     return NULL;
   }
-
   err = cudaGetDeviceCount(&num_devices);
   if (err != cudaSuccess || num_devices == 0)
   {
@@ -133,11 +178,6 @@ CudaResources *initialize_selected_cuda_gpus(unsigned int *device_indices, unsig
       goto cleanup;
     }
 
-    res[i].max_block_size = 256;
-    res[i].max_grid_size = (NONCE_TARGET + res[i].max_block_size - 1) / res[i].max_block_size;
-    printf("Max grid size: %ld\n", res[i].max_grid_size);
-    printf("Max block size: %ld\n", res[i].max_block_size);
-
     err = cudaMalloc(&res[i].previous_header, DOMAIN_HASH_SIZE);
     if (err != cudaSuccess)
     {
@@ -168,7 +208,7 @@ CudaResources *initialize_selected_cuda_gpus(unsigned int *device_indices, unsig
       fprintf(stderr, "Device %u result allocation failed: %s\n", idx, cudaGetErrorString(err));
       goto cleanup;
     }
-    err = cudaMalloc(&res[i].random_state, res[i].max_block_size * 4 * sizeof(unsigned long long));
+    err = cudaMalloc(&res[i].random_state, 4 * sizeof(unsigned long long));
     if (err != cudaSuccess)
     {
       fprintf(stderr, "Device %u random_state allocation failed: %s\n", idx, cudaGetErrorString(err));
@@ -187,6 +227,10 @@ CudaResources *initialize_selected_cuda_gpus(unsigned int *device_indices, unsig
       fprintf(stderr, "Random state initialization failed for %s: %s\n", res[i].device_name, cudaGetErrorString(err));
       goto cleanup;
     }
+
+    // Calculate optimal grid and block dimensions after kernel is loaded
+    // Note: calculate_optimal_dimensions requires the kernel to be loaded, so we defer it
+    // until after kernel compilation/loading in compile_cuda_kernel_from_xxd_header or load_cuda_kernel_binary
 
     printf("Initialized GPU %u: %s\n", idx, res[i].device_name);
   }
@@ -246,78 +290,77 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count)
       fprintf(stderr, "Device %u properties query failed: %s\n", i, cudaGetErrorString(err));
       goto cleanup;
     }
-    strncpy(res[i].device_name, res[i].device_prop.name, sizeof(res[i].device_name) - err);
+    strncpy(res[i].device_name, res[i].device_prop.name, sizeof(res[i].device_name) - 1);
     res[i].device_id = i;
+    res[i].pci_bus_id = res[i].device_prop.pciBusID; // Store PCI-BUS-ID
 
     if (res[i].device_prop.computeMode == cudaComputeModeProhibited || res[i].device_prop.major < 2)
     {
-      fprintf(stderr, "Device %u (%s) lacks sufficient compute capability\n", i, res[i].device_name);
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u, %s) lacks sufficient compute capability\n",
+              i, res[i].pci_bus_id, res[i].device_name);
       goto cleanup;
     }
 
     err = cudaStreamCreate(&res[i].stream);
     if (err != cudaSuccess)
     {
-      fprintf(stderr, "Device %u stream creation failed: %s\n", i, cudaGetErrorString(err));
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) stream creation failed: %s\n",
+              i, res[i].pci_bus_id, cudaGetErrorString(err));
       goto cleanup;
     }
-
-    res[i].max_block_size = 256;
-    res[i].max_grid_size = (NONCE_TARGET + res[i].max_block_size - 1) / res[i].max_block_size;
-    printf("Max grid size: %ld\n", res[i].max_grid_size);
-    printf("Max block size: %ld\n", res[i].max_block_size);
 
     err = cudaMalloc(&res[i].previous_header, DOMAIN_HASH_SIZE);
     if (err != cudaSuccess)
     {
-      fprintf(stderr, "Device %u previous_header allocation failed: %s\n", i, cudaGetErrorString(err));
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) previous_header allocation failed: %s\n",
+              i, res[i].pci_bus_id, cudaGetErrorString(err));
       goto cleanup;
     }
     err = cudaMalloc(&res[i].timestamp, sizeof(unsigned long long));
     if (err != cudaSuccess)
     {
-      fprintf(stderr, "Device %u timestamp allocation failed: %s\n", i, cudaGetErrorString(err));
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) timestamp allocation failed: %s\n",
+              i, res[i].pci_bus_id, cudaGetErrorString(err));
       goto cleanup;
     }
     err = cudaMalloc(&res[i].matrix, 64 * 64 * sizeof(double));
     if (err != cudaSuccess)
     {
-      fprintf(stderr, "Device %u matrix allocation failed: %s\n", i, cudaGetErrorString(err));
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) matrix allocation failed: %s\n",
+              i, res[i].pci_bus_id, cudaGetErrorString(err));
       goto cleanup;
     }
     err = cudaMalloc(&res[i].target, DOMAIN_HASH_SIZE);
     if (err != cudaSuccess)
     {
-      fprintf(stderr, "Device %u target allocation failed: %s\n", i, cudaGetErrorString(err));
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) target allocation failed: %s\n",
+              i, res[i].pci_bus_id, cudaGetErrorString(err));
       goto cleanup;
     }
     err = cudaMalloc(&res[i].result, sizeof(CudaResult));
     if (err != cudaSuccess)
     {
-      fprintf(stderr, "Device %u result allocation failed: %s\n", i, cudaGetErrorString(err));
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) result allocation failed: %s\n",
+              i, res[i].pci_bus_id, cudaGetErrorString(err));
       goto cleanup;
     }
-    err = cudaMalloc(&res[i].random_state, res[i].max_block_size * 4 * sizeof(unsigned long long));
+    err = cudaMalloc(&res[i].random_state, 4 * sizeof(unsigned long long));
     if (err != cudaSuccess)
     {
-      fprintf(stderr, "Device %u random_state allocation failed: %s\n", i, cudaGetErrorString(err));
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) random_state allocation failed: %s\n",
+              i, res[i].pci_bus_id, cudaGetErrorString(err));
       goto cleanup;
     }
-    // err = cudaMalloc(&res[i].printf_buffer, PRINTF_BUFFER_SIZE);
-    // if (err != cudaSuccess)
-    // {
-    //   fprintf(stderr, "Device %u printf_buffer allocation failed: %s\n", i, cudaGetErrorString(err));
-    //   goto cleanup;
-    // }
 
     err = create_xoshiro_random_state(&res[i]);
     if (err != cudaSuccess)
     {
-      fprintf(stderr, "Random state initialization failed for %s: %s\n", res[i].device_name, cudaGetErrorString(err));
+      fprintf(stderr, "Random state initialization failed for %s (PCI-BUS-ID: %u): %s\n",
+              res[i].device_name, res[i].pci_bus_id, cudaGetErrorString(err));
       goto cleanup;
     }
 
-    printf("Initialized GPU %u: %s\n", i, res[i].device_name);
+    printf("Initialized GPU %u (PCI-BUS-ID: %u): %s\n", i, res[i].pci_bus_id, res[i].device_name);
   }
 
   *device_count = num_devices;
@@ -332,7 +375,6 @@ cleanup:
     cudaFree(res[j].target);
     cudaFree(res[j].result);
     cudaFree(res[j].random_state);
-    // cudaFree(res[j].printf_buffer);
     free(res[j].h_random_state);
     cudaStreamDestroy(res[j].stream);
   }
@@ -457,6 +499,9 @@ cudaError_t compile_cuda_kernel_from_xxd_header(CudaResources *resource, const c
     return cudaErrorInvalidKernelImage;
   }
 
+  // Calculate optimal grid and block dimensions after kernel is loaded
+  calculate_optimal_dimensions(resource);
+
   printf("Kernel %s compiled for %s\n", kernel_name, resource->device_name);
   return cudaSuccess;
 }
@@ -513,6 +558,9 @@ cudaError_t load_cuda_kernel_binary(CudaResources *resource, const char *cubin_f
     cuModuleUnload(resource->module);
     return cudaErrorInvalidKernelImage;
   }
+
+  // Calculate optimal grid and block dimensions after kernel is loaded
+  calculate_optimal_dimensions(resource);
 
   printf("Kernel %s loaded for %s\n", kernel_name, resource->device_name);
   return cudaSuccess;
@@ -608,7 +656,7 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
   }
 
   err = cudaMemcpyAsync(resource->random_state, resource->h_random_state,
-                        resource->max_block_size * 4 * sizeof(unsigned long long),
+                        4 * sizeof(unsigned long long),
                         cudaMemcpyHostToDevice, resource->stream);
   if (err != cudaSuccess)
   {
@@ -637,8 +685,8 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
       &resource->result};
 
   CUresult cu_err = cuLaunchKernel(resource->kernel,
-                                   resource->max_grid_size, 1, 1,
-                                   resource->max_block_size, 1, 1,
+                                   resource->optimal_grid_size, 1, 1,
+                                   resource->optimal_block_size, 1, 1,
                                    0,
                                    resource->stream,
                                    args,

@@ -5,6 +5,7 @@
     "bit": "cpp",
     "hoohash-miner.h": "c",
     "compare": "cpp",
-    "iosfwd": "cpp"
+    "iosfwd": "cpp",
+    "cuda-host.h": "c"
   }
 }
