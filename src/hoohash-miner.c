@@ -236,8 +236,8 @@ void *mining_opencl_thread(void *arg)
   MiningState *ms = ctx->ms;
   State state = {0};
   char *current_job_id = NULL;
-  cl_ulong local_work_size = ctx->opencl_resources[mt->threadIndex]->max_work_group_size;
-  cl_ulong global_work_size = ctx->opencl_resources[mt->threadIndex]->max_global_work_size;
+  cl_ulong local_work_size = ctx->opencl_resources[mt->threadIndex].max_work_group_size;
+  cl_ulong global_work_size = ctx->opencl_resources[mt->threadIndex].max_global_work_size;
   cl_ulong nonce_mask = 0xFFFFFFFFFFFFFFFFULL;
   cl_ulong nonce_fixed = (cl_ulong)mt->threadIndex * global_work_size;
   int reporting_index = ctx->cpu_device_count + mt->threadIndex;
