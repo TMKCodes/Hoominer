@@ -124,7 +124,7 @@ void *hashrate_display_thread(void *arg)
     {
       ReportingDevice *device = hd->devices[i];
       pthread_mutex_lock(&device->device_mutex);
-      double hashrate = device->nonces_processed / (double)seconds;
+      device->hashrate = device->nonces_processed / (double)seconds;
       device->nonces_processed = 0;
       pthread_mutex_unlock(&device->device_mutex);
       if (strcmp(device->device_name, "CPU") == 0)
@@ -136,25 +136,25 @@ void *hashrate_display_thread(void *arg)
         printf("[%-8s] | %s\t | ", time_str, device->device_name);
       }
 
-      if (hashrate > 1000000000000.0)
+      if (device->hashrate > 1000000000000.0)
       {
-        printf("%-6.2f TH/s \t\t| ", hashrate / 1000000000000.0);
+        printf("%-6.2f TH/s \t\t| ", device->hashrate / 1000000000000.0);
       }
-      else if (hashrate > 1000000000.0)
+      else if (device->hashrate > 1000000000.0)
       {
-        printf("%-6.2f GH/s \t\t| ", hashrate / 1000000000.0);
+        printf("%-6.2f GH/s \t\t| ", device->hashrate / 1000000000.0);
       }
-      else if (hashrate > 1000000.0)
+      else if (device->hashrate > 1000000.0)
       {
-        printf("%-6.2f MH/s \t\t| ", hashrate / 1000000.0);
+        printf("%-6.2f MH/s \t\t| ", device->hashrate / 1000000.0);
       }
-      else if (hashrate > 1000.0)
+      else if (device->hashrate > 1000.0)
       {
-        printf("%-6.2f KH/s \t\t| ", hashrate / 1000.0);
+        printf("%-6.2f KH/s \t\t| ", device->hashrate / 1000.0);
       }
       else
       {
-        printf("%-6.2f H/s  \t\t| ", hashrate);
+        printf("%-6.2f H/s  \t\t| ", device->hashrate);
       }
 
       printf("%-15ld | %-15ld | %-15ld |\n", device->accepted, device->stales, device->rejected);

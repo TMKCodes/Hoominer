@@ -1,4 +1,5 @@
 build/
+releases/
 algorithms/GPU/OpenCL/opencl-compiler
 algorithms/GPU/OpenCL/test-kernel
 algorithms/GPU/OpenCL/test-blake3-kernel

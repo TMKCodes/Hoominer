@@ -36,7 +36,7 @@ void *stratum_receive_thread(void *arg)
   while (ctx->running)
   {
     fd_set fds;
-    struct timeval tv = {1, 0};
+    struct timeval tv = {0, 100000}; // 100ms timeout
     FD_ZERO(&fds);
     FD_SET(ctx->sockfd, &fds);
 
@@ -54,8 +54,25 @@ void *stratum_receive_thread(void *arg)
     buffer[bytes] = '\0';
     if (json_len + bytes >= sizeof(json_buffer))
     {
-      printf("stratum_receive_thread: Buffer overflow, resetting\n");
-      json_len = 0;
+      printf("stratum_receive_thread: Buffer overflow, processing partial\n");
+      char *start = json_buffer;
+      char *end;
+      char *partial_end = json_buffer + json_len;
+      while ((end = strchr(start, '\n')) && end < partial_end)
+      {
+        *end = '\0';
+        json_object *msg = json_tokener_parse(start);
+        if (msg)
+        {
+          process_stratum_message(msg, ctx, ctx->ms);
+          json_object_put(msg);
+        }
+        else
+          printf("stratum_receive_thread: Failed to parse JSON: %s\n", start);
+        json_len -= (end - start + 1);
+        start = end + 1;
+      }
+      memmove(json_buffer, start, json_len);
       continue;
     }
 
@@ -174,6 +191,9 @@ int connect_to_stratum_server(const char *hostname, int port)
     sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
     if (sockfd < 0)
       continue;
+
+    int flag = 1;
+    setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(int));
 
     if (connect(sockfd, p->ai_addr, p->ai_addrlen) == 0)
     {

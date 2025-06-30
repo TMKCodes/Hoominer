@@ -324,8 +324,6 @@ OpenCLResources *initialize_selected_opencl_gpus(cl_uint *device_indices, cl_uin
       fprintf(stderr, "Device %u buffer creation failed: %d\n", idx, err);
       goto cleanup;
     }
-
-    printf("Initialized GPU %u: %s\n", idx, res[i].device_name);
   }
 
   free(non_nvidia_indices);
@@ -406,13 +404,20 @@ static cl_uint get_pci_bus_id_from_libpciaccess(cl_uint device_idx)
 
   if (pci_bus_id == 0)
   {
-    fprintf(stderr, "Could not find PCI-BUS-ID for device %u (%s) via libpciaccess\n", device_idx);
+    fprintf(stderr, "Could not find PCI-BUS-ID for device %u via libpciaccess\n", device_idx);
   }
 
   // Cleanup
   pci_iterator_destroy(iter);
   pci_system_cleanup();
   return pci_bus_id;
+}
+
+int compare_pci_bus_id(const void *a, const void *b)
+{
+  const OpenCLResources *ra = (const OpenCLResources *)a;
+  const OpenCLResources *rb = (const OpenCLResources *)b;
+  return (int)(ra->pci_bus_id - rb->pci_bus_id);
 }
 
 OpenCLResources *initalize_all_opencl_gpus(cl_uint *device_count)
@@ -617,9 +622,8 @@ OpenCLResources *initalize_all_opencl_gpus(cl_uint *device_count)
       fprintf(stderr, "Device %u (PCI-BUS-ID: %u) buffer creation failed: %d\n", idx, res[i].pci_bus_id, err);
       goto cleanup;
     }
-
-    printf("Initialized GPU %u (PCI-BUS-ID: %u): %s\n", idx, res[i].pci_bus_id, res[i].device_name);
   }
+  qsort(res, non_nvidia_count, sizeof(OpenCLResources), compare_pci_bus_id);
 
   free(non_nvidia_indices);
   free(devices);

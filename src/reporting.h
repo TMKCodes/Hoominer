@@ -21,6 +21,7 @@ struct ReportingDevice
   uint64_t accepted;
   uint64_t stales;
   uint64_t rejected;
+  double hashrate;
   pthread_mutex_t device_mutex;
 };
 

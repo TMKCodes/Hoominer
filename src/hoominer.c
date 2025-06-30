@@ -12,6 +12,7 @@
 #include "reporting.h"
 #include "hoohash-miner.h"
 #include "hoohash_cl.h"
+#include "api.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -466,7 +467,7 @@ void initialize_reporting_devices(StratumContext *ctx)
     for (unsigned int i = 0; i < ctx->opencl_device_count; i++)
     {
       char device_name[64];
-      snprintf(device_name, sizeof(device_name), "GPU[ID: %d, BUS: %d]", i, ctx->opencl_resources[i].pci_bus_id);
+      snprintf(device_name, sizeof(device_name), "GPU[BUS_ID: %d]", ctx->opencl_resources[i].pci_bus_id);
       char *name_copy = strdup(device_name);
       // ReportingDevice *opencl_reporting_device = init_reporting_device(ctx->cpu_device_count + i, ctx->opencl_resources[i].device_name);
       ReportingDevice *opencl_reporting_device = init_reporting_device(ctx->cpu_device_count + i, name_copy);
@@ -475,11 +476,11 @@ void initialize_reporting_devices(StratumContext *ctx)
     for (unsigned int i = 0; i < ctx->cuda_device_count; i++)
     {
       char device_name[64];
-      snprintf(device_name, sizeof(device_name), "GPU[ID: %d, BUS: %d]", i, ctx->cuda_resources[i].pci_bus_id);
+      snprintf(device_name, sizeof(device_name), "GPU[BUS_ID: %d]", ctx->cuda_resources[i].pci_bus_id);
       char *name_copy = strdup(device_name);
-      // ReportingDevice *cuyda_reporting_device = init_reporting_device(ctx->cpu_device_count + ctx->opencl_device_count + i, ctx->cuda_resources[i].device_name);
-      ReportingDevice *cuyda_reporting_device = init_reporting_device(ctx->cpu_device_count + ctx->opencl_device_count + i, name_copy);
-      add_reporting_device(ctx->hd, cuyda_reporting_device);
+      // ReportingDevice *cuda_reporting_device = init_reporting_device(ctx->cpu_device_count + ctx->opencl_device_count + i, ctx->cuda_resources[i].device_name);
+      ReportingDevice *cuda_reporting_device = init_reporting_device(ctx->cpu_device_count + ctx->opencl_device_count + i, name_copy);
+      add_reporting_device(ctx->hd, cuda_reporting_device);
     }
   }
 }
@@ -548,6 +549,9 @@ int main(int argc, char **argv)
     printf("Failed to allocate StratumContext\n");
     return 1;
   }
+  ctx->version = "0.2.4";
+  printf("Welcome to Hoominer v%s\n", ctx->version);
+
   // Parse arguments
   parse_args(argc, argv, &pool_ip, &pool_port, &username, &password, &algorithm, &ctx->disable_cpu, &ctx->disable_gpu, &ctx->ms->num_cpu_threads);
   if (!pool_ip)
@@ -569,13 +573,15 @@ int main(int argc, char **argv)
     cleanup(1);
     return 1;
   }
-  ctx->hd = init_hashrate_display(ctx->cpu_device_count + ctx->opencl_device_count + ctx->cuda_device_count);
+  int display_devices_length = ctx->cpu_device_count + ctx->opencl_device_count + ctx->cuda_device_count;
+  ctx->hd = init_hashrate_display(display_devices_length);
   if (!ctx->hd)
   {
     printf("Failed to initialize hashrate display\n");
     cleanup(1);
     return 1;
   }
+  printf("Initialized Hashrate calculation for %d", display_devices_length);
 
   // Get executable's directory
   exe_path = strdup(argv[0]);
@@ -596,6 +602,8 @@ int main(int argc, char **argv)
   }
 
   initialize_reporting_devices(ctx);
+
+  struct MHD_Daemon *daemon = start_api(ctx);
 
   // Main loop with reconnection logic and timeout
   time_t reconnect_start_time = 0;
@@ -660,7 +668,7 @@ int main(int argc, char **argv)
     printf("Reconnecting in 5 seconds...\n");
     sleep(5);
   }
-
+  stop_api(daemon);
   cleanup(0); // Unreachable due to infinite loop, kept for completeness
   return 0;
 }

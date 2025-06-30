@@ -3,6 +3,8 @@
 #include <sys/select.h>
 #include <netdb.h>
 #include <arpa/inet.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -22,6 +24,7 @@ typedef struct CudaResources CudaResources;
 
 struct StratumContext
 {
+  char *version;
   volatile int running;
   int sockfd;
   const char *worker;

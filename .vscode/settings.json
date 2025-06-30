@@ -6,6 +6,12 @@
     "hoohash-miner.h": "c",
     "compare": "cpp",
     "iosfwd": "cpp",
-    "cuda-host.h": "c"
+    "cuda-host.h": "c",
+    "cstdlib": "c",
+    "limits": "c",
+    "target": "c",
+    "socket.h": "c",
+    "endian.h": "c",
+    "stratum.h": "c"
   }
 }

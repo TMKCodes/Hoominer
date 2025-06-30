@@ -57,6 +57,13 @@ static void calculate_optimal_dimensions(CudaResources *resource)
          resource->device_name, threads_per_block, grid_size);
 }
 
+int compare_pci_bus_id(const void *a, const void *b)
+{
+  const CudaResources *ra = (const CudaResources *)a;
+  const CudaResources *rb = (const CudaResources *)b;
+  return (int)(ra->pci_bus_id - rb->pci_bus_id);
+}
+
 static uint64_t splitmix64(uint64_t *state)
 {
   uint64_t z = (*state += 0x9e3779b97f4a7c15ULL);
@@ -231,8 +238,6 @@ CudaResources *initialize_selected_cuda_gpus(unsigned int *device_indices, unsig
     // Calculate optimal grid and block dimensions after kernel is loaded
     // Note: calculate_optimal_dimensions requires the kernel to be loaded, so we defer it
     // until after kernel compilation/loading in compile_cuda_kernel_from_xxd_header or load_cuda_kernel_binary
-
-    printf("Initialized GPU %u: %s\n", idx, res[i].device_name);
   }
 
   *device_count = num_selected;
@@ -359,10 +364,8 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count)
               res[i].device_name, res[i].pci_bus_id, cudaGetErrorString(err));
       goto cleanup;
     }
-
-    printf("Initialized GPU %u (PCI-BUS-ID: %u): %s\n", i, res[i].pci_bus_id, res[i].device_name);
   }
-
+  qsort(res, num_devices, sizeof(CudaResources), compare_pci_bus_id);
   *device_count = num_devices;
   return res;
 

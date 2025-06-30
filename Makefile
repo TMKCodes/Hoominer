@@ -3,9 +3,9 @@ NVCC = nvcc
 
 # Flags
 CFLAGS = -Xcompiler "-fPIC -g -O0 -Wall -Wextra -DTEST -DDEBUG"
-INCLUDES = -Ialgorithms/blake3/c -I/opt/cuda/include
+INCLUDES = -Ialgorithms/blake3/c -I/opt/cuda/include -Iexternal/libmicrohttpd/build/include
 NVCCFLAGS = $(CFLAGS) $(INCLUDES)
-LDFLAGS = -lm -lgmp -ljson-c -lOpenCL -L/opt/cuda/lib64 -lcuda -lcudart -lnvrtc  -lpciaccess
+LDFLAGS = -L/usr/local/include -lm -lgmp -ljson-c -lOpenCL -L/opt/cuda/lib64 -lcuda -lcudart -lnvrtc  -lpciaccess
 # Directories
 SRC_DIR = src
 BUILD_DIR = build
@@ -25,13 +25,17 @@ OBJS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SRCS)) \
 # Default rule
 all: hoohash $(MINER_BIN)
 
-# Build hoohash static lib
-.PHONY: hoohash hoohash-clean
+# Build static libs
+.PHONY: hoohash hoohash-clean 
 hoohash:
 	$(MAKE) -C algorithms/hoohash
 
 hoohash-clean:
 	$(MAKE) -C algorithms/hoohash clean
+
+# microhttpd:
+#	cd external/libmicrohttpd && ./autogen.sh && ./configure --enable-static --disable-shared --prefix=/usr/local --disable-https && make && sudo make install && cd ../..
+
 
 # Ensure build dir exists
 $(BUILD_DIR):
@@ -50,6 +54,7 @@ $(MINER_BIN): $(OBJS) | $(BUILD_DIR)
 	$(NVCC) -o $@ $(OBJS) \
 		algorithms/hoohash/build/lib-hoohash.a \
 		algorithms/blake3/c/build/libblake3.a \
+		/usr/local/lib/libmicrohttpd.a \
 		$(LDFLAGS)
 	chmod +x $@
 

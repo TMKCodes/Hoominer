@@ -24,7 +24,12 @@ typedef struct QueuedSolution QueuedSolution;
 typedef struct SolutionQueue SolutionQueue;
 typedef struct JobQueue JobQueue;
 
+#define JOB_MAX_AGE 250
+#define BATCH_SIZE 1000
+#define JOB_FREQUENCY_FACTOR 2
 #define JOB_QUEUE_SIZE 4
+#define SOLUTION_QUEUE_SIZE 16
+
 struct QueuedJob
 {
   char *job_id;
@@ -43,7 +48,6 @@ struct JobQueue
   pthread_cond_t queue_cond;
 };
 
-#define SOLUTION_QUEUE_SIZE 16
 struct QueuedSolution
 {
   char *worker;
@@ -96,6 +100,7 @@ struct MiningState
   pthread_t *mining_cuda_threads;
   pthread_mutex_t target_mutex;
   JobQueue job_queue;
+  int new_job_available;
 };
 
 struct MiningThread
