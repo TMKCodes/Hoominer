@@ -8,7 +8,6 @@ extern "C"
 
 #include <cuda_runtime.h>
 #include <cuda.h>
-#include <nvrtc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -60,7 +59,6 @@ extern "C"
   // Function declarations
   CudaResources *initialize_selected_cuda_gpus(unsigned int *device_indices, unsigned int num_selected, unsigned int *device_count);
   CudaResources *initialize_all_cuda_gpus(unsigned int *device_count);
-  cudaError_t compile_cuda_kernel_from_xxd_header(CudaResources *resource, const char *source, size_t source_len, const char *kernel_name, const char **required_extensions, size_t num_required_extensions);
   cudaError_t load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename, const char *kernel_name);
   void cleanup_cuda_resources(CudaResources *resource);
   void cleanup_all_cuda_gpus(CudaResources *resources, unsigned int device_count);
