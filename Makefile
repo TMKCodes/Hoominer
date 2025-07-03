@@ -3,9 +3,9 @@ NVCC = nvcc
 
 # Flags
 CFLAGS = -Xcompiler "-fPIC -g -O0 -Wall -Wextra -DTEST -DDEBUG"
-INCLUDES = -Ialgorithms/blake3/c -I/opt/cuda/include -Iexternal/libmicrohttpd/build/include
+INCLUDES = -Ialgorithms/blake3/c -I/opt/cuda/include -Iexternal/libmicrohttpd/build/include -Iexternal/json-c/ -Iexternal/libpciaccess/include
 NVCCFLAGS = $(CFLAGS) $(INCLUDES)
-LDFLAGS = -L/usr/local/include -lm -lgmp -ljson-c -lOpenCL -L/opt/cuda/lib64 -lcuda -lcudart  -lpciaccess -lnvidia-ml -lssl -lcrypto
+LDFLAGS = -ljson-c -lm -lgmp -lOpenCL -L/opt/cuda/lib64 -lcuda -lcudart  -lpciaccess -lnvidia-ml -lssl -lcrypto
 # Directories
 SRC_DIR = src
 BUILD_DIR = build
@@ -26,16 +26,34 @@ OBJS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SRCS)) \
 all: hoohash $(MINER_BIN)
 
 # Build static libs
-.PHONY: hoohash hoohash-clean 
+.PHONY: hoohash hoohash-clean
 hoohash:
 	$(MAKE) -C algorithms/hoohash
 
 hoohash-clean:
 	$(MAKE) -C algorithms/hoohash clean
 
-# microhttpd:
-#	cd external/libmicrohttpd && ./autogen.sh && ./configure --enable-static --disable-shared --prefix=/usr/local --disable-https && make && sudo make install && cd ../..
+# .PHONY: json-c json-c-clean
 
+# json-c:
+# 	cd external/json-c && mkdir -p build && cd build && cmake .. -DBUILD_SHARED_LIBS=OFF  -DCMAKE_POLICY_VERSION_MINIMUM=3.5 && make &&  cd ../../..
+# json-c-clean:
+# 	rm -rf external/json-c/build external/json-c/install
+
+# .PHONY: microhttpd
+
+# microhttpd:
+#   cd external/libmicrohttpd && ./autogen.sh && ./configure --enable-static --disable-shared --prefix=/usr/local --disable-https && make && sudo make install && cd ../..
+
+# .PHONY: pciaccess pciaccess-clean
+
+# pciaccess:
+# 	meson setup --reconfigure external/libpciaccess/build external/libpciaccess --default-library=static  --buildtype=release
+# 	meson compile -C external/libpciaccess/build
+# 	meson install -C external/libpciaccess/build
+
+# pciaccess-clean:
+# 	rm -rf external/libpciaccess/build external/libpciaccess/install
 
 # Ensure build dir exists
 $(BUILD_DIR):
@@ -55,6 +73,8 @@ $(MINER_BIN): $(OBJS) | $(BUILD_DIR)
 		algorithms/hoohash/build/lib-hoohash.a \
 		algorithms/blake3/c/build/libblake3.a \
 		/usr/local/lib/libmicrohttpd.a \
+		external/json-c/build/libjson-c.a \
+		external/libpciaccess/build/src/libpciaccess.a \
 		$(LDFLAGS)
 	chmod +x $@
 

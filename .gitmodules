@@ -7,3 +7,9 @@
 [submodule "external/libmicrohttpd"]
 	path = external/libmicrohttpd
 	url = https://git.gnunet.org/libmicrohttpd.git
+[submodule "external/json-c"]
+	path = external/json-c
+	url = https://github.com/json-c/json-c.git
+[submodule "external/libpciaccess"]
+	path = external/libpciaccess
+	url = https://gitlab.freedesktop.org/xorg/lib/libpciaccess.git
