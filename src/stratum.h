@@ -1,19 +1,29 @@
+#define _POSIX_C_SOURCE 200809L
 #ifndef STRATUM_H
 #define STRATUM_H
-#include <sys/select.h>
+#include <assert.h>
+#include <json-c/json.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <signal.h>
+#include <endian.h>
+#include <time.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <stdlib.h>
 #include <stdio.h>
-#include <string.h>
+#include <sys/select.h>
 #include <sys/socket.h>
-#include <unistd.h>
-#include <json-c/json.h>
 #include <stdbool.h>
+#include <string.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#include "config.h"
 #include "datatypes.h"
-#include "hoohash-miner.h"
-
+#include "reporting.h"
+#include "miner-hoohash.h"
 #define BUFFER_SIZE 8192
 
 typedef struct StratumContext StratumContext;
@@ -21,12 +31,15 @@ typedef struct OpenCLResources OpenCLResources;
 typedef struct HashrateDisplay HashrateDisplay;
 typedef struct MiningState MiningState;
 typedef struct CudaResources CudaResources;
+typedef struct HoominerConfig HoominerConfig;
 
 struct StratumContext
 {
   char *version;
   volatile int running;
   int sockfd;
+  SSL *ssl;         // SSL connection object
+  SSL_CTX *ssl_ctx; // SSL context
   const char *worker;
   int disable_cpu;
   int disable_gpu;
@@ -39,12 +52,17 @@ struct StratumContext
   MiningState *ms;
   pthread_t recv_thread;
   IntFifo mining_submit_fifo;
+  HoominerConfig *config;
 };
 
 StratumContext *init_stratum_context();
 void *stratum_receive_thread(void *arg);
-int stratum_subscribe(int sockfd);
-int stratum_authenticate(int sockfd, const char *username, const char *password);
+int start_stratum_connection(StratumContext *ctx, HoominerConfig *config);
+int stratum_subscribe(int sockfd, SSL *ssl);
+int stratum_authenticate(int sockfd, const char *username, const char *password, SSL *ssl);
 int connect_to_stratum_server(const char *hostname, int port);
+int init_ssl_connection(StratumContext *ctx);
+void process_stratum_message(json_object *message, StratumContext *ctx, MiningState *ms);
+void free_stratum_context(StratumContext *ctx);
 
 #endif

@@ -1,5 +1,5 @@
-#ifndef HOOHASH_MINER_H
-#define HOOHASH_MINER_H
+#ifndef MINER_HOOHASH_H
+#define MINER_HOOHASH_H
 #include <json-c/json.h>
 #include <pthread.h>
 #include <unistd.h>

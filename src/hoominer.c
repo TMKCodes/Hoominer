@@ -6,11 +6,12 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <time.h> // Added for time tracking
+#include "config.h"
 #include "opencl-host.h"
 #include "cuda-host.h"
 #include "stratum.h"
 #include "reporting.h"
-#include "hoohash-miner.h"
+#include "miner-hoohash.h"
 #include "hoohash_cl.h"
 #include "api.h"
 
@@ -43,74 +44,7 @@ int get_cpu_threads()
 
 #define HASH_SIZE 32
 
-char *pool_ip = NULL;
-int pool_port = 5555;
 char *exe_path = NULL;
-
-void parse_args(int argc, char **argv, char **pool_ip, int *pool_port, const char **username, const char **password,
-                const char **algorithm, int *disable_cpu, int *disable_gpu, int *threads)
-{
-  *disable_cpu = 0;
-  *disable_gpu = 0;
-  for (int i = 1; i < argc; i++)
-  {
-    if (!strcmp(argv[i], "--user") && i + 1 < argc)
-      *username = argv[++i];
-    else if (!strcmp(argv[i], "--pass") && i + 1 < argc)
-      *password = argv[++i];
-    else if (!strcmp(argv[i], "--algorithm") && i + 1 < argc)
-      *algorithm = argv[++i];
-    else if (!strcmp(argv[i], "--disable-cpu"))
-      *disable_cpu = 1;
-    else if (!strcmp(argv[i], "--disable-gpu"))
-      *disable_gpu = 1;
-    else if (!strcmp(argv[i], "--cpu-threads") && i + 1 < argc)
-      *threads = atoi(argv[++i]);
-    else if (!strcmp(argv[i], "--stratum") && i + 1 < argc)
-    {
-      const char *stratum_url = argv[++i];
-      if (strncmp(stratum_url, "stratum+tcp://", 14) != 0)
-      {
-        fprintf(stderr, "Invalid stratum URL format\n");
-        exit(1);
-      }
-
-      const char *url_part = stratum_url + 14;
-      char *url = malloc(strlen(url_part) + 1);
-      if (!url)
-      {
-        fprintf(stderr, "Memory allocation failed\n");
-        exit(1);
-      }
-      strcpy(url, url_part);
-
-      char *colon = strchr(url, ':');
-      if (!colon)
-      {
-        fprintf(stderr, "Stratum URL missing port\n");
-        exit(1);
-      }
-      *colon = '\0';
-
-      *pool_ip = malloc(strlen(url) + 1);
-      if (!*pool_ip)
-      {
-        fprintf(stderr, "Memory allocation failed\n");
-        exit(1);
-      }
-      strcpy(*pool_ip, url);
-
-      *pool_port = atoi(colon + 1);
-      free(url);
-    }
-    else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h"))
-    {
-      printf("Usage: %s [--stratum <stratum+tcp://domain:port>] [--user <user>] [--pass <pass>] [--disable-cpu] [--cpu-threads <n>]\n", argv[0]);
-      exit(0);
-    }
-  }
-}
-
 StratumContext *ctx = NULL;
 
 void cleanup(int sig)
@@ -120,7 +54,6 @@ void cleanup(int sig)
   if (ctx == NULL)
   {
     free(exe_path);
-    free(pool_ip);
     fflush(stdout);
     exit(sig == SIGINT || sig == SIGTERM ? EXIT_FAILURE : EXIT_SUCCESS);
   }
@@ -366,9 +299,7 @@ void cleanup(int sig)
 
   // Free global resources
   free(exe_path);
-  free(pool_ip);
   exe_path = NULL;
-  pool_ip = NULL;
 
   fflush(stdout);
   exit(sig == SIGINT || sig == SIGTERM ? EXIT_FAILURE : EXIT_SUCCESS);
@@ -378,11 +309,13 @@ int initialize_mining(StratumContext *ctx, const char *username, const char *alg
 {
   ctx->worker = username;
   ctx->ms->num_cpu_threads = get_cpu_threads();
+  if (ctx->config->cpu_threads >= 0)
+    ctx->ms->num_cpu_threads = ctx->config->cpu_threads;
   ctx->ms->num_opencl_threads = 0;
   ctx->ms->num_cuda_threads = 0;
 
   ctx->cpu_device_count = 0;
-  if (ctx->disable_cpu == 0)
+  if (ctx->config->disable_cpu == 0)
   {
     ctx->cpu_device_count = 1;
   }
@@ -457,79 +390,38 @@ int initialize_mining(StratumContext *ctx, const char *username, const char *alg
 
 void initialize_reporting_devices(StratumContext *ctx)
 {
-  if (ctx->disable_cpu == 0)
+  if (ctx->config->disable_cpu == false)
   {
     ReportingDevice *cpu_reporting_device = init_reporting_device(0, "CPU");
     add_reporting_device(ctx->hd, cpu_reporting_device);
   }
-  if (ctx->disable_gpu == 0)
+  if (ctx->config->disable_gpu == false)
   {
-    for (unsigned int i = 0; i < ctx->opencl_device_count; i++)
+    if (ctx->config->disable_opencl == false)
     {
-      char device_name[64];
-      snprintf(device_name, sizeof(device_name), "GPU[BUS_ID: %d]", ctx->opencl_resources[i].pci_bus_id);
-      char *name_copy = strdup(device_name);
-      // ReportingDevice *opencl_reporting_device = init_reporting_device(ctx->cpu_device_count + i, ctx->opencl_resources[i].device_name);
-      ReportingDevice *opencl_reporting_device = init_reporting_device(ctx->cpu_device_count + i, name_copy);
-      add_reporting_device(ctx->hd, opencl_reporting_device);
+      for (unsigned int i = 0; i < ctx->opencl_device_count; i++)
+      {
+        char device_name[64];
+        snprintf(device_name, sizeof(device_name), "GPU[BUS_ID: %d]", ctx->opencl_resources[i].pci_bus_id);
+        char *name_copy = strdup(device_name);
+        // ReportingDevice *opencl_reporting_device = init_reporting_device(ctx->cpu_device_count + i, ctx->opencl_resources[i].device_name);
+        ReportingDevice *opencl_reporting_device = init_reporting_device(ctx->cpu_device_count + i, name_copy);
+        add_reporting_device(ctx->hd, opencl_reporting_device);
+      }
     }
-    for (unsigned int i = 0; i < ctx->cuda_device_count; i++)
+    if (ctx->config->disable_cuda == false)
     {
-      char device_name[64];
-      snprintf(device_name, sizeof(device_name), "GPU[BUS_ID: %d]", ctx->cuda_resources[i].pci_bus_id);
-      char *name_copy = strdup(device_name);
-      // ReportingDevice *cuda_reporting_device = init_reporting_device(ctx->cpu_device_count + ctx->opencl_device_count + i, ctx->cuda_resources[i].device_name);
-      ReportingDevice *cuda_reporting_device = init_reporting_device(ctx->cpu_device_count + ctx->opencl_device_count + i, name_copy);
-      add_reporting_device(ctx->hd, cuda_reporting_device);
+      for (unsigned int i = 0; i < ctx->cuda_device_count; i++)
+      {
+        char device_name[64];
+        snprintf(device_name, sizeof(device_name), "GPU[BUS_ID: %d]", ctx->cuda_resources[i].pci_bus_id);
+        char *name_copy = strdup(device_name);
+        // ReportingDevice *cuda_reporting_device = init_reporting_device(ctx->cpu_device_count + ctx->opencl_device_count + i, ctx->cuda_resources[i].device_name);
+        ReportingDevice *cuda_reporting_device = init_reporting_device(ctx->cpu_device_count + ctx->opencl_device_count + i, name_copy);
+        add_reporting_device(ctx->hd, cuda_reporting_device);
+      }
     }
   }
-}
-
-int start_stratum_connection(StratumContext *ctx, const char *username, const char *password)
-{
-  ctx->sockfd = connect_to_stratum_server(pool_ip, pool_port);
-  if (ctx->sockfd < 0)
-  {
-    printf("Failed to connect to stratum server.\n");
-    return -1;
-  }
-
-  if (stratum_subscribe(ctx->sockfd) < 0 || stratum_authenticate(ctx->sockfd, username, password) < 0)
-  {
-    printf("Stratum initialization failed.\n");
-    close(ctx->sockfd);
-    ctx->sockfd = -1;
-    return -1;
-  }
-
-  if (pthread_create(&ctx->recv_thread, NULL, stratum_receive_thread, ctx) != 0)
-  {
-    printf("Failed to create display or receive threads.\n");
-    close(ctx->sockfd);
-    ctx->sockfd = -1;
-    return -1;
-  }
-  if (pthread_create(&ctx->hd->display_thread, NULL, hashrate_display_thread, ctx) != 0)
-  {
-    printf("Failed to create display or receive threads.\n");
-    close(ctx->sockfd);
-    ctx->sockfd = -1;
-    return -1;
-  }
-
-  if (start_mining_threads(ctx, ctx->ms) != 0)
-  {
-    printf("Failed to start mining threads.\n");
-    pthread_cancel(ctx->hd->display_thread);
-    pthread_join(ctx->hd->display_thread, NULL);
-    pthread_cancel(ctx->recv_thread);
-    pthread_join(ctx->recv_thread, NULL);
-    close(ctx->sockfd);
-    ctx->sockfd = -1;
-    return -1;
-  }
-
-  return 0;
 }
 
 int main(int argc, char **argv)
@@ -538,9 +430,10 @@ int main(int argc, char **argv)
   signal(SIGTERM, cleanup);
   signal(SIGPIPE, SIG_IGN);
 
-  const char *username = "user";
-  const char *password = "x";
-  const char *algorithm = "hoohash";
+  struct HoominerConfig *config = malloc(sizeof(struct HoominerConfig));
+  config->username = "user";
+  config->password = "x";
+  config->algorithm = "hoohash";
 
   // Initialize context
   ctx = init_stratum_context();
@@ -549,18 +442,19 @@ int main(int argc, char **argv)
     printf("Failed to allocate StratumContext\n");
     return 1;
   }
+  ctx->config = config;
   ctx->version = "0.2.4";
   printf("Welcome to Hoominer v%s\n", ctx->version);
 
   // Parse arguments
-  parse_args(argc, argv, &pool_ip, &pool_port, &username, &password, &algorithm, &ctx->disable_cpu, &ctx->disable_gpu, &ctx->ms->num_cpu_threads);
-  if (!pool_ip)
+  parse_args(argc, argv, config);
+  if (!config->pool_ip)
   {
     printf("--stratum required, could not parse ip of the pool from the stratum address.\n");
     cleanup(1);
     return 1;
   }
-  if (!username)
+  if (!config->username)
   {
     printf("--username required.\n");
     cleanup(1);
@@ -581,7 +475,7 @@ int main(int argc, char **argv)
     cleanup(1);
     return 1;
   }
-  printf("Initialized Hashrate calculation for %d", display_devices_length);
+  printf("Initialized Hashrate calculation for %d\n", display_devices_length);
 
   // Get executable's directory
   exe_path = strdup(argv[0]);
@@ -594,7 +488,7 @@ int main(int argc, char **argv)
   char *exe_dir = dirname(exe_path);
 
   // Initialize GPU resources
-  if (initialize_mining(ctx, username, algorithm, exe_dir) != 0)
+  if (initialize_mining(ctx, config->username, config->algorithm, exe_dir) != 0)
   {
     printf("Failed to initialize mining resources.\n");
     cleanup(1);
@@ -612,7 +506,7 @@ int main(int argc, char **argv)
   while (true)
   {
     ctx->running = true;
-    if (start_stratum_connection(ctx, username, password) == 0)
+    if (start_stratum_connection(ctx, config) == 0)
     {
       // Connection successful, reset reconnect timer
       reconnect_start_time = 0;

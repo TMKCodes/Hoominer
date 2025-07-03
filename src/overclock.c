@@ -1,4 +1,4 @@
-#include "overclocks.h"
+#include "overclock.h"
 
 int load_nvml(struct nvmlHandles *h)
 {

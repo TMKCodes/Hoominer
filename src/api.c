@@ -6,7 +6,7 @@ static enum MHD_Result request_handler(void *cls, struct MHD_Connection *connect
                                        const char *version, const char *upload_data,
                                        size_t *upload_data_size, void **con_cls)
 {
-  struct StratumContext *ctx = (struct StratumContext *)cls;
+  StratumContext *ctx = (StratumContext *)cls;
 
   struct MHD_Response *response;
   enum MHD_Result ret;
@@ -34,19 +34,25 @@ static enum MHD_Result request_handler(void *cls, struct MHD_Connection *connect
 
       // busids array
       struct json_object *busid_array = json_object_new_array();
-      if (ctx->disable_cpu == false)
+      if (ctx->config->disable_cpu == false)
       {
         json_object_array_add(busid_array, json_object_new_string("cpu"));
       }
-      if (ctx->disable_gpu == false)
+      if (ctx->config->disable_gpu == false)
       {
-        for (unsigned int i = 0; i < ctx->opencl_device_count; i++)
+        if (ctx->config->disable_opencl == false)
         {
-          json_object_array_add(busid_array, json_object_new_int(ctx->opencl_resources[i].pci_bus_id));
+          for (unsigned int i = 0; i < ctx->opencl_device_count; i++)
+          {
+            json_object_array_add(busid_array, json_object_new_int(ctx->opencl_resources[i].pci_bus_id));
+          }
         }
-        for (unsigned int i = 0; i < ctx->cuda_device_count; i++)
+        if (ctx->config->disable_opencl == false)
         {
-          json_object_array_add(busid_array, json_object_new_int(ctx->cuda_resources[i].pci_bus_id));
+          for (unsigned int i = 0; i < ctx->cuda_device_count; i++)
+          {
+            json_object_array_add(busid_array, json_object_new_int(ctx->cuda_resources[i].pci_bus_id));
+          }
         }
       }
       json_object_object_add(root, "busid", busid_array);

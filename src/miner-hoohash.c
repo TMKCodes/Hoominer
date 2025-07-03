@@ -1,4 +1,4 @@
-#include "hoohash-miner.h"
+#include "miner-hoohash.h"
 #include <time.h>
 
 MiningState *init_mining_state()
@@ -389,7 +389,7 @@ void *mining_cuda_thread(void *arg)
 
 int start_mining_threads(StratumContext *ctx, MiningState *ms)
 {
-  if (ctx->disable_cpu == 0)
+  if (ctx->config->disable_cpu == false)
   {
     ms->mining_cpu_threads = malloc(ms->num_cpu_threads * sizeof(pthread_t));
     if (!ms->mining_cpu_threads)
@@ -415,271 +415,62 @@ int start_mining_threads(StratumContext *ctx, MiningState *ms)
       }
     }
   }
-  if (ctx->disable_gpu == 0)
+  if (ctx->config->disable_gpu == false)
   {
-    ms->num_opencl_threads = ctx->opencl_device_count;
-    ms->mining_opencl_threads = malloc(ms->num_opencl_threads * sizeof(pthread_t));
-    if (!ms->mining_opencl_threads)
+    if (ctx->config->disable_opencl == false)
     {
-      printf("start_mining_threads: Failed to allocate mining_threads\n");
-      return 1;
-    }
-    for (int i = 0; i < ms->num_opencl_threads; i++)
-    {
-      MiningThread *mt = malloc(sizeof(MiningThread));
-      if (!mt)
+      ms->num_opencl_threads = ctx->opencl_device_count;
+      ms->mining_opencl_threads = malloc(ms->num_opencl_threads * sizeof(pthread_t));
+      if (!ms->mining_opencl_threads)
       {
-        printf("start_mining_threads: Failed to allocate MiningThread\n");
+        printf("start_mining_threads: Failed to allocate mining_threads\n");
         return 1;
       }
-      mt->threadIndex = i;
-      mt->ctx = ctx;
-      if (pthread_create(&ms->mining_opencl_threads[i], NULL, mining_opencl_thread, mt))
+      for (int i = 0; i < ms->num_opencl_threads; i++)
       {
-        printf("start_mining_threads: Failed to create thread %d\n", i);
-        free(mt);
-        return 1;
+        MiningThread *mt = malloc(sizeof(MiningThread));
+        if (!mt)
+        {
+          printf("start_mining_threads: Failed to allocate MiningThread\n");
+          return 1;
+        }
+        mt->threadIndex = i;
+        mt->ctx = ctx;
+        if (pthread_create(&ms->mining_opencl_threads[i], NULL, mining_opencl_thread, mt))
+        {
+          printf("start_mining_threads: Failed to create thread %d\n", i);
+          free(mt);
+          return 1;
+        }
       }
     }
-    ms->num_cuda_threads = ctx->cuda_device_count;
-    ms->mining_cuda_threads = malloc(ms->num_cuda_threads * sizeof(pthread_t));
-    if (!ms->mining_cuda_threads)
+    if (ctx->config->disable_cuda == false)
     {
-      printf("start_mining_threads: Failed to allocate mining_threads\n");
-      return 1;
-    }
-    for (int i = 0; i < ms->num_cuda_threads; i++)
-    {
-      MiningThread *mt = malloc(sizeof(MiningThread));
-      if (!mt)
+      ms->num_cuda_threads = ctx->cuda_device_count;
+      ms->mining_cuda_threads = malloc(ms->num_cuda_threads * sizeof(pthread_t));
+      if (!ms->mining_cuda_threads)
       {
-        printf("start_mining_threads: Failed to allocate MiningThread\n");
+        printf("start_mining_threads: Failed to allocate mining_threads\n");
         return 1;
       }
-      mt->threadIndex = i;
-      mt->ctx = ctx;
-      if (pthread_create(&ms->mining_cuda_threads[i], NULL, mining_cuda_thread, mt))
+      for (int i = 0; i < ms->num_cuda_threads; i++)
       {
-        printf("start_mining_threads: Failed to create thread %d\n", i);
-        free(mt);
-        return 1;
+        MiningThread *mt = malloc(sizeof(MiningThread));
+        if (!mt)
+        {
+          printf("start_mining_threads: Failed to allocate MiningThread\n");
+          return 1;
+        }
+        mt->threadIndex = i;
+        mt->ctx = ctx;
+        if (pthread_create(&ms->mining_cuda_threads[i], NULL, mining_cuda_thread, mt))
+        {
+          printf("start_mining_threads: Failed to create thread %d\n", i);
+          free(mt);
+          return 1;
+        }
       }
     }
   }
   return 0;
-}
-void process_stratum_message(json_object *message, StratumContext *ctx, MiningState *ms)
-{
-  if (!message)
-  {
-    printf("process_stratum_message: Null message received\n");
-    return;
-  }
-
-  json_object *method_obj;
-  if (json_object_object_get_ex(message, "method", &method_obj) && json_object_is_type(method_obj, json_type_string))
-  {
-    const char *method_str = json_object_get_string(method_obj);
-    if (!strcmp(method_str, "mining.set_difficulty"))
-    {
-      json_object *params;
-      if (json_object_object_get_ex(message, "params", &params) && json_object_is_type(params, json_type_array))
-      {
-        json_object *diff = json_object_array_get_idx(params, 0);
-        if (json_object_is_type(diff, json_type_double) || json_object_is_type(diff, json_type_int))
-        {
-          pthread_mutex_lock(&ms->target_mutex);
-          if (ms->global_target)
-            free(ms->global_target);
-          double difficulty = json_object_get_double(diff);
-          // printf("Received difficulty: %.6f\n", difficulty);
-          ms->global_target = target_from_pool_difficulty(difficulty, DOMAIN_HASH_SIZE);
-          pthread_mutex_unlock(&ms->target_mutex);
-        }
-      }
-    }
-    else if (!strcmp(method_str, "mining.notify"))
-    {
-      json_object *params;
-      if (!json_object_object_get_ex(message, "params", &params) || !json_object_is_type(params, json_type_array))
-      {
-        printf("mining.notify: params missing or not an array\n");
-        return;
-      }
-
-      json_object *job_id = json_object_array_get_idx(params, 0);
-      json_object *header_item = json_object_array_get_idx(params, 1);
-      json_object *time_param = json_object_array_get_idx(params, 2);
-
-      if (!json_object_is_type(job_id, json_type_string) || !header_item || !time_param ||
-          (!json_object_is_type(time_param, json_type_int) && !json_object_is_type(time_param, json_type_double)))
-      {
-        printf("mining.notify: Invalid parameters\n");
-        return;
-      }
-
-      uint8_t header[DOMAIN_HASH_SIZE] = {0};
-      uint64_t timestamp_int;
-
-      if (json_object_is_type(time_param, json_type_int))
-        timestamp_int = json_object_get_uint64(time_param);
-      else
-        timestamp_int = (uint64_t)json_object_get_double(time_param);
-
-      if (json_object_is_type(header_item, json_type_array))
-      {
-        if (json_object_array_length(header_item) != 4)
-        {
-          printf("Invalid header array size: %zu\n", json_object_array_length(header_item));
-          return;
-        }
-        uint64_t hash_elements[4] = {0};
-        for (int i = 0; i < 4; i++)
-        {
-          json_object *item = json_object_array_get_idx(header_item, i);
-          if (json_object_is_type(item, json_type_int))
-          {
-            hash_elements[i] = json_object_get_uint64(item);
-          }
-          else if (json_object_is_type(item, json_type_string))
-          {
-            if (sscanf(json_object_get_string(item), "%" SCNx64, &hash_elements[i]) != 1)
-            {
-              return;
-            }
-          }
-          else
-          {
-            printf("Invalid header element at index %d\n", i);
-            return;
-          }
-        }
-        smallJobHeader(hash_elements, header);
-      }
-      else if (json_object_is_type(header_item, json_type_string))
-      {
-        const char *hex_str = json_object_get_string(header_item);
-        if (strlen(hex_str) != 64)
-        {
-          printf("Invalid hex string length: %lu\n", strlen(hex_str));
-          return;
-        }
-        if (hex_to_bytes(hex_str, header, DOMAIN_HASH_SIZE) != 0)
-        {
-          printf("Failed to parse hex header: %s\n", hex_str);
-          return;
-        }
-        print_hex("Parsed Hex Header", header, DOMAIN_HASH_SIZE);
-      }
-      else
-      {
-        printf("Invalid header format in mining.notify\n");
-        return;
-      }
-
-      pthread_mutex_lock(&ms->job_queue.queue_mutex);
-      // Clear outdated jobs
-      while (ms->job_queue.head != ms->job_queue.tail &&
-             ms->job_queue.jobs[ms->job_queue.head].timestamp < (uint64_t)time(NULL) - JOB_MAX_AGE)
-      {
-        free(ms->job_queue.jobs[ms->job_queue.head].job_id);
-        ms->job_queue.jobs[ms->job_queue.head].job_id = NULL;
-        ms->job_queue.head = (ms->job_queue.head + 1) % JOB_QUEUE_SIZE;
-      }
-
-      int next_tail = (ms->job_queue.tail + 1) % JOB_QUEUE_SIZE;
-      if (next_tail == ms->job_queue.head)
-      {
-        free(ms->job_queue.jobs[ms->job_queue.head].job_id);
-        ms->job_queue.jobs[ms->job_queue.head].job_id = NULL;
-        ms->job_queue.head = (ms->job_queue.head + 1) % JOB_QUEUE_SIZE;
-      }
-
-      QueuedJob *new_job = &ms->job_queue.jobs[ms->job_queue.tail];
-      const char *jid = json_object_get_string(job_id);
-      if (jid)
-      {
-        new_job->job_id = strdup(jid);
-        if (new_job->job_id)
-        {
-          memcpy(new_job->header, header, DOMAIN_HASH_SIZE);
-          new_job->timestamp = timestamp_int;
-          new_job->running = 1;
-          new_job->completed = 0;
-          generateHoohashMatrix(header, new_job->matrix);
-          ms->job_queue.tail = next_tail;
-          ms->new_job_available = 1; // Signal new job
-          pthread_cond_broadcast(&ms->job_queue.queue_cond);
-        }
-        else
-        {
-          printf("Failed to allocate memory for job ID\n");
-        }
-      }
-      else
-      {
-        printf("Job ID string is NULL\n");
-      }
-      pthread_mutex_unlock(&ms->job_queue.queue_mutex);
-    }
-  }
-  else
-  {
-    json_object *result;
-    json_object *error;
-    int device_index;
-    int devices = ctx->cpu_device_count + ctx->opencl_device_count + ctx->cuda_device_count;
-    dequeue_int_fifo(&ctx->mining_submit_fifo, &device_index);
-    if (devices >= device_index)
-    {
-      ReportingDevice *device = ctx->hd->devices[device_index];
-      if (json_object_object_get_ex(message, "error", &error))
-      {
-        if (!json_object_is_type(error, json_type_null))
-        {
-          if (json_object_is_type(error, json_type_array))
-          {
-            json_object *code = json_object_array_get_idx(error, 0);
-            // json_object *msg = json_object_array_get_idx(error, 1);
-            int err_code = json_object_get_int(code);
-            // const char *err_msg = json_object_get_string(msg);
-            if (err_code == 21)
-            {
-              // printf("Stale share detected (job not found): %s\n", err_msg);
-              pthread_mutex_lock(&ms->job_queue.queue_mutex);
-              device->stales++;
-              pthread_mutex_unlock(&ms->job_queue.queue_mutex);
-            }
-            else if (err_code == 20)
-            {
-              // printf("Stale share detected (duplicate): %s\n", err_msg);
-              pthread_mutex_lock(&ms->job_queue.queue_mutex);
-              device->stales++;
-              pthread_mutex_unlock(&ms->job_queue.queue_mutex);
-            }
-            else
-            {
-              const char *result_str = json_object_to_json_string(message);
-              printf("Error: %s\n", result_str);
-              pthread_mutex_lock(&ms->job_queue.queue_mutex);
-              device->rejected++;
-              pthread_mutex_unlock(&ms->job_queue.queue_mutex);
-            }
-          }
-        }
-      }
-      if (json_object_object_get_ex(message, "result", &result))
-      {
-        if (json_object_is_type(result, json_type_boolean))
-        {
-          pthread_mutex_lock(&ms->job_queue.queue_mutex);
-          if (json_object_get_boolean(result))
-            device->accepted++;
-          else
-            device->rejected++;
-          pthread_mutex_unlock(&ms->job_queue.queue_mutex);
-        }
-      }
-    }
-  }
 }

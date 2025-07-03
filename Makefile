@@ -5,7 +5,7 @@ NVCC = nvcc
 CFLAGS = -Xcompiler "-fPIC -g -O0 -Wall -Wextra -DTEST -DDEBUG"
 INCLUDES = -Ialgorithms/blake3/c -I/opt/cuda/include -Iexternal/libmicrohttpd/build/include
 NVCCFLAGS = $(CFLAGS) $(INCLUDES)
-LDFLAGS = -L/usr/local/include -lm -lgmp -ljson-c -lOpenCL -L/opt/cuda/lib64 -lcuda -lcudart  -lpciaccess -lnvidia-ml
+LDFLAGS = -L/usr/local/include -lm -lgmp -ljson-c -lOpenCL -L/opt/cuda/lib64 -lcuda -lcudart  -lpciaccess -lnvidia-ml -lssl -lcrypto
 # Directories
 SRC_DIR = src
 BUILD_DIR = build
