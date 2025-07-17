@@ -78,7 +78,7 @@ static enum MHD_Result request_handler(void *cls, struct MHD_Connection *connect
       int all_rejected = 0;
       for (uint32_t i = 0; i < ctx->hd->device_count; i++)
       {
-        all_rejected += ctx->hd->devices[i]->rejected;
+        all_rejected += ctx->hd->devices[i]->stales + ctx->hd->devices[i]->rejected;
       }
       json_object_array_add(air_object, json_object_new_int(all_accepted));
       json_object_array_add(air_object, json_object_new_int(0));

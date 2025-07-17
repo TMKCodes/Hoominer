@@ -7,4 +7,4 @@ cd ../../..
 cp ./build/hoominer ./releases/hoominer/hoominer
 cp -r ./build/cubins ./releases/hoominer/cubins
 cd ./releases
-tar -czf hoominer-rename-version.tgz hoominer
+tar -czf hoominer-rename-version.tar.gz hoominer

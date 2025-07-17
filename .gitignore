@@ -1,4 +1,5 @@
 build/
+releases/hoominer/*tar.gz
 releases/hoominer/hoominer
 releases/hoominer/cubins
 algorithms/GPU/OpenCL/opencl-compiler
