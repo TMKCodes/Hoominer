@@ -8,6 +8,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <pciaccess.h>
+#include "stratum.h"
 
 #define DOMAIN_HASH_SIZE 32
 #define RANDOM_TYPE_XOSHIRO 1
@@ -16,6 +18,7 @@
 
 typedef struct OpenCLResult OpenCLResult;
 typedef struct OpenCLResources OpenCLResources;
+typedef struct StratumContext StratumContext;
 
 struct OpenCLResult
 {
@@ -50,8 +53,7 @@ struct OpenCLResources
   cl_uint pci_bus_id;
 };
 
-OpenCLResources *initialize_selected_opencl_gpus(cl_uint *device_indices, cl_uint num_selected, cl_uint *device_count);
-OpenCLResources *initalize_all_opencl_gpus(cl_uint *device_count);
+OpenCLResources *initalize_all_opencl_gpus(StratumContext *ctx, cl_uint *device_count);
 cl_int compile_opencl_kernel_from_xxd_header(OpenCLResources *resource, const unsigned char *kernel, unsigned int kernel_length, const char *kernel_name, const char **required_extensions, size_t num_required_extensions);
 cl_int load_opencl_kernel_binary(OpenCLResources *resource, const char *binary_filename, const char *kernel_name);
 void cleanup_opencl_resources(OpenCLResources *resource);

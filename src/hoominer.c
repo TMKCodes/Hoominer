@@ -121,21 +121,21 @@ void cleanup(int sig)
 
     // Clean up job queueif (ctx->hd && ctx->hd->display_thread)
     {
-      printf("Cleaning display thread\n");
+      // printf("Cleaning display thread\n");
       pthread_cancel(ctx->hd->display_thread);
       pthread_join(ctx->hd->display_thread, NULL);
       ctx->hd->display_thread = 0;
     }
     if (ctx->recv_thread)
     {
-      printf("Cleaning receive thread\n");
+      // printf("Cleaning receive thread\n");
       pthread_cancel(ctx->recv_thread);
       pthread_join(ctx->recv_thread, NULL);
       ctx->recv_thread = 0;
     }
     if (ctx->ms && ctx->ms->mining_cpu_threads)
     {
-      printf("Cleaning CPU threads\n");
+      // printf("Cleaning CPU threads\n");
       for (int i = 0; i < ctx->ms->num_cpu_threads; i++)
       {
         if (ctx->ms->mining_cpu_threads[i])
@@ -150,7 +150,7 @@ void cleanup(int sig)
     }
     if (ctx->ms && ctx->ms->mining_opencl_threads)
     {
-      printf("Cleaning OpenCL threads\n");
+      // printf("Cleaning OpenCL threads\n");
       for (int i = 0; i < ctx->ms->num_opencl_threads; i++)
       {
         if (ctx->ms->mining_opencl_threads[i])
@@ -165,7 +165,7 @@ void cleanup(int sig)
     }
     if (ctx->ms && ctx->ms->mining_cuda_threads)
     {
-      printf("Cleaning CUDA threads\n");
+      // printf("Cleaning CUDA threads\n");
       for (int i = 0; i < ctx->ms->num_cuda_threads; i++)
       {
         if (ctx->ms->mining_cuda_threads[i])
@@ -180,7 +180,7 @@ void cleanup(int sig)
     }
     if (ctx->sockfd >= 0)
     {
-      printf("Cleaning sockfd\n");
+      // printf("Cleaning sockfd\n");
       close(ctx->sockfd);
       ctx->sockfd = -1;
     }
@@ -188,7 +188,7 @@ void cleanup(int sig)
     // Clear job queue
     if (ctx->ms)
     {
-      printf("Cleaning jobs\n");
+      // printf("Cleaning jobs\n");
       pthread_mutex_destroy(&ctx->ms->job_queue.queue_mutex);
       pthread_cond_destroy(&ctx->ms->job_queue.queue_cond);
       for (int i = 0; i < JOB_QUEUE_SIZE; i++)
@@ -309,79 +309,87 @@ int initialize_mining(StratumContext *ctx, const char *username, const char *alg
 {
   ctx->worker = username;
   ctx->ms->num_cpu_threads = get_cpu_threads();
-  if (ctx->config->cpu_threads >= 0)
+  if (ctx->config->cpu_threads > 0)
     ctx->ms->num_cpu_threads = ctx->config->cpu_threads;
+  // printf("CPU threads %d\n", ctx->ms->num_cpu_threads);
   ctx->ms->num_opencl_threads = 0;
   ctx->ms->num_cuda_threads = 0;
 
-  ctx->cpu_device_count = 0;
-  if (ctx->config->disable_cpu == 0)
+  if (ctx->config->disable_gpu == false)
   {
-    ctx->cpu_device_count = 1;
-  }
-  if (ctx->disable_gpu == 0)
-  {
-    ctx->opencl_resources = initalize_all_opencl_gpus(&ctx->opencl_device_count);
-    printf("OpenCL devices found: %d\n", ctx->opencl_device_count);
-    if (strcmp(algorithm, "hoohash") == 0)
+    if (ctx->config->disable_opencl == false)
     {
-      for (cl_uint i = 0; i < ctx->opencl_device_count; i++)
+      ctx->opencl_resources = initalize_all_opencl_gpus(ctx, &ctx->opencl_device_count);
+      printf("OpenCL devices found: %d\n", ctx->opencl_device_count);
+      if (ctx->config->list_gpus == false)
       {
-        const char *required_extensions[] = {"cl_khr_fp64"};
-        size_t num_required_extensions = 1;
-        cl_int compile_kernel_error = compile_opencl_kernel_from_xxd_header(&ctx->opencl_resources[i], Hoohash_cl, Hoohash_cl_len, "Hoohash_hash", required_extensions, num_required_extensions);
-        if (compile_kernel_error != CL_SUCCESS)
+        if (strcmp(algorithm, "hoohash") == 0)
         {
-          printf("Failed to initialize OpenCL kernels, Error code %d.\n", compile_kernel_error);
-          return -1;
-        }
-        printf("Loaded OpenCL Hoohash kernel for device %u\n", i);
-      }
-    }
-    ctx->cuda_resources = initialize_all_cuda_gpus(&ctx->cuda_device_count);
-    printf("CUDA devices found: %d\n", ctx->cuda_device_count);
-    if (strcmp(algorithm, "hoohash") == 0)
-    {
-      for (cl_uint i = 0; i < ctx->cuda_device_count; i++)
-      {
-        char cubin_filename[128];
-        int major = ctx->cuda_resources[i].device_prop.major;
-        int minor = ctx->cuda_resources[i].device_prop.minor;
-        printf("Device %u: %s, Compute capability %d.%d\n", i, ctx->cuda_resources[i].device_name, major, minor);
-        int arch_code = major * 10 + minor;
-        snprintf(cubin_filename, sizeof(cubin_filename), "%s/cubins/hoohash_sm%d%d.cubin", exe_dir, major, minor);
-        FILE *file_check = fopen(cubin_filename, "rb");
-        if (!file_check)
-        {
-          printf("Error: Cannot open %s: %s\n", cubin_filename, strerror(errno));
-          continue;
-        }
-        fclose(file_check);
-        int supported_archs[] = {50, 52, 60, 61, 70, 75, 80, 86, 89, 90, 100};
-        int supported = 0;
-        for (long unsigned int j = 0; j < sizeof(supported_archs) / sizeof(supported_archs[0]); j++)
-        {
-          if (arch_code == supported_archs[j])
+          for (cl_uint i = 0; i < ctx->opencl_device_count; i++)
           {
-            supported = 1;
-            break;
+            const char *required_extensions[] = {"cl_khr_fp64"};
+            size_t num_required_extensions = 1;
+            cl_int compile_kernel_error = compile_opencl_kernel_from_xxd_header(&ctx->opencl_resources[i], Hoohash_cl, Hoohash_cl_len, "Hoohash_hash", required_extensions, num_required_extensions);
+            if (compile_kernel_error != CL_SUCCESS)
+            {
+              printf("Failed to initialize OpenCL kernels, Error code %d.\n", compile_kernel_error);
+              return -1;
+            }
+            printf("Loaded OpenCL Hoohash kernel for device %u\n", ctx->cpu_device_count + i);
           }
         }
-        if (!supported)
+      }
+    }
+    if (ctx->config->disable_cuda == false)
+    {
+      ctx->cuda_resources = initialize_all_cuda_gpus(&ctx->cuda_device_count, ctx->config->selected_gpus, ctx->config->selected_gpus_num);
+      printf("CUDA devices found: %d\n", ctx->cuda_device_count);
+      if (ctx->config->list_gpus == false)
+      {
+        if (strcmp(algorithm, "hoohash") == 0)
         {
-          printf("Unsupported compute capability %d.%d for device %u\n", major, minor, i);
-          continue;
+          for (cl_uint i = 0; i < ctx->cuda_device_count; i++)
+          {
+            char cubin_filename[128];
+            int major = ctx->cuda_resources[i].device_prop.major;
+            int minor = ctx->cuda_resources[i].device_prop.minor;
+            printf("Device %u: %s, Compute capability %d.%d\n", i, ctx->cuda_resources[i].device_name, major, minor);
+            int arch_code = major * 10 + minor;
+            snprintf(cubin_filename, sizeof(cubin_filename), "%s/cubins/hoohash_sm%d%d.cubin", exe_dir, major, minor);
+            FILE *file_check = fopen(cubin_filename, "rb");
+            if (!file_check)
+            {
+              printf("Error: Cannot open %s: %s\n", cubin_filename, strerror(errno));
+              continue;
+            }
+            fclose(file_check);
+            int supported_archs[] = {50, 52, 60, 61, 70, 75, 80, 86, 89, 90, 100};
+            int supported = 0;
+            for (long unsigned int j = 0; j < sizeof(supported_archs) / sizeof(supported_archs[0]); j++)
+            {
+              if (arch_code == supported_archs[j])
+              {
+                supported = 1;
+                break;
+              }
+            }
+            if (!supported)
+            {
+              printf("Unsupported compute capability %d.%d for device %u\n", major, minor, i);
+              continue;
+            }
+            cudaError_t compile_kernel_error = load_cuda_kernel_binary(&ctx->cuda_resources[i], cubin_filename, "Hoohash_hash");
+            if (compile_kernel_error != cudaSuccess)
+            {
+              const char *err_str;
+              cuGetErrorString((CUresult)compile_kernel_error, &err_str);
+              printf("Failed to load CUDA kernel binary %s for device %u: Error code %d (%s)\n",
+                     cubin_filename, i, compile_kernel_error, err_str ? err_str : "Unknown");
+              continue;
+            }
+            printf("Loaded CUDA Hoohash kernel %s for device %u\n", cubin_filename, i);
+          }
         }
-        cudaError_t compile_kernel_error = load_cuda_kernel_binary(&ctx->cuda_resources[i], cubin_filename, "Hoohash_hash");
-        if (compile_kernel_error != cudaSuccess)
-        {
-          const char *err_str;
-          cuGetErrorString((CUresult)compile_kernel_error, &err_str);
-          printf("Failed to load CUDA kernel binary %s for device %u: Error code %d (%s)\n",
-                 cubin_filename, i, compile_kernel_error, err_str ? err_str : "Unknown");
-          continue;
-        }
-        printf("Loaded CUDA Hoohash kernel %s for device %u\n", cubin_filename, i);
       }
     }
   }
@@ -443,29 +451,39 @@ int main(int argc, char **argv)
     return 1;
   }
   ctx->config = config;
-  ctx->version = "0.2.4";
+  ctx->version = "0.2.5";
   printf("Welcome to Hoominer v%s\n", ctx->version);
 
   // Parse arguments
   parse_args(argc, argv, config);
-  if (!config->pool_ip)
+
+  if (config->list_gpus == false)
   {
-    printf("--stratum required, could not parse ip of the pool from the stratum address.\n");
-    cleanup(1);
-    return 1;
+    if (!config->pool_ip)
+    {
+      printf("--stratum required, could not parse ip of the pool from the stratum address.\n");
+      cleanup(1);
+      return 1;
+    }
+    if (!config->username)
+    {
+      printf("--username required.\n");
+      cleanup(1);
+      return 1;
+    }
   }
-  if (!config->username)
-  {
-    printf("--username required.\n");
-    cleanup(1);
-    return 1;
-  }
+
   ctx->ms = init_mining_state();
   if (!ctx->ms)
   {
     printf("Failed to initialize mining state\n");
     cleanup(1);
     return 1;
+  }
+  ctx->cpu_device_count = 0;
+  if (ctx->config->disable_cpu == 0)
+  {
+    ctx->cpu_device_count = 1;
   }
   int display_devices_length = ctx->cpu_device_count + ctx->opencl_device_count + ctx->cuda_device_count;
   ctx->hd = init_hashrate_display(display_devices_length);
@@ -475,7 +493,7 @@ int main(int argc, char **argv)
     cleanup(1);
     return 1;
   }
-  printf("Initialized Hashrate calculation for %d\n", display_devices_length);
+  // printf("Initialized Hashrate calculation for %d\n", display_devices_length);
 
   // Get executable's directory
   exe_path = strdup(argv[0]);
@@ -487,11 +505,17 @@ int main(int argc, char **argv)
   }
   char *exe_dir = dirname(exe_path);
 
-  // Initialize GPU resources
+  // Initialize mining resources
   if (initialize_mining(ctx, config->username, config->algorithm, exe_dir) != 0)
   {
     printf("Failed to initialize mining resources.\n");
     cleanup(1);
+    return 1;
+  }
+
+  if (config->list_gpus == true)
+  {
+    list_gpus(ctx);
     return 1;
   }
 
@@ -513,7 +537,7 @@ int main(int argc, char **argv)
       // Run until disconnection
       while (ctx->running)
       {
-        sleep(1); // Check running status periodically
+        sleep(0.1); // Check running status periodically
       }
     }
 
@@ -534,20 +558,6 @@ int main(int argc, char **argv)
       pthread_join(ctx->recv_thread, NULL);
       ctx->recv_thread = 0;
     }
-    if (ctx->ms && ctx->ms->mining_cpu_threads)
-    {
-      for (int i = 0; i < ctx->ms->num_cpu_threads; i++)
-      {
-        if (ctx->ms->mining_cpu_threads[i])
-        {
-          pthread_cancel(ctx->ms->mining_cpu_threads[i]);
-          pthread_join(ctx->ms->mining_cpu_threads[i], NULL);
-          ctx->ms->mining_cpu_threads[i] = 0;
-        }
-      }
-      free(ctx->ms->mining_cpu_threads);
-      ctx->ms->mining_cpu_threads = NULL;
-    }
     if (reconnect_start_time == 0)
     {
       reconnect_start_time = time(NULL);
@@ -559,8 +569,8 @@ int main(int argc, char **argv)
       return 1;
     }
 
-    printf("Reconnecting in 5 seconds...\n");
-    sleep(5);
+    printf("Reconnecting in 0.1 second...\n");
+    sleep(1);
   }
   stop_api(daemon);
   cleanup(0); // Unreachable due to infinite loop, kept for completeness

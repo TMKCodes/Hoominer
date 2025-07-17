@@ -4,6 +4,8 @@
     "miner-hoohash.h": "c",
     "reporting.h": "c",
     "pthread.h": "c",
-    "socket.h": "c"
+    "socket.h": "c",
+    "time.h": "c",
+    "opencl-host.h": "c"
   }
 }

@@ -1,12 +1,3 @@
-#include <cuda_runtime.h>
-#include <cuda.h>
-#include <nvrtc.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <errno.h>
-#include <time.h>
-
 #include "cuda-host.h"
 
 // Function to calculate optimal grid and block dimensions
@@ -119,157 +110,16 @@ static cudaError_t create_xoshiro_random_state(CudaResources *resource)
   return cudaSuccess;
 }
 
-CudaResources *initialize_selected_cuda_gpus(unsigned int *device_indices, unsigned int num_selected, unsigned int *device_count)
+CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int selected_gpus[256], int selected_gpus_num)
 {
   cudaError_t err = cudaSuccess;
-  int num_devices;
+  int num_devices, devices_found;
 
   *device_count = 0;
-  if (!device_indices || num_selected == 0)
-  {
-    fprintf(stderr, "Invalid input: No device indices\n");
-    return NULL;
-  }
+  devices_found = 0;
   err = cudaGetDeviceCount(&num_devices);
   if (err != cudaSuccess || num_devices == 0)
   {
-    fprintf(stderr, "No CUDA devices: %s\n", cudaGetErrorString(err));
-    return NULL;
-  }
-
-  for (unsigned int i = 0; i < num_selected; i++)
-  {
-    if (device_indices[i] >= (unsigned int)num_devices)
-    {
-      fprintf(stderr, "Invalid device index %u: Only %u devices\n", device_indices[i], num_devices);
-      return NULL;
-    }
-  }
-
-  CudaResources *res = (CudaResources *)calloc(num_selected, sizeof(CudaResources));
-  if (!res)
-  {
-    fprintf(stderr, "Memory allocation failed\n");
-    return NULL;
-  }
-
-  for (unsigned int i = 0; i < num_selected; i++)
-  {
-    unsigned int idx = device_indices[i];
-    err = cudaSetDevice(idx);
-    if (err != cudaSuccess)
-    {
-      fprintf(stderr, "Set device %u failed: %s\n", idx, cudaGetErrorString(err));
-      goto cleanup;
-    }
-
-    err = cudaGetDeviceProperties(&res[i].device_prop, idx);
-    if (err != cudaSuccess)
-    {
-      fprintf(stderr, "Device %u properties query failed: %s\n", idx, cudaGetErrorString(err));
-      goto cleanup;
-    }
-    strncpy(res[i].device_name, res[i].device_prop.name, sizeof(res[i].device_name) - 1);
-    res[i].device_id = idx;
-
-    if (res[i].device_prop.computeMode == cudaComputeModeProhibited || res[i].device_prop.major < 2)
-    {
-      fprintf(stderr, "Device %u (%s) lacks sufficient compute capability\n", idx, res[i].device_name);
-      goto cleanup;
-    }
-
-    err = cudaStreamCreate(&res[i].stream);
-    if (err != cudaSuccess)
-    {
-      fprintf(stderr, "Device %u stream creation failed: %s\n", idx, cudaGetErrorString(err));
-      goto cleanup;
-    }
-
-    err = cudaMalloc(&res[i].previous_header, DOMAIN_HASH_SIZE);
-    if (err != cudaSuccess)
-    {
-      fprintf(stderr, "Device %u previous_header allocation failed: %s\n", idx, cudaGetErrorString(err));
-      goto cleanup;
-    }
-    err = cudaMalloc(&res[i].timestamp, sizeof(unsigned long long));
-    if (err != cudaSuccess)
-    {
-      fprintf(stderr, "Device %u timestamp allocation failed: %s\n", idx, cudaGetErrorString(err));
-      goto cleanup;
-    }
-    err = cudaMalloc(&res[i].matrix, 64 * 64 * sizeof(double));
-    if (err != cudaSuccess)
-    {
-      fprintf(stderr, "Device %u matrix allocation failed: %s\n", idx, cudaGetErrorString(err));
-      goto cleanup;
-    }
-    err = cudaMalloc(&res[i].target, DOMAIN_HASH_SIZE);
-    if (err != cudaSuccess)
-    {
-      fprintf(stderr, "Device %u target allocation failed: %s\n", idx, cudaGetErrorString(err));
-      goto cleanup;
-    }
-    err = cudaMalloc(&res[i].result, sizeof(CudaResult));
-    if (err != cudaSuccess)
-    {
-      fprintf(stderr, "Device %u result allocation failed: %s\n", idx, cudaGetErrorString(err));
-      goto cleanup;
-    }
-    err = cudaMalloc(&res[i].random_state, 4 * sizeof(unsigned long long));
-    if (err != cudaSuccess)
-    {
-      fprintf(stderr, "Device %u random_state allocation failed: %s\n", idx, cudaGetErrorString(err));
-      goto cleanup;
-    }
-    // err = cudaMalloc(&res[i].printf_buffer, PRINTF_BUFFER_SIZE);
-    // if (err != cudaSuccess)
-    // {
-    //   fprintf(stderr, "Device %u printf_buffer allocation failed: %s\n", idx, cudaGetErrorString(err));
-    //   goto cleanup;
-    // }
-
-    err = create_xoshiro_random_state(&res[i]);
-    if (err != cudaSuccess)
-    {
-      fprintf(stderr, "Random state initialization failed for %s: %s\n", res[i].device_name, cudaGetErrorString(err));
-      goto cleanup;
-    }
-
-    // Calculate optimal grid and block dimensions after kernel is loaded
-    // Note: calculate_optimal_dimensions requires the kernel to be loaded, so we defer it
-    // until after kernel compilation/loading in compile_cuda_kernel_from_xxd_header or load_cuda_kernel_binary
-  }
-
-  *device_count = num_selected;
-  return res;
-
-cleanup:
-  for (unsigned int j = 0; j < num_selected; j++)
-  {
-    cudaFree(res[j].previous_header);
-    cudaFree(res[j].timestamp);
-    cudaFree(res[j].matrix);
-    cudaFree(res[j].target);
-    cudaFree(res[j].result);
-    cudaFree(res[j].random_state);
-    // cudaFree(res[j].printf_buffer);
-    free(res[j].h_random_state);
-    cudaStreamDestroy(res[j].stream);
-  }
-  free(res);
-  return NULL;
-}
-
-CudaResources *initialize_all_cuda_gpus(unsigned int *device_count)
-{
-  cudaError_t err = cudaSuccess;
-  int num_devices;
-
-  *device_count = 0;
-  err = cudaGetDeviceCount(&num_devices);
-  if (err != cudaSuccess || num_devices == 0)
-  {
-    fprintf(stderr, "No CUDA devices: %s\n", cudaGetErrorString(err));
     return NULL;
   }
 
@@ -304,6 +154,27 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count)
       fprintf(stderr, "Device %u (PCI-BUS-ID: %u, %s) lacks sufficient compute capability\n",
               i, res[i].pci_bus_id, res[i].device_name);
       goto cleanup;
+    }
+    if (selected_gpus_num > 0)
+    {
+      int found = 0;
+      for (int x = 0; x < selected_gpus_num; x++)
+      {
+        if (res[i].pci_bus_id == (unsigned int)selected_gpus[x])
+        {
+          found = 1;
+          devices_found++;
+          break;
+        }
+      }
+      if (found == 0)
+      {
+        continue; // skip the GPU since it was not specified.
+      }
+    }
+    else
+    {
+      devices_found++;
     }
 
     err = cudaStreamCreate(&res[i].stream);
@@ -365,12 +236,12 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count)
       goto cleanup;
     }
   }
-  qsort(res, num_devices, sizeof(CudaResources), compare_pci_bus_id);
-  *device_count = num_devices;
+  qsort(res, devices_found, sizeof(CudaResources), compare_pci_bus_id);
+  *device_count = devices_found;
   return res;
 
 cleanup:
-  for (unsigned int j = 0; j < (unsigned int)num_devices; j++)
+  for (unsigned int j = 0; j < (unsigned int)devices_found; j++)
   {
     cudaFree(res[j].previous_header);
     cudaFree(res[j].timestamp);

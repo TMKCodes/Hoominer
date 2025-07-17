@@ -1,10 +1,4 @@
-#include <CL/cl.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <errno.h>
-#include <time.h>
-#include <pciaccess.h>
+
 
 #include "opencl-host.h"
 
@@ -130,231 +124,9 @@ cl_int calculate_work_sizes(OpenCLResources *resource)
   cl_uint compute_units;
   clGetDeviceInfo(resource->device, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cl_uint), &compute_units, NULL);
   resource->max_global_work_size = compute_units * resource->max_work_group_size;
-  printf("Max local work size: %ld\n", resource->max_work_group_size);
-  printf("Max global work size: %ld\n", resource->max_global_work_size);
+  // printf("Max local work size: %ld\n", resource->max_work_group_size);
+  // printf("Max global work size: %ld\n", resource->max_global_work_size);
   return CL_SUCCESS;
-}
-
-OpenCLResources *initialize_selected_opencl_gpus(cl_uint *device_indices, cl_uint num_selected, cl_uint *device_count)
-{
-  cl_platform_id platform;
-  cl_device_id *devices;
-  cl_uint num_platforms, num_devices, non_nvidia_count;
-  cl_int err;
-
-  *device_count = 0;
-  if (!device_indices || num_selected == 0)
-  {
-    fprintf(stderr, "Invalid input: No device indices\n");
-    return NULL;
-  }
-
-  err = clGetPlatformIDs(1, &platform, &num_platforms);
-  if (err != CL_SUCCESS || num_platforms == 0)
-  {
-    fprintf(stderr, "No platforms: %d\n", err);
-    return NULL;
-  }
-
-  err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 0, NULL, &num_devices);
-  if (err != CL_SUCCESS || num_devices == 0)
-  {
-    fprintf(stderr, "No GPUs: %d\n", err);
-    return NULL;
-  }
-
-  devices = malloc(num_devices * sizeof(cl_device_id));
-  if (!devices)
-  {
-    fprintf(stderr, "Memory allocation failed\n");
-    return NULL;
-  }
-
-  err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, num_devices, devices, NULL);
-  if (err != CL_SUCCESS)
-  {
-    fprintf(stderr, "Device query failed: %d\n", err);
-    free(devices);
-    return NULL;
-  }
-
-  // Count non-NVIDIA devices and validate indices
-  cl_uint *non_nvidia_indices = malloc(num_devices * sizeof(cl_uint));
-  if (!non_nvidia_indices)
-  {
-    fprintf(stderr, "Memory allocation failed\n");
-    free(devices);
-    return NULL;
-  }
-  non_nvidia_count = 0;
-  for (cl_uint i = 0; i < num_devices; i++)
-  {
-    char vendor[128];
-    err = clGetDeviceInfo(devices[i], CL_DEVICE_VENDOR, sizeof(vendor), vendor, NULL);
-    if (err != CL_SUCCESS)
-    {
-      fprintf(stderr, "Vendor query failed for device %u: %d\n", i, err);
-      free(non_nvidia_indices);
-      free(devices);
-      return NULL;
-    }
-    if (strstr(vendor, "NVIDIA") == NULL)
-    {
-      non_nvidia_indices[non_nvidia_count++] = i;
-    }
-  }
-
-  if (non_nvidia_count == 0)
-  {
-    free(non_nvidia_indices);
-    free(devices);
-    return NULL;
-  }
-
-  // Validate selected indices
-  for (cl_uint i = 0; i < num_selected; i++)
-  {
-    cl_uint valid = 0;
-    for (cl_uint j = 0; j < non_nvidia_count; j++)
-    {
-      if (device_indices[i] == non_nvidia_indices[j])
-      {
-        valid = 1;
-        break;
-      }
-    }
-    if (!valid || device_indices[i] >= num_devices)
-    {
-      fprintf(stderr, "Invalid device index %u: Only %u non-NVIDIA devices\n", device_indices[i], non_nvidia_count);
-      free(non_nvidia_indices);
-      free(devices);
-      return NULL;
-    }
-  }
-
-  OpenCLResources *res = calloc(num_selected, sizeof(OpenCLResources));
-  if (!res)
-  {
-    fprintf(stderr, "Memory allocation failed\n");
-    free(non_nvidia_indices);
-    free(devices);
-    return NULL;
-  }
-
-  for (cl_uint i = 0; i < num_selected; i++)
-  {
-    cl_uint idx = device_indices[i];
-    res[i].device = devices[idx];
-    err = clGetDeviceInfo(res[i].device, CL_DEVICE_NAME, sizeof(res[i].device_name), res[i].device_name, NULL);
-    if (err != CL_SUCCESS)
-    {
-      fprintf(stderr, "Device %u name query failed: %d\n", idx, err);
-      goto cleanup;
-    }
-
-    char extensions[1024];
-    err = clGetDeviceInfo(res[i].device, CL_DEVICE_EXTENSIONS, sizeof(extensions), extensions, NULL);
-    if (err != CL_SUCCESS || !strstr(extensions, "cl_khr_fp64"))
-    {
-      fprintf(stderr, "Device %u (%s) lacks cl_khr_fp64: %d\n", idx, res[i].device_name, err);
-      goto cleanup;
-    }
-
-    res[i].context = clCreateContext(NULL, 1, &res[i].device, NULL, NULL, &err);
-    if (err != CL_SUCCESS)
-    {
-      fprintf(stderr, "Device %u context failed: %d\n", idx, err);
-      goto cleanup;
-    }
-
-    // Check if out-of-order queue is supported
-    cl_command_queue_properties device_queue_props = 0;
-    err = clGetDeviceInfo(res[i].device, CL_DEVICE_QUEUE_PROPERTIES, sizeof(cl_command_queue_properties), &device_queue_props, NULL);
-    if (err != CL_SUCCESS)
-    {
-      fprintf(stderr, "Device %u queue properties query failed: %d\n", idx, err);
-      goto cleanup;
-    }
-
-    cl_queue_properties properties[] = {
-        CL_QUEUE_PROPERTIES,
-        (device_queue_props & CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE) ? CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE : 0,
-        0};
-
-    res[i].queue = clCreateCommandQueueWithProperties(res[i].context, res[i].device, properties, &err);
-    if (err != CL_SUCCESS)
-    {
-      fprintf(stderr, "Device %u queue creation failed: %d\n", idx, err);
-      clReleaseContext(res[i].context);
-      goto cleanup;
-    }
-
-    // Calculate work sizes and initialize random state
-    err = calculate_work_sizes(&res[i]);
-    if (err != CL_SUCCESS)
-    {
-      fprintf(stderr, "Calculate work sizes failed for %s: %d\n", res[i].device_name, err);
-      goto cleanup;
-    }
-
-    // Initialize persistent buffers
-    res[i].previous_header_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, DOMAIN_HASH_SIZE, NULL, &err);
-    if (err != CL_SUCCESS)
-      goto cleanup;
-
-    res[i].timestamp_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, sizeof(cl_long), NULL, &err);
-    if (err != CL_SUCCESS)
-      goto cleanup;
-
-    res[i].matrix_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, 64 * 64 * sizeof(double), NULL, &err);
-    if (err != CL_SUCCESS)
-      goto cleanup;
-
-    res[i].target_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, DOMAIN_HASH_SIZE, NULL, &err);
-    if (err != CL_SUCCESS)
-      goto cleanup;
-
-    res[i].result_buf = clCreateBuffer(res[i].context, CL_MEM_READ_WRITE, sizeof(OpenCLResult), NULL, &err);
-    if (err != CL_SUCCESS)
-      goto cleanup;
-
-    res[i].random_state_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, res[i].max_global_work_size * sizeof(cl_ulong4), NULL, &err);
-    if (err != CL_SUCCESS)
-    {
-      fprintf(stderr, "Device %u buffer creation failed: %d\n", idx, err);
-      goto cleanup;
-    }
-  }
-
-  free(non_nvidia_indices);
-  free(devices);
-  *device_count = num_selected;
-  return res;
-
-cleanup:
-  for (cl_uint j = 0; j < num_selected; j++)
-  {
-    if (res[j].previous_header_buf)
-      clReleaseMemObject(res[j].previous_header_buf);
-    if (res[j].timestamp_buf)
-      clReleaseMemObject(res[j].timestamp_buf);
-    if (res[j].matrix_buf)
-      clReleaseMemObject(res[j].matrix_buf);
-    if (res[j].target_buf)
-      clReleaseMemObject(res[j].target_buf);
-    if (res[j].result_buf)
-      clReleaseMemObject(res[j].result_buf);
-    if (res[j].random_state_buf)
-      clReleaseMemObject(res[j].random_state_buf);
-    if (res[j].queue)
-      clReleaseCommandQueue(res[j].queue);
-    if (res[j].context)
-      clReleaseContext(res[j].context);
-  }
-  free(non_nvidia_indices);
-  free(devices);
-  free(res);
-  return NULL;
 }
 
 static cl_uint get_pci_bus_id_from_libpciaccess(cl_uint device_idx)
@@ -420,11 +192,11 @@ int compare_pci_bus_id(const void *a, const void *b)
   return (int)(ra->pci_bus_id - rb->pci_bus_id);
 }
 
-OpenCLResources *initalize_all_opencl_gpus(cl_uint *device_count)
+OpenCLResources *initalize_all_opencl_gpus(StratumContext *ctx, cl_uint *device_count)
 {
   cl_platform_id platform;
   cl_device_id *devices;
-  cl_uint num_platforms, num_devices, non_nvidia_count;
+  cl_uint num_platforms, num_devices, non_nvidia_count, devices_found;
   cl_int err;
 
   *device_count = 0;
@@ -466,6 +238,7 @@ OpenCLResources *initalize_all_opencl_gpus(cl_uint *device_count)
     return NULL;
   }
   non_nvidia_count = 0;
+  devices_found = 0;
   for (cl_uint i = 0; i < num_devices; i++)
   {
     char vendor[128];
@@ -498,7 +271,6 @@ OpenCLResources *initalize_all_opencl_gpus(cl_uint *device_count)
     free(devices);
     return NULL;
   }
-
   for (cl_uint i = 0; i < non_nvidia_count; i++)
   {
     cl_uint idx = non_nvidia_indices[i];
@@ -509,7 +281,6 @@ OpenCLResources *initalize_all_opencl_gpus(cl_uint *device_count)
       fprintf(stderr, "Device %u name query failed: %d\n", idx, err);
       goto cleanup;
     }
-
     // Retrieve vendor for PCI-BUS-ID logic
     char vendor[128];
     err = clGetDeviceInfo(res[i].device, CL_DEVICE_VENDOR, sizeof(vendor), vendor, NULL);
@@ -549,6 +320,28 @@ OpenCLResources *initalize_all_opencl_gpus(cl_uint *device_count)
       pci_bus_id = get_pci_bus_id_from_libpciaccess(idx);
     }
     res[i].pci_bus_id = pci_bus_id;
+
+    if (ctx->config->selected_gpus_num > 0)
+    {
+      int found = 0;
+      for (int x = 0; x < ctx->config->selected_gpus_num; x++)
+      {
+        if (pci_bus_id == (cl_uint)ctx->config->selected_gpus[x])
+        {
+          found = 1;
+          devices_found++;
+          break;
+        }
+      }
+      if (found == 0)
+      {
+        continue; // skip the GPU since it was not specified.
+      }
+    }
+    else
+    {
+      devices_found++;
+    }
 
     err = clGetDeviceInfo(res[i].device, CL_DEVICE_EXTENSIONS, sizeof(extensions), extensions, NULL);
     if (err != CL_SUCCESS || !strstr(extensions, "cl_khr_fp64"))
@@ -623,11 +416,11 @@ OpenCLResources *initalize_all_opencl_gpus(cl_uint *device_count)
       goto cleanup;
     }
   }
-  qsort(res, non_nvidia_count, sizeof(OpenCLResources), compare_pci_bus_id);
+  qsort(res, devices_found, sizeof(OpenCLResources), compare_pci_bus_id);
 
   free(non_nvidia_indices);
   free(devices);
-  *device_count = non_nvidia_count;
+  *device_count = devices_found;
   return res;
 
 cleanup:

@@ -15,6 +15,7 @@
 #include "../algorithms/hoohash/hoohash.h"
 
 typedef struct StratumContext StratumContext;
+typedef struct OpenCLResources OpenCLResources;
 typedef struct MiningState MiningState;
 typedef struct MiningJob MiningJob;
 typedef struct MiningThread MiningThread;

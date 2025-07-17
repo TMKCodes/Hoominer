@@ -24,7 +24,8 @@
 #include "datatypes.h"
 #include "reporting.h"
 #include "miner-hoohash.h"
-#define BUFFER_SIZE 8192
+
+#define BUFFER_SIZE 16384
 
 typedef struct StratumContext StratumContext;
 typedef struct OpenCLResources OpenCLResources;
@@ -58,7 +59,7 @@ struct StratumContext
 StratumContext *init_stratum_context();
 void *stratum_receive_thread(void *arg);
 int start_stratum_connection(StratumContext *ctx, HoominerConfig *config);
-int stratum_subscribe(int sockfd, SSL *ssl);
+int stratum_subscribe(int sockfd, StratumContext *ctx, SSL *ssl);
 int stratum_authenticate(int sockfd, const char *username, const char *password, SSL *ssl);
 int connect_to_stratum_server(const char *hostname, int port);
 int init_ssl_connection(StratumContext *ctx);

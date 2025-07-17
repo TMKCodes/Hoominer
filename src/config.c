@@ -6,6 +6,9 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
   config->disable_gpu = false;
   config->disable_opencl = false;
   config->disable_cuda = false;
+  config->list_gpus = false;
+  config->cpu_threads = 0;
+  bool gpus_selected = false;
   for (int i = 1; i < argc; i++)
   {
     if (!strcmp(argv[i], "--user") && i + 1 < argc)
@@ -15,13 +18,23 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
     else if (!strcmp(argv[i], "--algorithm") && i + 1 < argc)
       config->algorithm = argv[++i];
     else if (!strcmp(argv[i], "--disable-cpu"))
-      config->disable_cpu = 1;
+      config->disable_cpu = true;
     else if (!strcmp(argv[i], "--disable-gpu"))
-      config->disable_gpu = 1;
+      config->disable_gpu = true;
+    else if (!strcmp(argv[i], "--disable-opencl"))
+      config->disable_gpu = true;
+    else if (!strcmp(argv[i], "--disable-cuda"))
+      config->disable_gpu = true;
+    else if (!strcmp(argv[i], "--list-gpus"))
+      config->list_gpus = true;
     else if (!strcmp(argv[i], "--cpu-threads") && i + 1 < argc)
       config->cpu_threads = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--gpu-ids") && i + 1 < argc)
-      config->selected_gpus = argv[++i];
+    {
+      config->selected_gpus_str = argv[++i];
+      gpus_selected = true;
+      printf("Selected GPUs: %s\n", config->selected_gpus_str);
+    }
     else if (!strcmp(argv[i], "--stratum") && i + 1 < argc)
     {
       const char *stratum_url = argv[++i];
@@ -81,9 +94,24 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
       printf("\nCPU parameters: \n");
       printf("--cpu-threads <thread-count>\t\t\tSelect how many CPU threads to create.\n");
       printf("\nGPU parameters: \n");
+      printf("--list-gpus\t\t\t\t\tList gpu bus id's.\n");
       printf("--gpu-ids <bus-id list>\t\t\t\tSelect which GPU's to use, seperate bus id's with comma (if not specified all devices will be used).\n");
 
       exit(0);
     }
+  }
+  if (gpus_selected == true)
+  {
+    config->selected_gpus_num = 0;
+    char *gpu_ids_str = strdup(config->selected_gpus_str);
+    char *token = strtok(gpu_ids_str, ",");
+
+    while (token && config->selected_gpus_num < 16)
+    {
+      config->selected_gpus[config->selected_gpus_num++] = atoi(token);
+      token = strtok(NULL, ",");
+    }
+
+    free(gpu_ids_str);
   }
 }

@@ -40,5 +40,6 @@ HashrateDisplay *init_hashrate_display(uint32_t initial_capacity);
 int add_reporting_device(HashrateDisplay *hd, ReportingDevice *device);
 void free_hashrate_display(HashrateDisplay *hd);
 void *hashrate_display_thread(void *arg);
+void list_gpus(StratumContext *ctx);
 
 #endif

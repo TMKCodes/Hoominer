@@ -103,7 +103,7 @@ int start_stratum_connection(StratumContext *ctx, HoominerConfig *config)
     }
   }
 
-  if (stratum_subscribe(ctx->sockfd, config->ssl_enabled ? ctx->ssl : NULL) < 0 ||
+  if (stratum_subscribe(ctx->sockfd, ctx, config->ssl_enabled ? ctx->ssl : NULL) < 0 ||
       stratum_authenticate(ctx->sockfd, config->username, config->password, config->ssl_enabled ? ctx->ssl : NULL) < 0)
   {
     printf("Stratum initialization failed.\n");
@@ -423,15 +423,39 @@ void *stratum_receive_thread(void *arg)
         break;
       }
     }
-
-    buffer[bytes] = '\0';
-    if (json_len + bytes >= sizeof(json_buffer))
+    if (bytes >= 0)
     {
-      printf("stratum_receive_thread: Buffer overflow, processing partial\n");
+      buffer[bytes] = '\0';
+      if (json_len + bytes >= sizeof(json_buffer))
+      {
+        printf("stratum_receive_thread: Buffer overflow, processing partial\n");
+        char *start = json_buffer;
+        char *end;
+        char *partial_end = json_buffer + json_len;
+        while ((end = strchr(start, '\n')) && end < partial_end)
+        {
+          *end = '\0';
+          json_object *msg = json_tokener_parse(start);
+          if (msg)
+          {
+            process_stratum_message(msg, ctx, ctx->ms);
+            json_object_put(msg);
+          }
+          else
+            printf("stratum_receive_thread: Failed to parse JSON: %s\n", start);
+          json_len -= (end - start + 1);
+          start = end + 1;
+        }
+        memmove(json_buffer, start, json_len);
+        continue;
+      }
+
+      memcpy(json_buffer + json_len, buffer, bytes);
+      json_len += bytes;
+
       char *start = json_buffer;
       char *end;
-      char *partial_end = json_buffer + json_len;
-      while ((end = strchr(start, '\n')) && end < partial_end)
+      while ((end = strchr(start, '\n')))
       {
         *end = '\0';
         json_object *msg = json_tokener_parse(start);
@@ -445,32 +469,10 @@ void *stratum_receive_thread(void *arg)
         json_len -= (end - start + 1);
         start = end + 1;
       }
-      memmove(json_buffer, start, json_len);
-      continue;
-    }
-
-    memcpy(json_buffer + json_len, buffer, bytes);
-    json_len += bytes;
-
-    char *start = json_buffer;
-    char *end;
-    while ((end = strchr(start, '\n')))
-    {
-      *end = '\0';
-      json_object *msg = json_tokener_parse(start);
-      if (msg)
+      if (json_len > 0 && start != NULL)
       {
-        process_stratum_message(msg, ctx, ctx->ms);
-        json_object_put(msg);
+        memmove(json_buffer, start, json_len);
       }
-      else
-        printf("stratum_receive_thread: Failed to parse JSON: %s\n", start);
-      json_len -= (end - start + 1);
-      start = end + 1;
-    }
-    if (json_len > 0 && start != NULL)
-    {
-      memmove(json_buffer, start, json_len);
     }
   }
 
@@ -486,13 +488,15 @@ void *stratum_receive_thread(void *arg)
   return NULL;
 }
 
-int stratum_subscribe(int sockfd, SSL *ssl)
+int stratum_subscribe(int sockfd, StratumContext *ctx, SSL *ssl)
 {
   json_object *req = json_object_new_object();
   json_object_object_add(req, "id", json_object_new_int(1));
   json_object_object_add(req, "method", json_object_new_string("mining.subscribe"));
   json_object *params = json_object_new_array();
-  json_object_array_add(params, json_object_new_string("Hoominer/0.0.0"));
+  char version_string[128];
+  snprintf(version_string, sizeof(version_string), "Hoominer/%s", ctx->version);
+  json_object_array_add(params, json_object_new_string(version_string));
   json_object_object_add(req, "params", params);
 
   const char *msg = json_object_to_json_string_ext(req, JSON_C_TO_STRING_PLAIN);
@@ -577,44 +581,6 @@ int stratum_authenticate(int sockfd, const char *username, const char *password,
   return ret < 0 ? -1 : 0;
 }
 
-static int resolve_domain_to_ip(const char *domain, char **ip_out)
-{
-  struct addrinfo hints = {0}, *res, *p;
-  char ip_str[INET_ADDRSTRLEN];
-
-  hints.ai_family = AF_INET; // Use IPv4
-  hints.ai_socktype = SOCK_STREAM;
-
-  if (getaddrinfo(domain, NULL, &hints, &res) != 0)
-  {
-    fprintf(stderr, "Failed to resolve domain: %s\n", domain);
-    return -1;
-  }
-
-  // Get the first valid IPv4 address
-  for (p = res; p != NULL; p = p->ai_next)
-  {
-    if (p->ai_family == AF_INET)
-    {
-      struct sockaddr_in *ipv4 = (struct sockaddr_in *)p->ai_addr;
-      inet_ntop(AF_INET, &(ipv4->sin_addr), ip_str, INET_ADDRSTRLEN);
-      *ip_out = strdup(ip_str);
-      if (!*ip_out)
-      {
-        fprintf(stderr, "Memory allocation failed for IP address\n");
-        freeaddrinfo(res);
-        return -1;
-      }
-      freeaddrinfo(res);
-      return 0;
-    }
-  }
-
-  freeaddrinfo(res);
-  fprintf(stderr, "No valid IPv4 address found for domain: %s\n", domain);
-  return -1;
-}
-
 int connect_to_stratum_server(const char *hostname, int port)
 {
   struct addrinfo hints = {0}, *res, *p;
@@ -641,7 +607,6 @@ int connect_to_stratum_server(const char *hostname, int port)
     int flag = 1;
     setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(int));
 
-    printf("Connecting %s\n", p->ai_addr);
     if (connect(sockfd, p->ai_addr, p->ai_addrlen) == 0)
     {
       char ip_str[INET_ADDRSTRLEN];

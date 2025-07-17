@@ -166,3 +166,30 @@ void *hashrate_display_thread(void *arg)
 
   return NULL;
 }
+
+void list_gpus(StratumContext *ctx)
+{
+  time_t t = time(NULL);
+  struct tm tm;
+  localtime_r(&t, &tm);
+  char time_str[9];
+  strftime(time_str, sizeof(time_str), "%H:%M:%S", &tm);
+  printf("[%-8s] =======================================================================\n", time_str);
+  printf("[%-8s] | Device Name \t\t\t | Device Index | Device BUS id  |\n", time_str);
+  if (ctx->opencl_device_count > 0)
+  {
+    for (uint32_t i = 0; i < ctx->opencl_device_count; i++)
+    {
+      printf("[%-8s] | %s\t\t\t\t | %d\t\t| %d\t\t |\n", time_str, ctx->opencl_resources[i].device_name, ctx->cpu_device_count + i, ctx->opencl_resources[i].pci_bus_id);
+    }
+  }
+  if (ctx->cuda_device_count > 0)
+  {
+    for (uint32_t i = 0; i < ctx->cuda_device_count; i++)
+    {
+      printf("[%-8s] | %s\t\t | %d\t\t| %d\t\t |\n", time_str, ctx->cuda_resources[i].device_name, ctx->cpu_device_count + ctx->opencl_device_count + i, ctx->cuda_resources[i].pci_bus_id);
+    }
+  }
+
+  printf("[%-8s] =======================================================================\n", time_str);
+}

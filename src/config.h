@@ -18,8 +18,11 @@ struct HoominerConfig
   bool disable_opencl;
   bool disable_cuda;
   int cpu_threads;
-  char *selected_gpus;
-  bool ssl_enabled
+  char *selected_gpus_str;
+  bool ssl_enabled;
+  bool list_gpus;
+  int selected_gpus[256];
+  int selected_gpus_num;
 };
 
 void parse_args(int argc, char **argv, struct HoominerConfig *config);
