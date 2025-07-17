@@ -1,8 +1,12 @@
 #!/bin/bash
 # Runs Hoominer with configured parameters
 
+. h-manifest.conf
+
 # Source miner configuration
 source /hive/miners/custom/hoominer/hoominer.conf
+
+mkdir -p "$(dirname "$CUSTOM_LOG_BASENAME.log")" && touch "$CUSTOM_LOG_BASENAME.log"
 
 # Build command-line arguments
 CMD="./hoominer"
@@ -19,4 +23,4 @@ CMD="./hoominer"
 
 # Set working directory and execute
 cd /hive/miners/custom/hoominer
-exec $CMD >> /var/log/miner/hoominer/hoominer.log 2>&1
+exec $CMD >> $CUSTOM_LOG_BASENAME.log 2>&1

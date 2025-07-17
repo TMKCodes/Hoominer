@@ -4,6 +4,7 @@
 # Source HiveOS environment
 [[ -e /hive/bin/hive ]] && . /hive/bin/hive
 
+
 # Fetch stats from Hoominer API
 stats_raw=$(curl -s http://127.0.0.1:8042/gpu)
 if [ $? -ne 0 ]; then
@@ -18,15 +19,15 @@ if [ -z "$stats_raw" ] || ! echo "$stats_raw" | jq . >/dev/null 2>&1; then
 fi
 
 # Parse JSON using jq
-khs=$(echo "$stats_raw" | jq '[.hash[] / 1000] | add') # Sum all hashrates in khs
-hs=$(echo "$stats_raw" | jq '[.hash[] / 1000]') # Array of hashrates in khs
+khs=$(echo "$stats_raw" | jq '[.hash[] / 1000] | add')     # Total hashrate in khs
+hs=$(echo "$stats_raw" | jq '[.hash[] / 1000]')            # Array of per-device hashrates
 busid=$(echo "$stats_raw" | jq '.busid')
-temp=$(echo "$stats_raw" | jq '.air')
-accepted=$(echo "$stats_raw" | jq '.shares.accepted')
-rejected=$(echo "$stats_raw" | jq '.shares.rejected')
-invalid=$(echo "$stats_raw" | jq '.shares.invalid')
+air=$(echo "$stats_raw" | jq '.air')
+accepted=$(echo "$stats_raw" | jq '.shares.accepted | add')
+rejected=$(echo "$stats_raw" | jq '.shares.rejected | add')
 hs_units="khs"
 ver=$(echo "$stats_raw" | jq -r '.miner_version')
+algo='hoohash'
 
 # Calculate uptime
 pid=$(pgrep -f hoominer)
@@ -38,14 +39,17 @@ fi
 
 # Format stats for HiveOS
 stats=$(jq -n \
-    --arg khs "$khs" \
+    --arg total_khs "$khs" \
     --argjson hs "$hs" \
     --arg hs_units "$hs_units" \
-    --argjson temp "$temp" \
+    --argjson temp "[]" \
+    --argjson fan "[]" \
     --argjson bus_numbers "$busid" \
-    --argjson ar "$(jq -n --argjson accepted "$accepted" --argjson rejected "$rejected" --argjson invalid "$invalid" '[$accepted, $rejected, $invalid]')" \
+    --argjson accepted "$accepted" \
+    --argjson rejected "$rejected" \
     --arg uptime "$uptime" \
     --arg ver "$ver" \
-    '{khs: $khs, hs: $hs, hs_units: $hs_units, temp: $temp, bus_numbers: $bus_numbers, ar: $ar, uptime: $uptime, ver: $ver}')
+    --arg algo "$algo" \
+    '{$total_khs, $hs, $hs_units, $temp,$fan, $bus_numbers, ar: [$accepted, $rejected], $algo, $uptime, $ver}')
 
 echo "$stats"
