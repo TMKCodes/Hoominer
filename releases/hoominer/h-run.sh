@@ -5,7 +5,7 @@
 source /hive/miners/custom/hoominer/hoominer.conf
 
 # Build command-line arguments
-CMD="./build/hoominer"
+CMD="./hoominer"
 [ -n "$STRATUM_URL" ] && CMD="$CMD --stratum $STRATUM_URL"
 [ -n "$WAL" ] && CMD="$CMD --user $WAL"
 [ -n "$PASS" ] && CMD="$CMD --pass $PASS"

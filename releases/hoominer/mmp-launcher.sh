@@ -34,7 +34,7 @@ if [[ ! "$POOL" =~ ^stratum\+(tcp|ssl)://[^:]+:[0-9]+$ ]]; then
   exit 1
 fi
 
-CMD=("hoominer" "--stratum" "$POOL" "--user" "$USER")
+CMD=("hoominer" "--stratum" "$POOL" "--user" "$USER" --disable-cpu)
 
 if [[ -n "$PASSWORD" ]]; then
   CMD+=("--password" "$PASSWORD")
