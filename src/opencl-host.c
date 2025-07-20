@@ -238,7 +238,6 @@ OpenCLResources *initalize_all_opencl_gpus(StratumContext *ctx, cl_uint *device_
     return NULL;
   }
   non_nvidia_count = 0;
-  devices_found = 0;
   for (cl_uint i = 0; i < num_devices; i++)
   {
     char vendor[128];
@@ -263,6 +262,7 @@ OpenCLResources *initalize_all_opencl_gpus(StratumContext *ctx, cl_uint *device_
     return NULL;
   }
 
+  // Allocate memory for the maximum possible number of valid devices
   OpenCLResources *res = calloc(non_nvidia_count, sizeof(OpenCLResources));
   if (!res)
   {
@@ -271,35 +271,36 @@ OpenCLResources *initalize_all_opencl_gpus(StratumContext *ctx, cl_uint *device_
     free(devices);
     return NULL;
   }
+  devices_found = 0;
   for (cl_uint i = 0; i < non_nvidia_count; i++)
   {
     cl_uint idx = non_nvidia_indices[i];
-    res[i].device = devices[idx];
-    err = clGetDeviceInfo(res[i].device, CL_DEVICE_NAME, sizeof(res[i].device_name), res[i].device_name, NULL);
+    char vendor[128];
+    char device_name[128];
+    err = clGetDeviceInfo(devices[idx], CL_DEVICE_NAME, sizeof(device_name), device_name, NULL);
     if (err != CL_SUCCESS)
     {
       fprintf(stderr, "Device %u name query failed: %d\n", idx, err);
       goto cleanup;
     }
+
     // Retrieve vendor for PCI-BUS-ID logic
-    char vendor[128];
-    err = clGetDeviceInfo(res[i].device, CL_DEVICE_VENDOR, sizeof(vendor), vendor, NULL);
+    err = clGetDeviceInfo(devices[idx], CL_DEVICE_VENDOR, sizeof(vendor), vendor, NULL);
     if (err != CL_SUCCESS)
     {
-      fprintf(stderr, "Device %u (%s) vendor query failed: %d\n", idx, res[i].device_name, err);
+      fprintf(stderr, "Device %u (%s) vendor query failed: %d\n", idx, device_name, err);
       goto cleanup;
     }
 
     // Retrieve PCI-BUS-ID for AMD devices
     cl_uint pci_bus_id = 0;
-    char extensions[2048]; // Declare extensions before use
+    char extensions[2048];
     if (strstr(vendor, "AMD") || strstr(vendor, "Advanced Micro Devices"))
     {
-      // Check if CL_DEVICE_TOPOLOGY_AMD is supported
-      err = clGetDeviceInfo(res[i].device, CL_DEVICE_EXTENSIONS, sizeof(extensions), extensions, NULL);
+      err = clGetDeviceInfo(devices[idx], CL_DEVICE_EXTENSIONS, sizeof(extensions), extensions, NULL);
       if (err == CL_SUCCESS && strstr(extensions, "cl_amd_device_topology"))
       {
-        err = clGetDeviceInfo(res[i].device, 0x4037 /* CL_DEVICE_TOPOLOGY_AMD */, sizeof(cl_uint), &pci_bus_id, NULL);
+        err = clGetDeviceInfo(devices[idx], 0x4037 /* CL_DEVICE_TOPOLOGY_AMD */, sizeof(cl_uint), &pci_bus_id, NULL);
       }
       else
       {
@@ -313,14 +314,10 @@ OpenCLResources *initalize_all_opencl_gpus(StratumContext *ctx, cl_uint *device_
 
     if (err != CL_SUCCESS)
     {
-      // fprintf(stderr, "Warning: Could not retrieve PCI-BUS-ID for device %u (%s, Vendor: %s): %d (extension %s)\n",
-      //         idx, res[i].device_name, vendor, err,
-      //         strstr(vendor, "AMD") ? "cl_amd_device_topology not supported" : "no known PCI-BUS-ID extension");
-      // Fallback to libpci for PCI-BUS-ID
       pci_bus_id = get_pci_bus_id_from_libpciaccess(idx);
     }
-    res[i].pci_bus_id = pci_bus_id;
 
+    // Check if the device is in the selected_gpus list (if any)
     if (ctx->config->selected_gpus_num > 0)
     {
       int found = 0;
@@ -329,41 +326,47 @@ OpenCLResources *initalize_all_opencl_gpus(StratumContext *ctx, cl_uint *device_
         if (pci_bus_id == (cl_uint)ctx->config->selected_gpus[x])
         {
           found = 1;
-          devices_found++;
+          printf("Using device %u (%s, PCI-BUS-ID: %u)\n", idx, device_name, pci_bus_id);
           break;
         }
       }
       if (found == 0)
       {
-        continue; // skip the GPU since it was not specified.
+        printf("Skipped using device %u (%s, PCI-BUS-ID: %u)\n", idx, device_name, pci_bus_id);
+        continue; // Skip the GPU since it was not specified
       }
     }
     else
     {
-      devices_found++;
+      printf("Using device %u (%s, PCI-BUS-ID: %u)\n", idx, device_name, pci_bus_id);
     }
 
-    err = clGetDeviceInfo(res[i].device, CL_DEVICE_EXTENSIONS, sizeof(extensions), extensions, NULL);
+    // Populate the res array only for valid devices
+    res[devices_found].device = devices[idx];
+    strncpy(res[devices_found].device_name, device_name, sizeof(res[devices_found].device_name) - 1);
+    res[devices_found].pci_bus_id = pci_bus_id;
+
+    err = clGetDeviceInfo(res[devices_found].device, CL_DEVICE_EXTENSIONS, sizeof(extensions), extensions, NULL);
     if (err != CL_SUCCESS || !strstr(extensions, "cl_khr_fp64"))
     {
       fprintf(stderr, "Device %u (%s, PCI-BUS-ID: %u) lacks cl_khr_fp64: %d\n",
-              idx, res[i].device_name, res[i].pci_bus_id, err);
+              idx, res[devices_found].device_name, res[devices_found].pci_bus_id, err);
       goto cleanup;
     }
 
-    res[i].context = clCreateContext(NULL, 1, &res[i].device, NULL, NULL, &err);
+    res[devices_found].context = clCreateContext(NULL, 1, &res[devices_found].device, NULL, NULL, &err);
     if (err != CL_SUCCESS)
     {
-      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) context failed: %d\n", idx, res[i].pci_bus_id, err);
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) context failed: %d\n", idx, res[devices_found].pci_bus_id, err);
       goto cleanup;
     }
 
     // Check if out-of-order queue is supported
     cl_command_queue_properties device_queue_props = 0;
-    err = clGetDeviceInfo(res[i].device, CL_DEVICE_QUEUE_PROPERTIES, sizeof(cl_command_queue_properties), &device_queue_props, NULL);
+    err = clGetDeviceInfo(res[devices_found].device, CL_DEVICE_QUEUE_PROPERTIES, sizeof(cl_command_queue_properties), &device_queue_props, NULL);
     if (err != CL_SUCCESS)
     {
-      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) queue properties query failed: %d\n", idx, res[i].pci_bus_id, err);
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) queue properties query failed: %d\n", idx, res[devices_found].pci_bus_id, err);
       goto cleanup;
     }
 
@@ -372,50 +375,84 @@ OpenCLResources *initalize_all_opencl_gpus(StratumContext *ctx, cl_uint *device_
         (device_queue_props & CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE) ? CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE : 0,
         0};
 
-    res[i].queue = clCreateCommandQueueWithProperties(res[i].context, res[i].device, properties, &err);
+    res[devices_found].queue = clCreateCommandQueueWithProperties(res[devices_found].context, res[devices_found].device, properties, &err);
     if (err != CL_SUCCESS)
     {
-      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) creation failed: %d\n", idx, res[i].pci_bus_id, err);
-      clReleaseContext(res[i].context);
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) creation failed: %d\n", idx, res[devices_found].pci_bus_id, err);
+      clReleaseContext(res[devices_found].context);
       goto cleanup;
     }
 
     // Calculate work sizes and initialize random state
-    err = calculate_work_sizes(&res[i]);
+    err = calculate_work_sizes(&res[devices_found]);
     if (err != CL_SUCCESS)
     {
-      fprintf(stderr, "Calculate work sizes failed for %s (PCI-BUS-ID: %u): %d\n", res[i].device_name, res[i].pci_bus_id, err);
+      fprintf(stderr, "Calculate work sizes failed for %s (PCI-BUS-ID: %u): %d\n", res[devices_found].device_name, res[devices_found].pci_bus_id, err);
       goto cleanup;
     }
 
     // Initialize buffers
-    res[i].previous_header_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, DOMAIN_HASH_SIZE, NULL, &err);
-    if (err != CL_SUCCESS)
-      goto cleanup;
-
-    res[i].timestamp_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, sizeof(cl_long), NULL, &err);
-    if (err != CL_SUCCESS)
-      goto cleanup;
-
-    res[i].matrix_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, 64 * 64 * sizeof(double), NULL, &err);
-    if (err != CL_SUCCESS)
-      goto cleanup;
-
-    res[i].target_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, DOMAIN_HASH_SIZE, NULL, &err);
-    if (err != CL_SUCCESS)
-      goto cleanup;
-
-    res[i].result_buf = clCreateBuffer(res[i].context, CL_MEM_READ_WRITE, sizeof(OpenCLResult), NULL, &err);
-    if (err != CL_SUCCESS)
-      goto cleanup;
-
-    res[i].random_state_buf = clCreateBuffer(res[i].context, CL_MEM_READ_ONLY, res[i].max_global_work_size * sizeof(cl_ulong4), NULL, &err);
+    res[devices_found].previous_header_buf = clCreateBuffer(res[devices_found].context, CL_MEM_READ_ONLY, DOMAIN_HASH_SIZE, NULL, &err);
     if (err != CL_SUCCESS)
     {
-      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) buffer creation failed: %d\n", idx, res[i].pci_bus_id, err);
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) buffer creation failed: %d\n", idx, res[devices_found].pci_bus_id, err);
       goto cleanup;
     }
+
+    res[devices_found].timestamp_buf = clCreateBuffer(res[devices_found].context, CL_MEM_READ_ONLY, sizeof(cl_long), NULL, &err);
+    if (err != CL_SUCCESS)
+    {
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) buffer creation failed: %d\n", idx, res[devices_found].pci_bus_id, err);
+      goto cleanup;
+    }
+
+    res[devices_found].matrix_buf = clCreateBuffer(res[devices_found].context, CL_MEM_READ_ONLY, 64 * 64 * sizeof(double), NULL, &err);
+    if (err != CL_SUCCESS)
+    {
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) buffer creation failed: %d\n", idx, res[devices_found].pci_bus_id, err);
+      goto cleanup;
+    }
+
+    res[devices_found].target_buf = clCreateBuffer(res[devices_found].context, CL_MEM_READ_ONLY, DOMAIN_HASH_SIZE, NULL, &err);
+    if (err != CL_SUCCESS)
+    {
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) buffer creation failed: %d\n", idx, res[devices_found].pci_bus_id, err);
+      goto cleanup;
+    }
+
+    res[devices_found].result_buf = clCreateBuffer(res[devices_found].context, CL_MEM_READ_WRITE, sizeof(OpenCLResult), NULL, &err);
+    if (err != CL_SUCCESS)
+    {
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) buffer creation failed: %d\n", idx, res[devices_found].pci_bus_id, err);
+      goto cleanup;
+    }
+
+    res[devices_found].random_state_buf = clCreateBuffer(res[devices_found].context, CL_MEM_READ_ONLY, res[devices_found].max_global_work_size * sizeof(cl_ulong4), NULL, &err);
+    if (err != CL_SUCCESS)
+    {
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) buffer creation failed: %d\n", idx, res[devices_found].pci_bus_id, err);
+      goto cleanup;
+    }
+
+    devices_found++;
   }
+
+  if (devices_found == 0)
+  {
+    free(non_nvidia_indices);
+    free(devices);
+    free(res);
+    return NULL;
+  }
+
+  // Reallocate to the exact number of devices found
+  res = (OpenCLResources *)realloc(res, devices_found * sizeof(OpenCLResources));
+  if (!res)
+  {
+    fprintf(stderr, "Memory reallocation failed\n");
+    goto cleanup;
+  }
+
   qsort(res, devices_found, sizeof(OpenCLResources), compare_pci_bus_id);
 
   free(non_nvidia_indices);
@@ -424,7 +461,7 @@ OpenCLResources *initalize_all_opencl_gpus(StratumContext *ctx, cl_uint *device_
   return res;
 
 cleanup:
-  for (cl_uint j = 0; j < non_nvidia_count; j++)
+  for (cl_uint j = 0; j < devices_found; j++)
   {
     if (res[j].previous_header_buf)
       clReleaseMemObject(res[j].previous_header_buf);
