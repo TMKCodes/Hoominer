@@ -53,6 +53,7 @@ extern "C"
     int device_id;                      // Store device ID for cudaSetDevice
     char device_name[256];
     unsigned int pci_bus_id;
+    int usegpu;
     CudaResult *result;
   };
 

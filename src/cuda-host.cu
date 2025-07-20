@@ -123,6 +123,7 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
     return NULL;
   }
 
+  // Allocate memory for the maximum possible number of valid devices
   CudaResources *res = (CudaResources *)calloc(num_devices, sizeof(CudaResources));
   if (!res)
   {
@@ -139,105 +140,128 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
       goto cleanup;
     }
 
-    err = cudaGetDeviceProperties(&res[i].device_prop, i);
+    // Temporary device properties for checking
+    cudaDeviceProp temp_prop;
+    err = cudaGetDeviceProperties(&temp_prop, i);
     if (err != cudaSuccess)
     {
       fprintf(stderr, "Device %u properties query failed: %s\n", i, cudaGetErrorString(err));
       goto cleanup;
     }
-    strncpy(res[i].device_name, res[i].device_prop.name, sizeof(res[i].device_name) - 1);
-    res[i].device_id = i;
-    res[i].pci_bus_id = res[i].device_prop.pciBusID; // Store PCI-BUS-ID
 
-    if (res[i].device_prop.computeMode == cudaComputeModeProhibited || res[i].device_prop.major < 2)
+    if (temp_prop.computeMode == cudaComputeModeProhibited || temp_prop.major < 2)
     {
       fprintf(stderr, "Device %u (PCI-BUS-ID: %u, %s) lacks sufficient compute capability\n",
-              i, res[i].pci_bus_id, res[i].device_name);
-      goto cleanup;
+              i, temp_prop.pciBusID, temp_prop.name);
+      continue; // Skip devices with insufficient compute capability
     }
+
+    // Check if the device is in the selected_gpus list (if any)
     if (selected_gpus_num > 0)
     {
       int found = 0;
       for (int x = 0; x < selected_gpus_num; x++)
       {
-        if (res[i].pci_bus_id == (unsigned int)selected_gpus[x])
+        if ((unsigned int)temp_prop.pciBusID == selected_gpus[x])
         {
           found = 1;
-          devices_found++;
-          printf("Using device %d", res[i].pci_bus_id);
+          printf("Using device %d\n", temp_prop.pciBusID);
           break;
         }
       }
       if (found == 0)
       {
-        printf("Skipped using device %d", res[i].pci_bus_id);
-        continue; // skip the GPU since it was not specified.
+        printf("Skipped using device %d\n", temp_prop.pciBusID);
+        continue; // Skip the GPU since it was not specified
       }
     }
     else
     {
-      devices_found++;
+      printf("Using device %d\n", temp_prop.pciBusID);
     }
 
-    err = cudaStreamCreate(&res[i].stream);
+    // Populate the res array only for valid devices
+    strncpy(res[devices_found].device_name, temp_prop.name, sizeof(res[devices_found].device_name) - 1);
+    res[devices_found].device_prop = temp_prop;
+    res[devices_found].device_id = i;
+    res[devices_found].pci_bus_id = temp_prop.pciBusID;
+
+    err = cudaStreamCreate(&res[devices_found].stream);
     if (err != cudaSuccess)
     {
       fprintf(stderr, "Device %u (PCI-BUS-ID: %u) stream creation failed: %s\n",
-              i, res[i].pci_bus_id, cudaGetErrorString(err));
+              i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
       goto cleanup;
     }
 
-    err = cudaMalloc(&res[i].previous_header, DOMAIN_HASH_SIZE);
+    err = cudaMalloc(&res[devices_found].previous_header, DOMAIN_HASH_SIZE);
     if (err != cudaSuccess)
     {
       fprintf(stderr, "Device %u (PCI-BUS-ID: %u) previous_header allocation failed: %s\n",
-              i, res[i].pci_bus_id, cudaGetErrorString(err));
+              i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
       goto cleanup;
     }
-    err = cudaMalloc(&res[i].timestamp, sizeof(unsigned long long));
+    err = cudaMalloc(&res[devices_found].timestamp, sizeof(unsigned long long));
     if (err != cudaSuccess)
     {
       fprintf(stderr, "Device %u (PCI-BUS-ID: %u) timestamp allocation failed: %s\n",
-              i, res[i].pci_bus_id, cudaGetErrorString(err));
+              i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
       goto cleanup;
     }
-    err = cudaMalloc(&res[i].matrix, 64 * 64 * sizeof(double));
+    err = cudaMalloc(&res[devices_found].matrix, 64 * 64 * sizeof(double));
     if (err != cudaSuccess)
     {
       fprintf(stderr, "Device %u (PCI-BUS-ID: %u) matrix allocation failed: %s\n",
-              i, res[i].pci_bus_id, cudaGetErrorString(err));
+              i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
       goto cleanup;
     }
-    err = cudaMalloc(&res[i].target, DOMAIN_HASH_SIZE);
+    err = cudaMalloc(&res[devices_found].target, DOMAIN_HASH_SIZE);
     if (err != cudaSuccess)
     {
       fprintf(stderr, "Device %u (PCI-BUS-ID: %u) target allocation failed: %s\n",
-              i, res[i].pci_bus_id, cudaGetErrorString(err));
+              i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
       goto cleanup;
     }
-    err = cudaMalloc(&res[i].result, sizeof(CudaResult));
+    err = cudaMalloc(&res[devices_found].result, sizeof(CudaResult));
     if (err != cudaSuccess)
     {
       fprintf(stderr, "Device %u (PCI-BUS-ID: %u) result allocation failed: %s\n",
-              i, res[i].pci_bus_id, cudaGetErrorString(err));
+              i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
       goto cleanup;
     }
-    err = cudaMalloc(&res[i].random_state, 4 * sizeof(unsigned long long));
+    err = cudaMalloc(&res[devices_found].random_state, 4 * sizeof(unsigned long long));
     if (err != cudaSuccess)
     {
       fprintf(stderr, "Device %u (PCI-BUS-ID: %u) random_state allocation failed: %s\n",
-              i, res[i].pci_bus_id, cudaGetErrorString(err));
+              i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
       goto cleanup;
     }
 
-    err = create_xoshiro_random_state(&res[i]);
+    err = create_xoshiro_random_state(&res[devices_found]);
     if (err != cudaSuccess)
     {
       fprintf(stderr, "Random state initialization failed for %s (PCI-BUS-ID: %u): %s\n",
-              res[i].device_name, res[i].pci_bus_id, cudaGetErrorString(err));
+              res[devices_found].device_name, res[devices_found].pci_bus_id, cudaGetErrorString(err));
       goto cleanup;
     }
+
+    devices_found++;
   }
+
+  if (devices_found == 0)
+  {
+    free(res);
+    return NULL;
+  }
+
+  // Reallocate to the exact number of devices found
+  res = (CudaResources *)realloc(res, devices_found * sizeof(CudaResources));
+  if (!res)
+  {
+    fprintf(stderr, "Memory reallocation failed\n");
+    goto cleanup;
+  }
+
   qsort(res, devices_found, sizeof(CudaResources), compare_pci_bus_id);
   *device_count = devices_found;
   return res;
@@ -254,10 +278,9 @@ cleanup:
     free(res[j].h_random_state);
     cudaStreamDestroy(res[j].stream);
   }
-  free(res);
+  free(res); // Free res, not final_res, as final_res may not be initialized
   return NULL;
 }
-
 cudaError_t load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename, const char *kernel_name)
 {
   cudaError_t err;

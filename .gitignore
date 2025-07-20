@@ -8,3 +8,4 @@ algorithms/GPU/OpenCL/test-blake3-kernel
 algorithms/GPU/OpenCL/test-hoohash-kernel
 vgcore*
 kernel.bin
+Makefile
