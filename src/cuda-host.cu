@@ -165,13 +165,11 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
         if ((unsigned int)temp_prop.pciBusID == selected_gpus[x])
         {
           found = 1;
-          printf("Using device %d\n", temp_prop.pciBusID);
           break;
         }
       }
       if (found == 0)
       {
-        printf("Skipped using device %d\n", temp_prop.pciBusID);
         continue; // Skip the GPU since it was not specified
       }
     }

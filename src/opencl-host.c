@@ -326,13 +326,11 @@ OpenCLResources *initalize_all_opencl_gpus(StratumContext *ctx, cl_uint *device_
         if (pci_bus_id == (cl_uint)ctx->config->selected_gpus[x])
         {
           found = 1;
-          printf("Using device %u (%s, PCI-BUS-ID: %u)\n", idx, device_name, pci_bus_id);
           break;
         }
       }
       if (found == 0)
       {
-        printf("Skipped using device %u (%s, PCI-BUS-ID: %u)\n", idx, device_name, pci_bus_id);
         continue; // Skip the GPU since it was not specified
       }
     }

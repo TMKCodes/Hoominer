@@ -112,13 +112,5 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
       config->selected_gpus[config->selected_gpus_num++] = atoi(token);
       token = strtok(NULL, ",");
     }
-
-    free(gpu_ids_str);
-    printf("Selected GPU IDs:\n");
-    for (int i = 0; i < config->selected_gpus_num; ++i)
-    {
-      printf("%d ", config->selected_gpus[i]);
-    }
-    printf("\n");
   }
 }
