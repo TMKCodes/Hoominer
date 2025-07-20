@@ -84,6 +84,7 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
     {
       printf("Usage: %s [--stratum <stratum+tcp://domain:port>] [--user <user>] [--pass <pass>]\n", argv[0]);
       printf("\nGeneral parameters: \n");
+      printf("--algorithm <algorthm>\t\tThe algorithm to mine, by default 'hoohash'.\n");
       printf("--stratum <stratum+tcp://domain:port>\t\tThe stratum protocol://address:port to specify connection point (stratum+ssl:// or stratum+tls:// to enable SSL/TLS).\n");
       printf("--user <user>\t\t\t\t\tStratum username (Usually mining wallet address).\n");
       printf("--password <password>\t\t\t\tStratum password (Usually not required or used as additional stratum parameters).\n");
@@ -113,5 +114,11 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
     }
 
     free(gpu_ids_str);
+    printf("Selected GPU IDs:\n");
+    for (int i = 0; i < config->selected_gpus_num; ++i)
+    {
+      printf("%d ", config->selected_gpus[i]);
+    }
+    printf("\n");
   }
 }

@@ -164,17 +164,15 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
         {
           found = 1;
           devices_found++;
+          printf("Using device %d", res[i].pci_bus_id);
           break;
         }
       }
       if (found == 0)
       {
+        printf("Skipped using device %d", res[i].pci_bus_id);
         continue; // skip the GPU since it was not specified.
       }
-    }
-    else
-    {
-      devices_found++;
     }
 
     err = cudaStreamCreate(&res[i].stream);

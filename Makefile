@@ -3,9 +3,10 @@ NVCC = nvcc
 
 # Flags
 CFLAGS = -Xcompiler "-fPIC -g -O0 -Wall -Wextra -DTEST -DDEBUG"
-INCLUDES = -Ialgorithms/blake3/c -I/opt/cuda/include -Iexternal/libmicrohttpd/build/include -Iexternal/json-c/ -Iexternal/libpciaccess/include
+INCLUDES = -Ialgorithms/blake3/c -I/opt/cuda/include -Iexternal/libmicrohttpd/build/include -Iexternal/json-c/ -I/external/libpciaccess/include/
 NVCCFLAGS = $(CFLAGS) $(INCLUDES)
-LDFLAGS = -ljson-c -lm -lgmp -lOpenCL -L/opt/cuda/lib64 -lcuda -lcudart  -lpciaccess -lnvidia-ml -lssl -lcrypto
+LDFLAGS = -lcudart_static -lm -lgmp -lOpenCL -L/opt/cuda/lib64 -lcuda -lcudart -lnvidia-ml -lssl -lcrypto
+NVCCFLAGS = --compiler-options "-static-libgcc -static-libstdc++"
 # Directories
 SRC_DIR = src
 BUILD_DIR = build
@@ -48,9 +49,9 @@ hoohash-clean:
 # .PHONY: pciaccess pciaccess-clean
 
 # pciaccess:
-# 	meson setup --reconfigure external/libpciaccess/build external/libpciaccess --default-library=static  --buildtype=release
-# 	meson compile -C external/libpciaccess/build
-# 	meson install -C external/libpciaccess/build
+# 	meson setup --reconfigure ./external/libpciaccess/build ./external/libpciaccess --default-library=static --buildtype=release
+# 	meson compile -C ./external/libpciaccess/build
+#   meson install -C ./external/libpciaccess/build
 
 # pciaccess-clean:
 # 	rm -rf external/libpciaccess/build external/libpciaccess/install
@@ -74,7 +75,7 @@ $(MINER_BIN): $(OBJS) | $(BUILD_DIR)
 		algorithms/blake3/c/build/libblake3.a \
 		/usr/local/lib/libmicrohttpd.a \
 		external/json-c/build/libjson-c.a \
-		external/libpciaccess/build/src/libpciaccess.a \
+		/external/libpciaccess/install/lib/libpciaccess.a \
 		$(LDFLAGS)
 	chmod +x $@
 
