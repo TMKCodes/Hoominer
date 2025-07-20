@@ -174,6 +174,10 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
         continue; // skip the GPU since it was not specified.
       }
     }
+    else
+    {
+      devices_found++;
+    }
 
     err = cudaStreamCreate(&res[i].stream);
     if (err != cudaSuccess)
