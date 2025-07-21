@@ -218,11 +218,6 @@ blake3_compress_in_place_portable(uint cv[8],
     }
 }
 
-__device__ unsigned int popcnt(ulong x)
-{
-    return __popcll(x); // CUDA 64-bit popcount intrinsic
-}
-
 __device__ output_t parent_output(const uint8_t block[BLAKE3_BLOCK_LEN],
                                   const uint key[8], uint8_t flags)
 {
