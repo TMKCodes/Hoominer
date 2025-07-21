@@ -191,10 +191,6 @@ blake3_compress_in_place_portable(uint cv[8],
   }
 }
 
-inline unsigned int popcnt(ulong x) {
-  return popcount(x); // Use OpenCL's popcount intrinsic
-}
-
 inline output_t parent_output(const uchar block[BLAKE3_BLOCK_LEN],
                               const uint key[8], uchar flags) {
   return make_output(key, block, BLAKE3_BLOCK_LEN, 0, flags | PARENT);
