@@ -63,8 +63,8 @@ __constant uchar MSG_SCHEDULE[7][16] = {
     {11, 15, 5, 0, 1, 9, 8, 6, 14, 10, 2, 12, 3, 4, 7, 13},
 };
 
-inline void chunk_state_init(blake3_chunk_state *self, const uint key[8],
-                             uchar flags) {
+void chunk_state_init(blake3_chunk_state *self, const uint key[8],
+                      uchar flags) {
   self->cv[0] = key[0];
   self->cv[1] = key[1];
   self->cv[2] = key[2];
@@ -82,18 +82,18 @@ inline void chunk_state_init(blake3_chunk_state *self, const uint key[8],
   self->flags = flags;
 }
 
-inline size_t chunk_state_len(const blake3_chunk_state *self) {
+size_t chunk_state_len(const blake3_chunk_state *self) {
   return (BLAKE3_BLOCK_LEN * (size_t)self->blocks_compressed) +
          ((size_t)self->buf_len);
 }
 
-inline uchar chunk_state_maybe_start_flag(const blake3_chunk_state *self) {
+uchar chunk_state_maybe_start_flag(const blake3_chunk_state *self) {
   return (self->blocks_compressed == 0) ? CHUNK_START : 0;
 }
 
-inline output_t make_output(const uint input_cv[8],
-                            const uchar block[BLAKE3_BLOCK_LEN],
-                            uchar block_len, ulong counter, uchar flags) {
+output_t make_output(const uint input_cv[8],
+                     const uchar block[BLAKE3_BLOCK_LEN], uchar block_len,
+                     ulong counter, uchar flags) {
   output_t ret;
   for (int i = 0; i < 8; i++) {
     ret.input_cv[i] = input_cv[i];
@@ -107,27 +107,26 @@ inline output_t make_output(const uint input_cv[8],
   return ret;
 }
 
-inline output_t chunk_state_output(const blake3_chunk_state *self) {
+output_t chunk_state_output(const blake3_chunk_state *self) {
   uchar block_flags =
       self->flags | chunk_state_maybe_start_flag(self) | CHUNK_END;
   return make_output(self->cv, self->buf, self->buf_len, self->chunk_counter,
                      block_flags);
 }
 
-inline uint load32(const void *src) {
+uint load32(const void *src) {
   const uchar *p = (const uchar *)src;
   return ((uint)(p[0]) << 0) | ((uint)(p[1]) << 8) | ((uint)(p[2]) << 16) |
          ((uint)(p[3]) << 24);
 }
 
-inline uint counter_low(ulong counter) { return (uint)counter; }
+uint counter_low(ulong counter) { return (uint)counter; }
 
-inline uint counter_high(ulong counter) { return (uint)(counter >> 32); }
+uint counter_high(ulong counter) { return (uint)(counter >> 32); }
 
-inline uint rotr32(uint w, uint c) { return (w >> c) | (w << (32 - c)); }
+uint rotr32(uint w, uint c) { return (w >> c) | (w << (32 - c)); }
 
-inline void g(uint *state, size_t a, size_t b, size_t c, size_t d, uint x,
-              uint y) {
+void g(uint *state, size_t a, size_t b, size_t c, size_t d, uint x, uint y) {
   state[a] = state[a] + state[b] + x;
   state[d] = rotr32(state[d] ^ state[a], 16);
   state[c] = state[c] + state[d];
@@ -138,7 +137,7 @@ inline void g(uint *state, size_t a, size_t b, size_t c, size_t d, uint x,
   state[b] = rotr32(state[b] ^ state[c], 7);
 }
 
-inline void round_fn(uint state[16], const uint *msg, size_t round) {
+void round_fn(uint state[16], const uint *msg, size_t round) {
   g(state, 0, 4, 8, 12, msg[MSG_SCHEDULE[round][0]],
     msg[MSG_SCHEDULE[round][1]]);
   g(state, 1, 5, 9, 13, msg[MSG_SCHEDULE[round][2]],
@@ -157,9 +156,9 @@ inline void round_fn(uint state[16], const uint *msg, size_t round) {
     msg[MSG_SCHEDULE[round][15]]);
 }
 
-inline void compress_pre(uint state[16], const uint cv[8],
-                         const uchar block[BLAKE3_BLOCK_LEN], uchar block_len,
-                         ulong counter, uchar flags) {
+void compress_pre(uint state[16], const uint cv[8],
+                  const uchar block[BLAKE3_BLOCK_LEN], uchar block_len,
+                  ulong counter, uchar flags) {
   if (block_len > BLAKE3_BLOCK_LEN) {
     block_len = BLAKE3_BLOCK_LEN;
   }
@@ -180,10 +179,10 @@ inline void compress_pre(uint state[16], const uint cv[8],
   }
 }
 
-inline void
-blake3_compress_in_place_portable(uint cv[8],
-                                  const uchar block[BLAKE3_BLOCK_LEN],
-                                  uchar block_len, ulong counter, uchar flags) {
+void blake3_compress_in_place_portable(uint cv[8],
+                                       const uchar block[BLAKE3_BLOCK_LEN],
+                                       uchar block_len, ulong counter,
+                                       uchar flags) {
   uint state[16];
   compress_pre(state, cv, block, block_len, counter, flags);
   for (int i = 0; i < 8; i++) {
@@ -191,19 +190,17 @@ blake3_compress_in_place_portable(uint cv[8],
   }
 }
 
-inline output_t parent_output(const uchar block[BLAKE3_BLOCK_LEN],
-                              const uint key[8], uchar flags) {
+output_t parent_output(const uchar block[BLAKE3_BLOCK_LEN], const uint key[8],
+                       uchar flags) {
   return make_output(key, block, BLAKE3_BLOCK_LEN, 0, flags | PARENT);
 }
 
-inline void blake3_compress_in_place(uint cv[8],
-                                     const uchar block[BLAKE3_BLOCK_LEN],
-                                     uchar block_len, ulong counter,
-                                     uchar flags) {
+void blake3_compress_in_place(uint cv[8], const uchar block[BLAKE3_BLOCK_LEN],
+                              uchar block_len, ulong counter, uchar flags) {
   blake3_compress_in_place_portable(cv, block, block_len, counter, flags);
 }
 
-inline void store32(void *dst, uint w) {
+void store32(void *dst, uint w) {
   uchar *p = (uchar *)dst;
   p[0] = (uchar)(w >> 0);
   p[1] = (uchar)(w >> 8);
@@ -211,13 +208,13 @@ inline void store32(void *dst, uint w) {
   p[3] = (uchar)(w >> 24);
 }
 
-inline void store_cv_words(uchar bytes_out[32], uint cv_words[8]) {
+void store_cv_words(uchar bytes_out[32], uint cv_words[8]) {
   for (int i = 0; i < 8; i++) {
     store32(&bytes_out[i * 4], cv_words[i]);
   }
 }
 
-inline void output_chaining_value(const output_t *self, uchar cv[32]) {
+void output_chaining_value(const output_t *self, uchar cv[32]) {
   uint cv_words[8];
   for (int i = 0; i < 8; i++) {
     cv_words[i] = self->input_cv[i];
@@ -227,7 +224,7 @@ inline void output_chaining_value(const output_t *self, uchar cv[32]) {
   store_cv_words(cv, cv_words);
 }
 
-inline unsigned int highest_one(ulong x) {
+unsigned int highest_one(ulong x) {
   return sizeof(x) * 8 - clz(x); // Use OpenCL's clz (count leading zeros)
 }
 
@@ -242,8 +239,8 @@ void hasher_merge_cv_stack(blake3_hasher *self, ulong total_len) {
   }
 }
 
-inline void hasher_push_cv(blake3_hasher *self, uchar new_cv[BLAKE3_OUT_LEN],
-                           ulong chunk_counter) {
+void hasher_push_cv(blake3_hasher *self, uchar new_cv[BLAKE3_OUT_LEN],
+                    ulong chunk_counter) {
   hasher_merge_cv_stack(self, chunk_counter);
   for (int i = 0; i < BLAKE3_OUT_LEN; i++) {
     self->cv_stack[self->cv_stack_len * BLAKE3_OUT_LEN + i] = new_cv[i];
@@ -251,8 +248,8 @@ inline void hasher_push_cv(blake3_hasher *self, uchar new_cv[BLAKE3_OUT_LEN],
   self->cv_stack_len += 1;
 }
 
-inline size_t chunk_state_fill_buf(blake3_chunk_state *self, const uchar *input,
-                                   size_t input_len) {
+size_t chunk_state_fill_buf(blake3_chunk_state *self, const uchar *input,
+                            size_t input_len) {
   size_t take = BLAKE3_BLOCK_LEN - ((size_t)self->buf_len);
   if (take > input_len) {
     take = input_len;
@@ -312,7 +309,7 @@ void chunk_state_reset(blake3_chunk_state *self, const uint key[8],
   self->buf_len = 0;
 }
 
-inline ulong round_down_to_power_of_2(ulong x) {
+ulong round_down_to_power_of_2(ulong x) {
   x |= x >> 1;
   x |= x >> 2;
   x |= x >> 4;
@@ -343,12 +340,10 @@ void hash_one_portable(const uchar *input, size_t blocks, const uint key[8],
   store_cv_words(out, cv);
 }
 
-inline void blake3_hash_many_portable(const uchar *const *inputs,
-                                      size_t num_inputs, size_t blocks,
-                                      const uint key[8], ulong counter,
-                                      bool increment_counter, uchar flags,
-                                      uchar flags_start, uchar flags_end,
-                                      uchar *out) {
+void blake3_hash_many_portable(const uchar *const *inputs, size_t num_inputs,
+                               size_t blocks, const uint key[8], ulong counter,
+                               bool increment_counter, uchar flags,
+                               uchar flags_start, uchar flags_end, uchar *out) {
   while (num_inputs > 0) {
     hash_one_portable(inputs[0], blocks, key, counter, flags, flags_start,
                       flags_end, out);
@@ -361,19 +356,18 @@ inline void blake3_hash_many_portable(const uchar *const *inputs,
   }
 }
 
-inline void blake3_hash_many(const uchar *const *inputs, size_t num_inputs,
-                             size_t blocks, const uint key[8], ulong counter,
-                             bool increment_counter, uchar flags,
-                             uchar flags_start, uchar flags_end, uchar *out) {
+void blake3_hash_many(const uchar *const *inputs, size_t num_inputs,
+                      size_t blocks, const uint key[8], ulong counter,
+                      bool increment_counter, uchar flags, uchar flags_start,
+                      uchar flags_end, uchar *out) {
   blake3_hash_many_portable(inputs, num_inputs, blocks, key, counter,
                             increment_counter, flags, flags_start, flags_end,
                             out);
 }
 
-inline size_t compress_parents_parallel(const uchar *child_chaining_values,
-                                        size_t num_chaining_values,
-                                        const uint key[8], uchar flags,
-                                        uchar *out) {
+size_t compress_parents_parallel(const uchar *child_chaining_values,
+                                 size_t num_chaining_values, const uint key[8],
+                                 uchar flags, uchar *out) {
   const uchar *parents_array[2];
   size_t parents_array_len = 0;
   while (num_chaining_values - (2 * parents_array_len) >= 2) {
@@ -463,11 +457,10 @@ size_t blake3_compress_subtree_wide(const uchar *input, size_t input_len,
                                    out);
 }
 
-inline void compress_subtree_to_parent_node(const uchar *input,
-                                            size_t input_len, const uint key[8],
-                                            ulong chunk_counter, uchar flags,
-                                            uchar out[2 * BLAKE3_OUT_LEN],
-                                            bool use_tbb) {
+void compress_subtree_to_parent_node(const uchar *input, size_t input_len,
+                                     const uint key[8], ulong chunk_counter,
+                                     uchar flags, uchar out[2 * BLAKE3_OUT_LEN],
+                                     bool use_tbb) {
   uchar cv_array[BLAKE3_OUT_LEN];
   size_t num_cvs = blake3_compress_subtree_wide(
       input, input_len, key, chunk_counter, flags, cv_array, use_tbb);
@@ -553,8 +546,7 @@ void blake3_hasher_update_base(blake3_hasher *self, const void *input,
   }
 }
 
-inline void hasher_init_base(blake3_hasher *self, const uint key[8],
-                             uchar flags) {
+void hasher_init_base(blake3_hasher *self, const uint key[8], uchar flags) {
   for (int i = 0; i < 8; i++) {
     self->key[i] = key[i];
   }
@@ -562,7 +554,7 @@ inline void hasher_init_base(blake3_hasher *self, const uint key[8],
   self->cv_stack_len = 0;
 }
 
-inline void blake3_hasher_init(__private blake3_hasher *self) {
+void blake3_hasher_init(__private blake3_hasher *self) {
   uint local_IV[8];
   for (int i = 0; i < 8; i++) {
     local_IV[i] = IV[i];
@@ -570,16 +562,16 @@ inline void blake3_hasher_init(__private blake3_hasher *self) {
   hasher_init_base(self, local_IV, 0);
 }
 
-inline void blake3_hasher_update(__private blake3_hasher *self,
-                                 const void *input, ulong input_len) {
+void blake3_hasher_update(__private blake3_hasher *self, const void *input,
+                          ulong input_len) {
   bool use_tbb = false;
   blake3_hasher_update_base(self, input, input_len, use_tbb);
 }
 
-inline void blake3_compress_xof_portable(const uint cv[8],
-                                         const uchar block[BLAKE3_BLOCK_LEN],
-                                         uchar block_len, ulong counter,
-                                         uchar flags, uchar out[64]) {
+void blake3_compress_xof_portable(const uint cv[8],
+                                  const uchar block[BLAKE3_BLOCK_LEN],
+                                  uchar block_len, ulong counter, uchar flags,
+                                  uchar out[64]) {
   uint state[16];
   compress_pre(state, cv, block, block_len, counter, flags);
   for (int i = 0; i < 8; i++) {
@@ -588,10 +580,9 @@ inline void blake3_compress_xof_portable(const uint cv[8],
   }
 }
 
-inline void blake3_compress_xof(const uint cv[8],
-                                const uchar block[BLAKE3_BLOCK_LEN],
-                                uchar block_len, ulong counter, uchar flags,
-                                uchar out[64]) {
+void blake3_compress_xof(const uint cv[8], const uchar block[BLAKE3_BLOCK_LEN],
+                         uchar block_len, ulong counter, uchar flags,
+                         uchar out[64]) {
   blake3_compress_xof_portable(cv, block, block_len, counter, flags, out);
 }
 
@@ -610,8 +601,8 @@ void blake3_xof_many(const uint cv[8], const uchar block[BLAKE3_BLOCK_LEN],
   }
 }
 
-inline void output_root_bytes(const output_t *self, ulong seek, uchar *out,
-                              size_t out_len) {
+void output_root_bytes(const output_t *self, ulong seek, uchar *out,
+                       size_t out_len) {
   if (out_len == 0) {
     return;
   }
@@ -745,7 +736,7 @@ double TransformFactor(double x) {
   return fmod(x, granularity) / granularity;
 }
 
-inline double ForComplex(double forComplex) {
+double ForComplex(double forComplex) {
   double complexValue;
   double rounds = 1.0;
 
@@ -762,9 +753,9 @@ inline double ForComplex(double forComplex) {
   return complexValue * rounds;
 }
 
-inline ulong rotl(const ulong x, int k) { return (x << k) | (x >> (64 - k)); }
+ulong rotl(const ulong x, int k) { return (x << k) | (x >> (64 - k)); }
 
-inline ulong xoshiro256_next(__global ulong4 *s) {
+ulong xoshiro256_next(__global ulong4 *s) {
   const ulong result = rotl(s->y * 5, 7) * 9;
   const ulong t = s->y << 17;
   s->z ^= s->x;
@@ -799,7 +790,7 @@ int compare_target(uchar *hash, uchar *target) {
   return 0;
 }
 
-void HoohashMatrixMultiplication(__constant double mat[64][64],
+void HoohashMatrixMultiplication(__global double mat[64][64],
                                  const uchar *hashBytes, uchar *output,
                                  ulong nonce) {
   uchar vector[64] = {0};
@@ -867,7 +858,7 @@ __kernel void Hoohash_hash(const ulong local_size, const ulong nonce_mask,
                            const ulong nonce_fixed,
                            __constant uchar *previous_header,
                            __constant long *timestamp,
-                           __constant double matrix[64][64],
+                           __global double matrix[64][64],
                            __constant uchar *target, const ulong random_type,
                            global void *restrict random_state,
                            volatile global Result *result) {
