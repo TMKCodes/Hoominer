@@ -3,7 +3,7 @@ NVCC = nvcc
 
 # Flags
 CFLAGS = -Xcompiler "-fPIC -g -O0 -Wall -Wextra -DTEST -DDEBUG"
-INCLUDES = -Ialgorithms/blake3/c -I/opt/cuda/include -Iexternal/libmicrohttpd/build/include -Iexternal/json-c/ -I/external/libpciaccess/include/
+INCLUDES = -Ialgorithms/blake3/c -I/opt/cuda/include -I/usr/loca/include
 NVCCFLAGS = $(CFLAGS) $(INCLUDES)
 LDFLAGS = -lcudart_static -lm -lgmp -lOpenCL -L/opt/cuda/lib64 -lcuda -lcudart -lnvidia-ml -lssl -lcrypto
 NVCCFLAGS = --compiler-options "-static-libgcc -static-libstdc++"
@@ -34,10 +34,15 @@ hoohash:
 hoohash-clean:
 	$(MAKE) -C algorithms/hoohash clean
 
+## blake3
+
+# cmake --build c/build --target install
+# sudo cmake --build c/build --target install
+
 # .PHONY: json-c json-c-clean
 
 # json-c:
-# 	cd external/json-c && mkdir -p build && cd build && cmake .. -DBUILD_SHARED_LIBS=OFF  -DCMAKE_POLICY_VERSION_MINIMUM=3.5 && make &&  cd ../../..
+# 	cd external/json-c && mkdir -p build && cd build && cmake .. -DBUILD_SHARED_LIBS=OFF  -DCMAKE_POLICY_VERSION_MINIMUM=3.5 && make && sudo make install && cd ../../..
 # json-c-clean:
 # 	rm -rf external/json-c/build external/json-c/install
 
@@ -49,7 +54,7 @@ hoohash-clean:
 # .PHONY: pciaccess pciaccess-clean
 
 # pciaccess:
-# 	meson setup --reconfigure ./external/libpciaccess/build ./external/libpciaccess --default-library=static --buildtype=release
+# 	meson setup --reconfigure ./external/libpciaccess/build ./external/libpciaccess --default-library=static --buildtype=release --prefix=/usr/local
 # 	meson compile -C ./external/libpciaccess/build
 #   meson install -C ./external/libpciaccess/build
 
@@ -72,10 +77,10 @@ $(BUILD_DIR)/%.cu.o: $(SRC_DIR)/%.cu | $(BUILD_DIR)
 $(MINER_BIN): $(OBJS) | $(BUILD_DIR)
 	$(NVCC) -o $@ $(OBJS) \
 		algorithms/hoohash/build/lib-hoohash.a \
-		algorithms/blake3/c/build/libblake3.a \
+		/usr/local/lib/libblake3.a \
 		/usr/local/lib/libmicrohttpd.a \
-		external/json-c/build/libjson-c.a \
-		/external/libpciaccess/install/lib/libpciaccess.a \
+		/usr/local/lib/libjson-c.a \
+		/usr/local/lib/x86_64-linux-gnu/libpciaccess.a \
 		$(LDFLAGS)
 	chmod +x $@
 
