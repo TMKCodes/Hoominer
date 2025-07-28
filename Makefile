@@ -3,9 +3,9 @@ NVCC = nvcc
 
 # Flags
 CFLAGS = -Xcompiler "-fPIC -g -O0 -Wall -Wextra -DTEST -DDEBUG"
-INCLUDES = -Ialgorithms/blake3/c -I/opt/cuda/include -I/usr/loca/include
+INCLUDES = -Ialgorithms/blake3/c -I/opt/cuda/include -I/usr/local/include -I/usr/include
 NVCCFLAGS = $(CFLAGS) $(INCLUDES)
-LDFLAGS = -lcudart_static -lm -lgmp -lOpenCL -L/opt/cuda/lib64 -lcuda -lcudart -lnvidia-ml -lssl -lcrypto
+LDFLAGS = -lcudart_static -lm -lOpenCL -L/opt/cuda/lib64 -lcuda -lcudart -lnvidia-ml
 NVCCFLAGS = --compiler-options "-static-libgcc -static-libstdc++"
 # Directories
 SRC_DIR = src
@@ -76,6 +76,9 @@ $(BUILD_DIR)/%.cu.o: $(SRC_DIR)/%.cu | $(BUILD_DIR)
 # Link final binary
 $(MINER_BIN): $(OBJS) | $(BUILD_DIR)
 	$(NVCC) -o $@ $(OBJS) \
+		/usr/lib/x86_64-linux-gnu/libssl.a \
+		/usr/lib/x86_64-linux-gnu/libcrypto.a \
+		/usr/lib/x86_64-linux-gnu/libgmp.a \
 		algorithms/hoohash/build/lib-hoohash.a \
 		/usr/local/lib/libblake3.a \
 		/usr/local/lib/libmicrohttpd.a \
