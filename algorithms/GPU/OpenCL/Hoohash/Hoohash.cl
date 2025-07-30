@@ -74,6 +74,7 @@ void chunk_state_init(blake3_chunk_state *self, const uint key[8],
   self->cv[6] = key[6];
   self->cv[7] = key[7];
   self->chunk_counter = 0;
+#pragma unroll
   for (int i = 0; i < BLAKE3_BLOCK_LEN; i++) {
     self->buf[i] = 0;
   }
@@ -95,9 +96,11 @@ output_t make_output(const uint input_cv[8],
                      const uchar block[BLAKE3_BLOCK_LEN], uchar block_len,
                      ulong counter, uchar flags) {
   output_t ret;
+#pragma unroll
   for (int i = 0; i < 8; i++) {
     ret.input_cv[i] = input_cv[i];
   }
+#pragma unroll
   for (int i = 0; i < BLAKE3_BLOCK_LEN; i++) {
     ret.block[i] = block[i];
   }
@@ -163,9 +166,11 @@ void compress_pre(uint state[16], const uint cv[8],
     block_len = BLAKE3_BLOCK_LEN;
   }
   uint block_words[16];
+#pragma unroll
   for (int i = 0; i < 16; i++) {
     block_words[i] = load32(block + 4 * i);
   }
+#pragma unroll
   for (int i = 0; i < 8; i++) {
     state[i] = cv[i];
     state[i + 8] = IV[i];
@@ -174,6 +179,7 @@ void compress_pre(uint state[16], const uint cv[8],
   state[13] = counter_high(counter);
   state[14] = (uint)block_len;
   state[15] = (uint)flags;
+#pragma unroll
   for (int i = 0; i < 7; i++) {
     round_fn(state, block_words, i);
   }
@@ -185,6 +191,7 @@ void blake3_compress_in_place_portable(uint cv[8],
                                        uchar flags) {
   uint state[16];
   compress_pre(state, cv, block, block_len, counter, flags);
+#pragma unroll
   for (int i = 0; i < 8; i++) {
     cv[i] = state[i] ^ state[i + 8];
   }
@@ -209,6 +216,7 @@ void store32(void *dst, uint w) {
 }
 
 void store_cv_words(uchar bytes_out[32], uint cv_words[8]) {
+#pragma unroll
   for (int i = 0; i < 8; i++) {
     store32(&bytes_out[i * 4], cv_words[i]);
   }
@@ -216,6 +224,7 @@ void store_cv_words(uchar bytes_out[32], uint cv_words[8]) {
 
 void output_chaining_value(const output_t *self, uchar cv[32]) {
   uint cv_words[8];
+#pragma unroll
   for (int i = 0; i < 8; i++) {
     cv_words[i] = self->input_cv[i];
   }
@@ -242,6 +251,7 @@ void hasher_merge_cv_stack(blake3_hasher *self, ulong total_len) {
 void hasher_push_cv(blake3_hasher *self, uchar new_cv[BLAKE3_OUT_LEN],
                     ulong chunk_counter) {
   hasher_merge_cv_stack(self, chunk_counter);
+#pragma unroll
   for (int i = 0; i < BLAKE3_OUT_LEN; i++) {
     self->cv_stack[self->cv_stack_len * BLAKE3_OUT_LEN + i] = new_cv[i];
   }
@@ -255,6 +265,7 @@ size_t chunk_state_fill_buf(blake3_chunk_state *self, const uchar *input,
     take = input_len;
   }
   uchar *dest = self->buf + ((size_t)self->buf_len);
+#pragma unroll
   for (size_t i = 0; i < take; i++) {
     dest[i] = input[i];
   }
@@ -275,6 +286,7 @@ void chunk_state_update(blake3_chunk_state *self, const char *input,
           self->flags | chunk_state_maybe_start_flag(self));
       self->blocks_compressed += 1;
       self->buf_len = 0;
+#pragma unroll
       for (int i = 0; i < BLAKE3_BLOCK_LEN; i++) {
         self->buf[i] = 0;
       }
@@ -303,6 +315,7 @@ void chunk_state_reset(blake3_chunk_state *self, const uint key[8],
   self->cv[7] = key[7];
   self->chunk_counter = chunk_counter;
   self->blocks_compressed = 0;
+#pragma unroll
   for (int i = 0; i < BLAKE3_BLOCK_LEN; i++) {
     self->buf[i] = 0;
   }
@@ -323,6 +336,7 @@ void hash_one_portable(const uchar *input, size_t blocks, const uint key[8],
                        ulong counter, uchar flags, uchar flags_start,
                        uchar flags_end, uchar out[BLAKE3_OUT_LEN]) {
   uint cv[8];
+#pragma unroll
   for (int i = 0; i < 8; i++) {
     cv[i] = key[i];
   }
@@ -378,6 +392,7 @@ size_t compress_parents_parallel(const uchar *child_chaining_values,
   blake3_hash_many(parents_array, parents_array_len, 1, key, 0, false,
                    flags | PARENT, 0, 0, out);
   if (num_chaining_values > 2 * parents_array_len) {
+#pragma unroll
     for (size_t i = 0; i < BLAKE3_OUT_LEN; i++) {
       out[parents_array_len * BLAKE3_OUT_LEN + i] =
           child_chaining_values[2 * parents_array_len * BLAKE3_OUT_LEN + i];
@@ -447,6 +462,7 @@ size_t blake3_compress_subtree_wide(const uchar *input, size_t input_len,
                                                 key, right_chunk_counter, flags,
                                                 right_cvs, use_tbb);
   if (left_n == 1) {
+#pragma unroll
     for (size_t i = 0; i < 2 * BLAKE3_OUT_LEN; i++) {
       out[i] = cv_array[i];
     }
@@ -464,6 +480,7 @@ void compress_subtree_to_parent_node(const uchar *input, size_t input_len,
   uchar cv_array[BLAKE3_OUT_LEN];
   size_t num_cvs = blake3_compress_subtree_wide(
       input, input_len, key, chunk_counter, flags, cv_array, use_tbb);
+#pragma unroll
   for (size_t i = 0; i < 2 * BLAKE3_OUT_LEN; i++) {
     out[i] = cv_array[i];
   }
@@ -481,6 +498,7 @@ void blake3_hasher_update_base(blake3_hasher *self, const void *input,
       take = input_len;
     }
     __private uchar private_buffer[BLAKE3_CHUNK_LEN];
+#pragma unroll
     for (size_t i = 0; i < take; i++) {
       private_buffer[i] = input_bytes[i];
     }
@@ -509,6 +527,7 @@ void blake3_hasher_update_base(blake3_hasher *self, const void *input,
       chunk_state_init(&chunk_state, self->key, self->chunk.flags);
       chunk_state.chunk_counter = self->chunk.chunk_counter;
       __private uchar private_buffer[BLAKE3_CHUNK_LEN];
+#pragma unroll
       for (size_t i = 0; i < subtree_len; i++) {
         private_buffer[i] = input_bytes[i];
       }
@@ -521,6 +540,7 @@ void blake3_hasher_update_base(blake3_hasher *self, const void *input,
     } else {
       char cv_pair[2 * BLAKE3_OUT_LEN];
       __private uchar private_buffer[BLAKE3_CHUNK_LEN];
+#pragma unroll
       for (size_t i = 0; i < subtree_len; i++) {
         private_buffer[i] = input_bytes[i];
       }
@@ -538,6 +558,7 @@ void blake3_hasher_update_base(blake3_hasher *self, const void *input,
   }
   if (input_len > 0) {
     __private uchar private_buffer[BLAKE3_CHUNK_LEN];
+#pragma unroll
     for (size_t i = 0; i < input_len; i++) {
       private_buffer[i] = input_bytes[i];
     }
@@ -547,6 +568,7 @@ void blake3_hasher_update_base(blake3_hasher *self, const void *input,
 }
 
 void hasher_init_base(blake3_hasher *self, const uint key[8], uchar flags) {
+#pragma unroll
   for (int i = 0; i < 8; i++) {
     self->key[i] = key[i];
   }
@@ -556,6 +578,7 @@ void hasher_init_base(blake3_hasher *self, const uint key[8], uchar flags) {
 
 void blake3_hasher_init(__private blake3_hasher *self) {
   uint local_IV[8];
+#pragma unroll
   for (int i = 0; i < 8; i++) {
     local_IV[i] = IV[i];
   }
@@ -574,6 +597,7 @@ void blake3_compress_xof_portable(const uint cv[8],
                                   uchar out[64]) {
   uint state[16];
   compress_pre(state, cv, block, block_len, counter, flags);
+#pragma unroll
   for (int i = 0; i < 8; i++) {
     store32(&out[i * 4], state[i] ^ state[i + 8]);
     store32(&out[(i + 8) * 4], state[i + 8] ^ cv[i]);
@@ -615,6 +639,7 @@ void output_root_bytes(const output_t *self, ulong seek, uchar *out,
                         self->flags | ROOT, wide_buf);
     const size_t available_bytes = 64 - offset_within_block;
     const size_t bytes = out_len > available_bytes ? available_bytes : out_len;
+#pragma unroll
     for (size_t i = 0; i < bytes; i++) {
       out[i] = wide_buf[offset_within_block + i];
     }
@@ -634,6 +659,7 @@ void output_root_bytes(const output_t *self, ulong seek, uchar *out,
     blake3_compress_xof(self->input_cv, (const __private uchar *)self->block,
                         self->block_len, output_block_counter,
                         self->flags | ROOT, wide_buf);
+#pragma unroll
     for (size_t i = 0; i < out_len; i++) {
       out[i] = wide_buf[i];
     }
@@ -678,6 +704,7 @@ void blake3_hasher_finalize(const blake3_hasher *self, uchar *out,
 }
 
 void ConvertBytesToUint32Array(uint *H, const uchar *bytes) {
+#pragma unroll
   for (int i = 0; i < 8; i++) {
     H[i] = ((uint)bytes[i * 4] << 24) | ((uint)bytes[i * 4 + 1] << 16) |
            ((uint)bytes[i * 4 + 2] << 8) | (uint)bytes[i * 4 + 3];
@@ -856,12 +883,22 @@ typedef struct {
 
 __kernel void Hoohash_hash(const ulong local_size, const ulong nonce_mask,
                            const ulong nonce_fixed,
-                           __constant uchar *previous_header,
-                           __constant long *timestamp,
+                           __global uchar *previous_header,
+                           __global long *timestamp,
                            __global double matrix[64][64],
-                           __constant uchar *target, const ulong random_type,
+                           __global uchar *target, const ulong random_type,
                            global void *restrict random_state,
                            volatile global Result *result) {
+
+  __local double local_matrix[64][64];
+// Copy matrix to local memory
+#pragma unroll
+  for (int i = get_local_id(0); i < 64 * 64; i += get_local_size(0)) {
+    int row = i / 64;
+    int col = i % 64;
+    local_matrix[row][col] = matrix[row][col];
+  }
+  barrier(CLK_LOCAL_MEM_FENCE);
 #if defined(PAL)
   int nonceId = get_group_id(0) * local_size + get_local_id(0);
 #else
@@ -890,14 +927,14 @@ __kernel void Hoohash_hash(const ulong local_size, const ulong nonce_mask,
   // Compute BLAKE3 hash
   blake3_hasher hasher;
   blake3_hasher_init(&hasher);
-  uchar private_previous_header[DOMAIN_HASH_SIZE];
-#pragma unroll
-  for (int i = 0; i < DOMAIN_HASH_SIZE; i++)
-    private_previous_header[i] = previous_header[i];
-  blake3_hasher_update(&hasher, private_previous_header, DOMAIN_HASH_SIZE);
-  uchar private_timestamp[8];
-  *(long *)private_timestamp = *timestamp;
-  blake3_hasher_update(&hasher, private_timestamp, 8);
+  // uchar private_previous_header[DOMAIN_HASH_SIZE];
+  // #pragma unroll
+  //   for (int i = 0; i < DOMAIN_HASH_SIZE; i++)
+  //     private_previous_header[i] = previous_header[i];
+  blake3_hasher_update(&hasher, previous_header, DOMAIN_HASH_SIZE);
+  // uchar private_timestamp[8];
+  // *(long *)private_timestamp = *timestamp;
+  blake3_hasher_update(&hasher, timestamp, 8);
   uchar zeroes[DOMAIN_HASH_SIZE] = {0};
   blake3_hasher_update(&hasher, zeroes, DOMAIN_HASH_SIZE);
   blake3_hasher_update(&hasher, &nonce, sizeof(nonce));
@@ -905,39 +942,39 @@ __kernel void Hoohash_hash(const ulong local_size, const ulong nonce_mask,
   blake3_hasher_finalize(&hasher, first_pass, DOMAIN_HASH_SIZE);
 
   // Matrix multiplication
-  uchar private_final_hash[DOMAIN_HASH_SIZE];
+  // uchar private_final_hash[DOMAIN_HASH_SIZE];
   uchar vector[64] = {0};
   double product[64] = {0};
-  HoohashMatrixMultiplication(matrix, first_pass, private_final_hash, nonce);
+  HoohashMatrixMultiplication(matrix, first_pass, final_hash, nonce);
 
   // Compare with target
-  uchar private_target[DOMAIN_HASH_SIZE];
-#pragma unroll
-  for (int i = 0; i < DOMAIN_HASH_SIZE; i++)
-    private_target[i] = target[i];
+  //   uchar private_target[DOMAIN_HASH_SIZE];
+  // #pragma unroll
+  //   for (int i = 0; i < DOMAIN_HASH_SIZE; i++)
+  //     private_target[i] = target[i];
 
   uchar reversed_hash[DOMAIN_HASH_SIZE];
 #pragma unroll
   for (size_t i = 0; i < DOMAIN_HASH_SIZE; i++) {
-    reversed_hash[i] = private_final_hash[DOMAIN_HASH_SIZE - 1 - i];
+    reversed_hash[i] = final_hash[DOMAIN_HASH_SIZE - 1 - i];
   }
-  if (compare_target(reversed_hash, private_target) <= 0) {
+  if (compare_target(reversed_hash, target) <= 0) {
     // printf("Final nonce %lu\n", nonce);
     // print_hash(private_final_hash);
     // print_hash(reversed_hash);
-    // print_hash(private_target);
-    Result private_result;
-    private_result.nonce = nonce;
-#pragma unroll
-    for (int i = 0; i < 32; i++) {
-      private_result.hash[i] = private_final_hash[i];
-    }
+    // // print_hash(private_target);
+    // Result private_result;
+    // private_result.nonce = nonce;
+    // #pragma unroll
+    // for (int i = 0; i < 32; i++) {
+    //   private_result.hash[i] = private_final_hash[i];
+    // }
 
     // Simplified atomic update
-    if (atom_cmpxchg(&result->nonce, 0, private_result.nonce) == 0) {
+    if (atom_cmpxchg(&result->nonce, 0, result.nonce) == 0) {
 #pragma unroll
       for (int i = 0; i < 32; i++) {
-        result->hash[i] = private_result.hash[i];
+        result->hash[i] = result.hash[i];
       }
     }
   }
