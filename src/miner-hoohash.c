@@ -270,8 +270,18 @@ void *mining_opencl_thread(void *arg)
       if (!job_valid)
         break;
 
+      // struct timespec start_time, end_time;
+      // clock_gettime(CLOCK_MONOTONIC, &start_time);
       OpenCLResult result = {0};
       cl_int status = run_opencl_hoohash_kernel(&ctx->opencl_resources[mt->threadIndex], global_work_size, local_work_size, state.PrevHeader, ms->global_target, state.mat, state.Timestamp, nonce_mask, nonce_fixed, &result);
+
+      // clock_gettime(CLOCK_MONOTONIC, &end_time);
+
+      // long elapsed_ns = (end_time.tv_sec - start_time.tv_sec) * 1000000000L +
+      //                   (end_time.tv_nsec - start_time.tv_nsec);
+      // double elapsed_ms = elapsed_ns / 1e6;
+
+      // printf("Thread %d: Kernel run time: %.3f ms\n", mt->threadIndex, elapsed_ms);
 
       pthread_mutex_lock(&ctx->hd->hashrate_mutex);
       opencl_reporting_device->nonces_processed += global_work_size;
