@@ -90,8 +90,6 @@ int submit_mining_solution(int sockfd, const char *worker, const char *job_id, u
   pthread_cond_broadcast(&ms->job_queue.queue_cond);
   pthread_mutex_unlock(&ms->job_queue.queue_mutex);
 
-  printf("Submitting job %s, age: %ld seconds\n", job_id, time(NULL) - ms->job_queue.jobs[ms->job_queue.head].timestamp);
-
   json_object *req = json_object_new_object();
   json_object_object_add(req, "id", json_object_new_int(1));
   json_object_object_add(req, "method", json_object_new_string("mining.submit"));
@@ -229,6 +227,8 @@ void *mining_cpu_thread(void *arg)
         uint64_t current_time_ms = now.tv_sec * 1000ULL + now.tv_nsec / 1000000ULL;
         if (current_job.timestamp * 1000ULL + JOB_MAX_AGE > current_time_ms)
         {
+          if (ctx->config->debug == 1)
+            printf("Submitting solution for job %s", current_job_id);
           submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, state.Nonce, result, ms, ctx, reporting_index);
           current_job.completed = 1;
           current_job.running = 0;
@@ -279,7 +279,8 @@ void *mining_opencl_thread(void *arg)
 
     struct timespec start_time, end_time;
     clock_gettime(CLOCK_MONOTONIC, &start_time);
-    printf("Starting job %s\n", current_job_id);
+    if (ctx->config->debug == 1)
+      printf("Starting job %s\n", current_job_id);
     int nonces_processed_for_job = 0;
 
     while (ctx->running)
@@ -330,6 +331,8 @@ void *mining_opencl_thread(void *arg)
           uint64_t current_time_ms = now.tv_sec * 1000ULL + now.tv_nsec / 1000000ULL;
           if (current_job.timestamp * 1000ULL + JOB_MAX_AGE > current_time_ms)
           {
+            if (ctx->config->debug == 1)
+              printf("Submitting solution for job %s", current_job_id);
             submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, result.nonce, result.hash, ms, ctx, reporting_index);
             current_job.completed = 1;
             current_job.running = 0;
@@ -345,7 +348,8 @@ void *mining_opencl_thread(void *arg)
     long elapsed_ns = (end_time.tv_sec - start_time.tv_sec) * 1000000000L +
                       (end_time.tv_nsec - start_time.tv_nsec);
     double elapsed_ms = elapsed_ns / 1e6;
-    printf("Job %s: runtime: %.3f ms, and nonces processed %d\n", current_job_id, elapsed_ms, nonces_processed_for_job);
+    if (ctx->config->debug == 1)
+      printf("Job %s: runtime: %.3f ms, and nonces processed %d\n", current_job_id, elapsed_ms, nonces_processed_for_job);
   }
 
   free(current_job_id);
@@ -378,10 +382,11 @@ void *mining_cuda_thread(void *arg)
     memcpy(state.PrevHeader, current_job.header, DOMAIN_HASH_SIZE);
     state.Timestamp = current_job.timestamp;
     memcpy(state.mat, current_job.matrix, sizeof(double) * 64 * 64);
-
     struct timespec start_time, end_time;
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
-    printf("Starting job %s\n", current_job_id);
+    if (ctx->config->debug == 1)
+      clock_gettime(CLOCK_MONOTONIC, &start_time);
+    if (ctx->config->debug == 1)
+      printf("Starting job %s\n", current_job_id);
     int nonces_processed_for_job = 0;
 
     while (ctx->running)
@@ -427,6 +432,8 @@ void *mining_cuda_thread(void *arg)
         uint64_t current_time_ms = now.tv_sec * 1000ULL + now.tv_nsec / 1000000ULL;
         if (current_job.timestamp * 1000ULL + JOB_MAX_AGE > current_time_ms)
         {
+          if (ctx->config->debug == 1)
+            printf("Submitting solution for job %s", current_job_id);
           submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, result.nonce, result.hash, ms, ctx, reporting_index);
           current_job.completed = 1;
           current_job.running = 0;
@@ -441,7 +448,9 @@ void *mining_cuda_thread(void *arg)
     long elapsed_ns = (end_time.tv_sec - start_time.tv_sec) * 1000000000L +
                       (end_time.tv_nsec - start_time.tv_nsec);
     double elapsed_ms = elapsed_ns / 1e6;
-    printf("Job %s: runtime: %.3f ms, and nonces processed %d\n", current_job_id, elapsed_ms, nonces_processed_for_job);
+
+    if (ctx->config->debug == 1)
+      printf("Job %s: runtime: %.3f ms, and nonces processed %d\n", current_job_id, elapsed_ms, nonces_processed_for_job);
   }
 
   free(current_job_id);

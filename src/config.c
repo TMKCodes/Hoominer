@@ -8,6 +8,7 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
   config->disable_cuda = false;
   config->list_gpus = false;
   config->cpu_threads = 0;
+  config->debug = false;
   bool gpus_selected = false;
   for (int i = 1; i < argc; i++)
   {
@@ -27,6 +28,8 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
       config->disable_gpu = true;
     else if (!strcmp(argv[i], "--list-gpus"))
       config->list_gpus = true;
+    else if (!strcmp(argv[i], "--debug"))
+      config->debug = true;
     else if (!strcmp(argv[i], "--cpu-threads") && i + 1 < argc)
       config->cpu_threads = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--gpu-ids") && i + 1 < argc)
@@ -92,6 +95,7 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
       printf("--disable-gpu\t\t\t\t\tDisable GPU mining completely.\n");
       printf("--disable-opencl\t\t\t\tDisable OpenCL mining.\n");
       printf("--disable-cuda\t\t\t\t\tDisable CUDA mining.\n");
+      printf("--debug\t\t\t\t\t\tMore information displayed.\n");
       printf("\nCPU parameters: \n");
       printf("--cpu-threads <thread-count>\t\t\tSelect how many CPU threads to create.\n");
       printf("\nGPU parameters: \n");

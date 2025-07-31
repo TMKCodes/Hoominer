@@ -21,6 +21,7 @@ struct HoominerConfig
   char *selected_gpus_str;
   bool ssl_enabled;
   bool list_gpus;
+  bool debug;
   int selected_gpus[256];
   int selected_gpus_num;
 };
