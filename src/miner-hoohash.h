@@ -84,6 +84,7 @@ struct MiningJob
   char *job_id;
   uint8_t header[DOMAIN_HASH_SIZE];
   uint64_t timestamp;
+  double matrix[64][64];
   volatile int running;
   int thread_index;
 };
@@ -111,7 +112,6 @@ struct MiningThread
 };
 
 MiningState *init_mining_state();
-void cleanup_mining_state(MiningState *state);
 void uint64_to_little_endian(uint64_t value, uint8_t *buffer);
 uint64_t little_endian_to_uint64(const uint8_t *buffer);
 void smallJobHeader(const uint64_t *ids, uint8_t *headerData);

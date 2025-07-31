@@ -90,7 +90,7 @@ int submit_mining_solution(int sockfd, const char *worker, const char *job_id, u
   pthread_cond_broadcast(&ms->job_queue.queue_cond);
   pthread_mutex_unlock(&ms->job_queue.queue_mutex);
 
-  // printf("Submitting job %s, age: %ld seconds\n", job_id, time(NULL) - ms->job_queue.jobs[ms->job_queue.head].timestamp);
+  printf("Submitting job %s, age: %ld seconds\n", job_id, time(NULL) - ms->job_queue.jobs[ms->job_queue.head].timestamp);
 
   json_object *req = json_object_new_object();
   json_object_object_add(req, "id", json_object_new_int(1));
@@ -132,17 +132,15 @@ int submit_mining_solution(int sockfd, const char *worker, const char *job_id, u
 static int get_current_job(MiningState *ms, QueuedJob *job, char **current_job_id)
 {
   pthread_mutex_lock(&ms->job_queue.queue_mutex);
-  while (ms->job_queue.head == ms->job_queue.tail || ms->job_queue.jobs[ms->job_queue.head].completed)
+  if (ms->job_queue.head == ms->job_queue.tail)
   {
-    pthread_cond_wait(&ms->job_queue.queue_cond, &ms->job_queue.queue_mutex);
-    if (ms->job_queue.head == ms->job_queue.tail && !ms->job_queue.jobs[ms->job_queue.head].running)
-    {
-      pthread_mutex_unlock(&ms->job_queue.queue_mutex);
-      return 0;
-    }
+    // Queue is empty
+    pthread_mutex_unlock(&ms->job_queue.queue_mutex);
+    return 0;
   }
-
-  *job = ms->job_queue.jobs[ms->job_queue.head];
+  // Get the most recent job (at tail - 1)
+  int tail_idx = (ms->job_queue.tail - 1 + JOB_QUEUE_SIZE) % JOB_QUEUE_SIZE;
+  *job = ms->job_queue.jobs[tail_idx];
   if (*current_job_id == NULL || strcmp(*current_job_id, job->job_id) != 0)
   {
     free(*current_job_id);
@@ -154,8 +152,9 @@ static int get_current_job(MiningState *ms, QueuedJob *job, char **current_job_i
       return 0;
     }
   }
+  int job_valid = job->running && !job->completed;
   pthread_mutex_unlock(&ms->job_queue.queue_mutex);
-  return job->running && !job->completed;
+  return job_valid;
 }
 
 void *mining_cpu_thread(void *arg)
@@ -185,14 +184,26 @@ void *mining_cpu_thread(void *arg)
     state.Timestamp = current_job.timestamp;
     memcpy(state.mat, current_job.matrix, sizeof(double) * 64 * 64);
 
+    struct timespec start_time, end_time;
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
+    printf("Starting job %s\n", current_job.job_id);
+    int nonces_processed_for_job = 0;
+
     while (ctx->running)
     {
 
       pthread_mutex_lock(&ms->job_queue.queue_mutex);
-      int job_valid = ms->job_queue.head != ms->job_queue.tail &&
-                      ms->job_queue.jobs[ms->job_queue.head].running &&
-                      !ms->job_queue.jobs[ms->job_queue.head].completed &&
-                      strcmp(ms->job_queue.jobs[ms->job_queue.head].job_id, current_job_id) == 0;
+      // Check if the current job is still valid
+      int job_valid = 0;
+      int tail_idx = (ms->job_queue.tail - 1 + JOB_QUEUE_SIZE) % JOB_QUEUE_SIZE;
+      if (ms->job_queue.head != ms->job_queue.tail &&
+          ms->job_queue.jobs[tail_idx].job_id &&
+          strcmp(ms->job_queue.jobs[tail_idx].job_id, current_job_id) == 0 &&
+          ms->job_queue.jobs[tail_idx].running &&
+          !ms->job_queue.jobs[tail_idx].completed)
+      {
+        job_valid = 1;
+      }
       pthread_mutex_unlock(&ms->job_queue.queue_mutex);
 
       if (!job_valid)
@@ -204,6 +215,7 @@ void *mining_cpu_thread(void *arg)
 
       pthread_mutex_lock(&ctx->hd->hashrate_mutex);
       cpu_reporting_device->nonces_processed++;
+      nonces_processed_for_job++;
       pthread_mutex_unlock(&ctx->hd->hashrate_mutex);
 
       pthread_mutex_lock(&ms->target_mutex);
@@ -218,11 +230,19 @@ void *mining_cpu_thread(void *arg)
         if (current_job.timestamp * 1000ULL + JOB_MAX_AGE > current_time_ms)
         {
           submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, state.Nonce, result, ms, ctx, reporting_index);
+          current_job.completed = 1;
+          current_job.running = 0;
           break;
         }
       }
       nonce += step;
     }
+    current_job.running = 0;
+    clock_gettime(CLOCK_MONOTONIC, &end_time);
+    long elapsed_ns = (end_time.tv_sec - start_time.tv_sec) * 1000000000L +
+                      (end_time.tv_nsec - start_time.tv_nsec);
+    double elapsed_ms = elapsed_ns / 1e6;
+    printf("Job %s: runtime: %.3f ms, and nonces processed %d\n", current_job_id, elapsed_ms, nonces_processed_for_job);
   }
 
   free(current_job_id);
@@ -257,34 +277,37 @@ void *mining_opencl_thread(void *arg)
     state.Timestamp = current_job.timestamp;
     memcpy(state.mat, current_job.matrix, sizeof(double) * 64 * 64);
 
+    struct timespec start_time, end_time;
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
+    printf("Starting job %s\n", current_job_id);
+    int nonces_processed_for_job = 0;
+
     while (ctx->running)
     {
 
       pthread_mutex_lock(&ms->job_queue.queue_mutex);
-      int job_valid = ms->job_queue.head != ms->job_queue.tail &&
-                      ms->job_queue.jobs[ms->job_queue.head].running &&
-                      !ms->job_queue.jobs[ms->job_queue.head].completed &&
-                      strcmp(ms->job_queue.jobs[ms->job_queue.head].job_id, current_job_id) == 0;
+      // Check if the current job is still valid
+      int job_valid = 0;
+      int tail_idx = (ms->job_queue.tail - 1 + JOB_QUEUE_SIZE) % JOB_QUEUE_SIZE;
+      if (ms->job_queue.head != ms->job_queue.tail &&
+          ms->job_queue.jobs[tail_idx].job_id &&
+          strcmp(ms->job_queue.jobs[tail_idx].job_id, current_job_id) == 0 &&
+          ms->job_queue.jobs[tail_idx].running &&
+          !ms->job_queue.jobs[tail_idx].completed)
+      {
+        job_valid = 1;
+      }
       pthread_mutex_unlock(&ms->job_queue.queue_mutex);
 
       if (!job_valid)
         break;
 
-      // struct timespec start_time, end_time;
-      // clock_gettime(CLOCK_MONOTONIC, &start_time);
       OpenCLResult result = {0};
       cl_int status = run_opencl_hoohash_kernel(&ctx->opencl_resources[mt->threadIndex], global_work_size, local_work_size, state.PrevHeader, ms->global_target, state.mat, state.Timestamp, nonce_mask, nonce_fixed, &result);
 
-      // clock_gettime(CLOCK_MONOTONIC, &end_time);
-
-      // long elapsed_ns = (end_time.tv_sec - start_time.tv_sec) * 1000000000L +
-      //                   (end_time.tv_nsec - start_time.tv_nsec);
-      // double elapsed_ms = elapsed_ns / 1e6;
-
-      // printf("Thread %d: Kernel run time: %.3f ms\n", mt->threadIndex, elapsed_ms);
-
       pthread_mutex_lock(&ctx->hd->hashrate_mutex);
       opencl_reporting_device->nonces_processed += global_work_size;
+      nonces_processed_for_job += global_work_size;
       pthread_mutex_unlock(&ctx->hd->hashrate_mutex);
 
       if (status != CL_SUCCESS)
@@ -296,7 +319,6 @@ void *mining_opencl_thread(void *arg)
 
       if (result.nonce != 0)
       {
-
         pthread_mutex_lock(&ms->target_mutex);
         int meets_target = compare_target(result.hash, ms->global_target, DOMAIN_HASH_SIZE);
         pthread_mutex_unlock(&ms->target_mutex);
@@ -309,6 +331,8 @@ void *mining_opencl_thread(void *arg)
           if (current_job.timestamp * 1000ULL + JOB_MAX_AGE > current_time_ms)
           {
             submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, result.nonce, result.hash, ms, ctx, reporting_index);
+            current_job.completed = 1;
+            current_job.running = 0;
             break;
           }
         }
@@ -316,6 +340,12 @@ void *mining_opencl_thread(void *arg)
 
       nonce_fixed += global_work_size;
     }
+    current_job.running = 0;
+    clock_gettime(CLOCK_MONOTONIC, &end_time);
+    long elapsed_ns = (end_time.tv_sec - start_time.tv_sec) * 1000000000L +
+                      (end_time.tv_nsec - start_time.tv_nsec);
+    double elapsed_ms = elapsed_ns / 1e6;
+    printf("Job %s: runtime: %.3f ms, and nonces processed %d\n", current_job_id, elapsed_ms, nonces_processed_for_job);
   }
 
   free(current_job_id);
@@ -349,13 +379,25 @@ void *mining_cuda_thread(void *arg)
     state.Timestamp = current_job.timestamp;
     memcpy(state.mat, current_job.matrix, sizeof(double) * 64 * 64);
 
+    struct timespec start_time, end_time;
+    clock_gettime(CLOCK_MONOTONIC, &start_time);
+    printf("Starting job %s\n", current_job_id);
+    int nonces_processed_for_job = 0;
+
     while (ctx->running)
     {
       pthread_mutex_lock(&ms->job_queue.queue_mutex);
-      int job_valid = ms->job_queue.head != ms->job_queue.tail &&
-                      ms->job_queue.jobs[ms->job_queue.head].running &&
-                      !ms->job_queue.jobs[ms->job_queue.head].completed &&
-                      strcmp(ms->job_queue.jobs[ms->job_queue.head].job_id, current_job_id) == 0;
+      // Check if the current job is still valid
+      int job_valid = 0;
+      int tail_idx = (ms->job_queue.tail - 1 + JOB_QUEUE_SIZE) % JOB_QUEUE_SIZE;
+      if (ms->job_queue.head != ms->job_queue.tail &&
+          ms->job_queue.jobs[tail_idx].job_id &&
+          strcmp(ms->job_queue.jobs[tail_idx].job_id, current_job_id) == 0 &&
+          ms->job_queue.jobs[tail_idx].running &&
+          !ms->job_queue.jobs[tail_idx].completed)
+      {
+        job_valid = 1;
+      }
       pthread_mutex_unlock(&ms->job_queue.queue_mutex);
 
       if (!job_valid)
@@ -368,6 +410,7 @@ void *mining_cuda_thread(void *arg)
 
       pthread_mutex_lock(&ctx->hd->hashrate_mutex);
       cuda_reporting_device->nonces_processed += hashes_per_cuda_call;
+      nonces_processed_for_job += hashes_per_cuda_call;
       pthread_mutex_unlock(&ctx->hd->hashrate_mutex);
 
       if (error != 0)
@@ -385,12 +428,20 @@ void *mining_cuda_thread(void *arg)
         if (current_job.timestamp * 1000ULL + JOB_MAX_AGE > current_time_ms)
         {
           submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, result.nonce, result.hash, ms, ctx, reporting_index);
+          current_job.completed = 1;
+          current_job.running = 0;
           break;
         }
       }
 
       nonce_fixed += hashes_per_cuda_call;
     }
+    current_job.running = 0;
+    clock_gettime(CLOCK_MONOTONIC, &end_time);
+    long elapsed_ns = (end_time.tv_sec - start_time.tv_sec) * 1000000000L +
+                      (end_time.tv_nsec - start_time.tv_nsec);
+    double elapsed_ms = elapsed_ns / 1e6;
+    printf("Job %s: runtime: %.3f ms, and nonces processed %d\n", current_job_id, elapsed_ms, nonces_processed_for_job);
   }
 
   free(current_job_id);
@@ -407,6 +458,7 @@ int start_mining_threads(StratumContext *ctx, MiningState *ms)
       printf("start_mining_threads: Failed to allocate mining_threads\n");
       return 1;
     }
+    printf("Starting %d CPU threads", ms->num_opencl_threads);
     for (int i = 0; i < ms->num_cpu_threads; i++)
     {
       MiningThread *mt = malloc(sizeof(MiningThread));
@@ -436,6 +488,7 @@ int start_mining_threads(StratumContext *ctx, MiningState *ms)
         printf("start_mining_threads: Failed to allocate mining_threads\n");
         return 1;
       }
+      printf("Starting %d OpenCL threads", ms->num_opencl_threads);
       for (int i = 0; i < ms->num_opencl_threads; i++)
       {
         MiningThread *mt = malloc(sizeof(MiningThread));
@@ -463,6 +516,7 @@ int start_mining_threads(StratumContext *ctx, MiningState *ms)
         printf("start_mining_threads: Failed to allocate mining_threads\n");
         return 1;
       }
+      printf("Starting %d CUDA threads", ms->num_opencl_threads);
       for (int i = 0; i < ms->num_cuda_threads; i++)
       {
         MiningThread *mt = malloc(sizeof(MiningThread));

@@ -124,8 +124,8 @@ cl_int calculate_work_sizes(OpenCLResources *resource)
   cl_uint compute_units;
   clGetDeviceInfo(resource->device, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cl_uint), &compute_units, NULL);
   resource->max_global_work_size = compute_units * resource->max_work_group_size;
-  // printf("Max local work size: %ld\n", resource->max_work_group_size);
-  // printf("Max global work size: %ld\n", resource->max_global_work_size);
+  printf("Max local work size: %ld\n", resource->max_work_group_size);
+  printf("Max global work size: %ld\n", resource->max_global_work_size);
   return CL_SUCCESS;
 }
 

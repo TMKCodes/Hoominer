@@ -199,6 +199,7 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
             free(ms->global_target);
           double difficulty = json_object_get_double(diff);
           ms->global_target = target_from_pool_difficulty(difficulty, DOMAIN_HASH_SIZE);
+          printf("Received new difficulty %f\n", difficulty);
           pthread_mutex_unlock(&ms->target_mutex);
         }
       }
@@ -306,6 +307,7 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
         new_job->job_id = strdup(jid);
         if (new_job->job_id)
         {
+          printf("Received new job %s\n", new_job->job_id);
           memcpy(new_job->header, header, DOMAIN_HASH_SIZE);
           new_job->timestamp = timestamp_int;
           new_job->running = 1;
