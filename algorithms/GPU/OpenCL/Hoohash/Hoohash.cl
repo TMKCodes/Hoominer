@@ -934,7 +934,8 @@ __kernel void Hoohash_hash(const ulong local_size, const ulong nonce_mask,
                            __global double matrix[64][64],
                            __global uchar *target, const ulong random_type,
                            global void *restrict random_state,
-                           volatile global Result *result) {
+                           volatile global Result *result
+                           vloatile global uint nonces_processed) {
 #if defined(PAL)
   int nonceId = get_group_id(0) * local_size + get_local_id(0);
 #else
@@ -977,7 +978,7 @@ __kernel void Hoohash_hash(const ulong local_size, const ulong nonce_mask,
   uchar vector[64] = {0};
   double product[64] = {0};
   HoohashMatrixMultiplication(matrix, first_pass, final_hash, nonce);
-
+  nonces_processed++;
   uchar reversed_hash[DOMAIN_HASH_SIZE];
 #pragma unroll
   for (size_t i = 0; i < DOMAIN_HASH_SIZE; i++) {
