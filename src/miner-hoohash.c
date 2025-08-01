@@ -427,7 +427,7 @@ void *mining_cuda_thread(void *arg)
       nonces_processed = 0;
       int error = run_cuda_hoohash_kernel(&ctx->cuda_resources[mt->threadIndex],
                                           state.PrevHeader, ms->global_target, state.mat, state.Timestamp,
-                                          nonce_mask, nonce_fixed, &result, nonces_processed);
+                                          nonce_mask, nonce_fixed, &result, &nonces_processed);
 
       pthread_mutex_lock(&ctx->hd->hashrate_mutex);
       cuda_reporting_device->nonces_processed += nonces_processed;
