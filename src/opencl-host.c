@@ -648,7 +648,7 @@ cl_int load_opencl_kernel_binary(OpenCLResources *resource, const char *binary_f
 
 cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work_size, cl_ulong local_work_size,
                                  unsigned char *previous_header, unsigned char *target, double matrix[64][64],
-                                 unsigned long timestamp, cl_ulong nonce_mask, cl_ulong nonce_fixed, cl_uint nonces_processed, OpenCLResult *result)
+                                 unsigned long timestamp, cl_ulong nonce_mask, cl_ulong nonce_fixed, OpenCLResult *result, cl_uint nonces_processed)
 {
   cl_int err;
   cl_event write_events[5], kernel_event, read_event;
