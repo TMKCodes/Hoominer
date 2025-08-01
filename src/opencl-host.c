@@ -2,6 +2,17 @@
 
 #include "opencl-host.h"
 
+static uint64_t fnv1a64(const unsigned char *data, size_t len)
+{
+  uint64_t hash = 0xcbf29ce484222325ULL;
+  for (size_t i = 0; i < len; ++i)
+  {
+    hash ^= data[i];
+    hash *= 0x100000001b3ULL;
+  }
+  return hash;
+}
+
 static uint64_t splitmix64(uint64_t *state)
 {
   uint64_t z = (*state += 0x9e3779b97f4a7c15ULL);
@@ -10,15 +21,41 @@ static uint64_t splitmix64(uint64_t *state)
   return z ^ (z >> 31);
 }
 
+// Initialize xoshiro256** state using a 64-bit seed
+void xoshiro256_init(OpenCLResources *resource, uint64_t seed)
+{
+  for (size_t i = 0; i < 4; i++)
+  {
+    resource->random_state.x = splitmix64(&seed);
+    resource->random_state.y = splitmix64(&seed);
+    resource->random_state.z = splitmix64(&seed);
+    resource->random_state.w = splitmix64(&seed);
+  }
+}
+
+void create_xoshiro_random_state(OpenCLResources *resource,
+                                 unsigned char *previous_header,
+                                 ulong timestamp,
+                                 int thread_index)
+{
+  uint64_t base_seed = fnv1a64(previous_header, 80);
+
+  // Combine with timestamp and thread ID for uniqueness
+  uint64_t seed = base_seed ^ (thread_index * 0x9e3779b97f4a7c13ULL) ^ (timestamp * 0x94d049bb133111ebULL);
+
+  // Initialize RNG state
+  xoshiro256_init(resource, seed);
+}
+
 // cl_int create_xoshiro_random_state(OpenCLResources *resource)
 // {
-//   // if (posix_memalign((void **)&resource->random_state, 64, sizeof(cl_ulong4)) != 0)
-//   // {
-//   //   fprintf(stderr, "Random state allocation failed for %s\n", resource->device_name);
-//   //   clReleaseKernel(resource->kernel);
-//   //   clReleaseProgram(resource->program);
-//   //   return CL_OUT_OF_HOST_MEMORY;
-//   // }
+//   if (posix_memalign((void **)&resource->random_state, 64, sizeof(cl_ulong4)) != 0)
+//   {
+//     fprintf(stderr, "Random state allocation failed for %s\n", resource->device_name);
+//     clReleaseKernel(resource->kernel);
+//     clReleaseProgram(resource->program);
+//     return CL_OUT_OF_HOST_MEMORY;
+//   }
 
 //   // Initialize random state for xoshiro256** with high-quality seeds
 //   uint64_t seed_base;
@@ -42,66 +79,66 @@ static uint64_t splitmix64(uint64_t *state)
 //   resource->random_state.z = splitmix64(&seed_base);
 //   resource->random_state.w = splitmix64(&seed_base);
 
-//   // // Use splitmix64 to generate unique seeds for each work item
-//   // for (size_t i = 0; i < resource->; i++)
-//   // {
-//   //   uint64_t state = seed_base[0] ^ (i * 0x9e3779b97f4a7c15ULL); // Mix index with base seed
-//   //   state ^= seed_base[1];
+//   // Use splitmix64 to generate unique seeds for each work item
+//   for (size_t i = 0; i < resource->; i++)
+//   {
+//     uint64_t state = seed_base[0] ^ (i * 0x9e3779b97f4a7c15ULL); // Mix index with base seed
+//     state ^= seed_base[1];
 
-//   //   // Generate four 64-bit values for xoshiro256** state
-//   //   resource->random_state[i].s[0] = splitmix64(&state);
-//   //   resource->random_state[i].s[1] = splitmix64(&state);
-//   //   resource->random_state[i].s[2] = splitmix64(&state);
-//   //   resource->random_state[i].s[3] = splitmix64(&state);
+//     // Generate four 64-bit values for xoshiro256** state
+//     resource->random_state[i].s[0] = splitmix64(&state);
+//     resource->random_state[i].s[1] = splitmix64(&state);
+//     resource->random_state[i].s[2] = splitmix64(&state);
+//     resource->random_state[i].s[3] = splitmix64(&state);
 
-//   //   // Ensure non-zero state to avoid degenerate xoshiro state
-//   //   if (resource->random_state[i].s[0] == 0 && NULL == 0 &&
-//   //       resource->random_state[i].s[2] == 0 && NULL == 0)
-//   //   {
-//   //     resource->random_state[i].s[0] = 0x9e3779b97f4a7c15ULL; // Arbitrary non-zero value
-//   //   }
-//   // }
+//     // Ensure non-zero state to avoid degenerate xoshiro state
+//     if (resource->random_state[i].s[0] == 0 && NULL == 0 &&
+//         resource->random_state[i].s[2] == 0 && NULL == 0)
+//     {
+//       resource->random_state[i].s[0] = 0x9e3779b97f4a7c15ULL; // Arbitrary non-zero value
+//     }
+//   }
 //   return CL_SUCCESS;
 // }
 
-cl_int create_xoshiro_random_state(OpenCLResources *resource)
-{
-  uint64_t seed_base[2];
-  int fd = open("/dev/urandom", O_RDONLY);
-  if (fd >= 0)
-  {
-    if (read(fd, seed_base, sizeof(seed_base)) != sizeof(seed_base))
-    {
-      fprintf(stderr, "Warning: Failed to read full entropy from /dev/urandom\n");
-      seed_base[0] = (uint64_t)time(NULL);
-      seed_base[1] = (uint64_t)clock();
-    }
-    close(fd);
-  }
-  else
-  {
-    fprintf(stderr, "Warning: /dev/urandom unavailable, using fallback seed\n");
-    seed_base[0] = (uint64_t)time(NULL);
-    seed_base[1] = (uint64_t)clock();
-  }
+// cl_int create_xoshiro_random_state(OpenCLResources *resource)
+// {
+//   uint64_t seed_base[2];
+//   int fd = open("/dev/urandom", O_RDONLY);
+//   if (fd >= 0)
+//   {
+//     if (read(fd, seed_base, sizeof(seed_base)) != sizeof(seed_base))
+//     {
+//       fprintf(stderr, "Warning: Failed to read full entropy from /dev/urandom\n");
+//       seed_base[0] = (uint64_t)time(NULL);
+//       seed_base[1] = (uint64_t)clock();
+//     }
+//     close(fd);
+//   }
+//   else
+//   {
+//     fprintf(stderr, "Warning: /dev/urandom unavailable, using fallback seed\n");
+//     seed_base[0] = (uint64_t)time(NULL);
+//     seed_base[1] = (uint64_t)clock();
+//   }
 
-  uint64_t state = seed_base[0] ^ seed_base[1];
-  resource->random_state.x = splitmix64(&state);
-  resource->random_state.y = splitmix64(&state);
-  resource->random_state.z = splitmix64(&state);
-  resource->random_state.w = splitmix64(&state);
+//   uint64_t state = seed_base[0] ^ seed_base[1];
+//   resource->random_state.x = splitmix64(&state);
+//   resource->random_state.y = splitmix64(&state);
+//   resource->random_state.z = splitmix64(&state);
+//   resource->random_state.w = splitmix64(&state);
 
-  if (resource->random_state.x == 0 && resource->random_state.y == 0 &&
-      resource->random_state.z == 0 && resource->random_state.w == 0)
-  {
-    resource->random_state.x = 0x9e3779b97f4a7c15ULL;
-    resource->random_state.y = 0x9e3779b97f4a7c15ULL;
-    resource->random_state.z = 0x9e3779b97f4a7c15ULL;
-    resource->random_state.w = 0x9e3779b97f4a7c15ULL;
-  }
+//   if (resource->random_state.x == 0 && resource->random_state.y == 0 &&
+//       resource->random_state.z == 0 && resource->random_state.w == 0)
+//   {
+//     resource->random_state.x = 0x9e3779b97f4a7c15ULL;
+//     resource->random_state.y = 0x9e3779b97f4a7c15ULL;
+//     resource->random_state.z = 0x9e3779b97f4a7c15ULL;
+//     resource->random_state.w = 0x9e3779b97f4a7c15ULL;
+//   }
 
-  return CL_SUCCESS;
-}
+//   return CL_SUCCESS;
+// }
 
 cl_int calculate_work_sizes(OpenCLResources *resource)
 {
@@ -433,6 +470,13 @@ OpenCLResources *initalize_all_opencl_gpus(StratumContext *ctx, cl_uint *device_
       goto cleanup;
     }
 
+    res[devices_found].nonces_buf = clCreateBuffer(res[devices_found].context, CL_MEM_READ_WRITE, sizeof(cl_ulong), NULL, &err);
+    if (err != CL_SUCCESS)
+    {
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) nonces buffer creation failed: %d\n", idx, res[devices_found].pci_bus_id, err);
+      goto cleanup;
+    }
+
     devices_found++;
   }
 
@@ -646,12 +690,12 @@ cl_int load_opencl_kernel_binary(OpenCLResources *resource, const char *binary_f
   return CL_SUCCESS;
 }
 
-cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work_size, cl_ulong local_work_size,
+cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, int threadindex, cl_ulong global_work_size, cl_ulong local_work_size,
                                  unsigned char *previous_header, unsigned char *target, double matrix[64][64],
-                                 unsigned long timestamp, cl_ulong nonce_mask, cl_ulong nonce_fixed, OpenCLResult *result, cl_uint *nonces_processed)
+                                 unsigned long timestamp, cl_ulong nonce_mask, cl_ulong nonce_fixed, char *extranonce, OpenCLResult *result, cl_ulong *nonces_processed)
 {
   cl_int err;
-  cl_event write_events[5], kernel_event, read_event;
+  cl_event write_events[5], kernel_event, read_result_event, read_nonces_event;
 
   // Validate inputs
   if (!resource || !previous_header || !target || !matrix || !result)
@@ -660,12 +704,7 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
     return CL_INVALID_VALUE;
   }
 
-  err = create_xoshiro_random_state(resource);
-  if (err != CL_SUCCESS)
-  {
-    fprintf(stderr, "Generating random state for xoshiro failed for %s: %d\n", resource->device_name, err);
-    return err;
-  }
+  create_xoshiro_random_state(resource, previous_header, timestamp, threadindex);
 
   // Write to persistent buffers asynchronously
   err = clEnqueueWriteBuffer(resource->queue, resource->previous_header_buf, CL_FALSE, 0, DOMAIN_HASH_SIZE, previous_header, 0, NULL, &write_events[0]);
@@ -693,9 +732,10 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
     fprintf(stderr, "Random state buffer write failed for %s: %d\n", resource->device_name, err);
     goto cleanup;
   }
-
-  err = clEnqueueWriteBuffer(resource->queue, resource->nonces_buf, CL_FALSE, 0, sizeof(cl_uint), &nonces_processed, 0, NULL, NULL);
-  if (err != CL_SUCCESS) {
+  *nonces_processed = 0;
+  err = clEnqueueWriteBuffer(resource->queue, resource->nonces_buf, CL_FALSE, 0, sizeof(cl_ulong), nonces_processed, 0, NULL, NULL);
+  if (err != CL_SUCCESS)
+  {
     fprintf(stderr, "Nonces buffer write failed for %s: %d\n", resource->device_name, err);
     goto cleanup;
   }
@@ -712,7 +752,7 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
   err |= clSetKernelArg(resource->kernel, 7, sizeof(cl_ulong), &random_type);
   err |= clSetKernelArg(resource->kernel, 8, sizeof(cl_mem), &resource->random_state_buf);
   err |= clSetKernelArg(resource->kernel, 9, sizeof(cl_mem), &resource->result_buf);
-  err |= clSetKernelArg(resource->kernel, 9, sizeof(cl_mem), &resource->nonces_buf);
+  err |= clSetKernelArg(resource->kernel, 10, sizeof(cl_mem), &resource->nonces_buf);
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Arg setting failed for %s: %d\n", resource->device_name, err);
@@ -728,14 +768,14 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
   }
 
   // Read result asynchronously
-  err = clEnqueueReadBuffer(resource->queue, resource->result_buf, CL_FALSE, 0, sizeof(OpenCLResult), result, 1, &kernel_event, &read_event);
+  err = clEnqueueReadBuffer(resource->queue, resource->result_buf, CL_FALSE, 0, sizeof(OpenCLResult), result, 1, &kernel_event, &read_result_event);
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Read failed for %s: %d\n", resource->device_name, err);
     goto cleanup;
   }
 
-  err = clEnqueueReadBuffer(resource->queue, resource->nonces_buf, CL_FALSE, 0, sizeof(cl_uint), nonces_processed, 1, &kernel_event, &read_event);
+  err = clEnqueueReadBuffer(resource->queue, resource->nonces_buf, CL_FALSE, 0, sizeof(cl_ulong), nonces_processed, 1, &kernel_event, &read_nonces_event);
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Read failed for %s: %d\n", resource->device_name, err);
@@ -743,7 +783,8 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
   }
 
   // Wait for completion
-  err = clWaitForEvents(1, &read_event);
+  cl_event read_events[2] = {read_result_event, read_nonces_event};
+  err = clWaitForEvents(2, read_events);
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Event wait failed for %s: %d\n", resource->device_name, err);
@@ -756,8 +797,10 @@ cleanup:
       clReleaseEvent(write_events[i]);
   if (kernel_event)
     clReleaseEvent(kernel_event);
-  if (read_event)
-    clReleaseEvent(read_event);
+  if (read_result_event)
+    clReleaseEvent(read_result_event);
+  if (read_nonces_event)
+    clReleaseEvent(read_nonces_event);
   return err;
 }
 

@@ -1,4 +1,5 @@
 #pragma OPENCL EXTENSION cl_khr_fp64 : enable
+#pragma OPENCL EXTENSION cl_khr_int64_base_atomics : enable
 #pragma OPENCL SELECT_ROUNDING_MODE rte
 
 #define BLAKE3_VERSION_STRING "1.8.2"
@@ -826,17 +827,31 @@ double ForComplex(double forComplex) {
   return complexValue * rounds;
 }
 
-ulong rotl(const ulong x, int k) { return (x << k) | (x >> (64 - k)); }
+inline ulong rotl(const ulong x, int k) { return (x << k) | (x >> (64 - k)); }
 
-ulong xoshiro256_next(__global ulong4 *s) {
-  const ulong result = rotl(s->y * 5, 7) * 9;
-  const ulong t = s->y << 17;
-  s->z ^= s->x;
-  s->w ^= s->y;
-  s->y ^= s->z;
-  s->x ^= s->w;
-  s->z ^= t;
-  s->w = rotl(s->w, 45);
+inline ulong xoshiro256_next(__global ulong4 *s) {
+  // Unpack the ulong4 state
+  ulong s0 = s->x;
+  ulong s1 = s->y;
+  ulong s2 = s->z;
+  ulong s3 = s->w;
+
+  const ulong result = rotl(s1 * 5, 7) * 9;
+
+  const ulong t = s1 << 17;
+
+  s2 ^= s0;
+  s3 ^= s1;
+  s1 ^= s2;
+  s0 ^= s3;
+  s2 ^= t;
+  s3 = rotl(s3, 45);
+
+  s->x = s0;
+  s->y = s1;
+  s->z = s2;
+  s->w = s3;
+
   return result;
 }
 
@@ -927,15 +942,13 @@ typedef struct {
   uchar hash[32];
 } Result;
 
-__kernel void Hoohash_hash(const ulong local_size, const ulong nonce_mask,
-                           const ulong nonce_fixed,
-                           __global uchar *previous_header,
-                           __global long *timestamp,
-                           __global double matrix[64][64],
-                           __global uchar *target, const ulong random_type,
-                           global void *restrict random_state,
-                           volatile global Result *result,
-                           volatile global uint *nonces_processed) {
+__kernel void
+Hoohash_hash(const ulong local_size, const ulong nonce_mask,
+             const ulong nonce_fixed, __global uchar *previous_header,
+             __global long *timestamp, __global double matrix[64][64],
+             __global uchar *target, const ulong random_type,
+             __global ulong4 *random_state, volatile __global Result *result,
+             volatile __global ulong *nonces_processed) {
 #if defined(PAL)
   int nonceId = get_group_id(0) * local_size + get_local_id(0);
 #else
@@ -978,7 +991,8 @@ __kernel void Hoohash_hash(const ulong local_size, const ulong nonce_mask,
   uchar vector[64] = {0};
   double product[64] = {0};
   HoohashMatrixMultiplication(matrix, first_pass, final_hash, nonce);
-  nonces_processed++;
+  atom_inc(nonces_processed);
+  // printf("Work item %d incremented nonces_processed\n", nonceId);
   uchar reversed_hash[DOMAIN_HASH_SIZE];
 #pragma unroll
   for (size_t i = 0; i < DOMAIN_HASH_SIZE; i++) {

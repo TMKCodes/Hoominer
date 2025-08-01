@@ -1035,7 +1035,8 @@ extern "C" __global__ void Hoohash_hash(
     unsigned char *target,
     unsigned long random_type,
     unsigned long long *random_state,
-    CudaResult *result)
+    CudaResult *result,
+    unsigned long long *nonces_processed)
 {
     int nonceId = threadIdx.x + blockIdx.x * blockDim.x;
     uint64_t nonce;
@@ -1067,8 +1068,7 @@ extern "C" __global__ void Hoohash_hash(
 
     unsigned char final_hash[DOMAIN_HASH_SIZE];
     HoohashMatrixMultiplication(matrix, first_pass, final_hash, nonce);
-
-    // Reverse hash for target comparison
+    atomicAdd(nonces_processed, 1ULL);
     unsigned char reversed_hash[DOMAIN_HASH_SIZE];
     for (int i = 0; i < DOMAIN_HASH_SIZE; i++)
     {

@@ -234,6 +234,13 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
               i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
       goto cleanup;
     }
+    err = cudaMalloc(&res[devices_found].nonces_processed, sizeof(unsigned long long));
+    if (err != cudaSuccess)
+    {
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) nonces_processed allocation failed: %s\n",
+              i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
+      goto cleanup;
+    }
 
     err = create_xoshiro_random_state(&res[devices_found]);
     if (err != cudaSuccess)
@@ -376,7 +383,7 @@ cudaError_t load_cuda_kernel_binary(CudaResources *resource, const char *cubin_f
 // }
 
 cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *previous_header, unsigned char *target, double matrix[64][64],
-                                    unsigned long timestamp, unsigned long nonce_mask, unsigned long nonce_fixed, CudaResult *result)
+                                    unsigned long timestamp, unsigned long nonce_mask, unsigned long nonce_fixed, CudaResult *result, unsigned long long *nonces_processed)
 {
   cudaError_t err;
 
@@ -445,6 +452,14 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
     return err;
   }
 
+  *nonces_processed = 0;
+  err = cudaMemcpyAsync(resource->nonces_processed, nonces_processed, sizeof(unsigned long long), cudaMemcpyHostToDevice, resource->stream);
+  if (err != cudaSuccess)
+  {
+    fprintf(stderr, "Memory copy to nonces_processed failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
+    return err;
+  }
+
   unsigned long random_type = RANDOM_TYPE_LEAN;
   void *args[] = {
       &nonce_mask,
@@ -455,7 +470,8 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
       &resource->target,
       &random_type,
       &resource->random_state,
-      &resource->result};
+      &resource->result,
+      &resource->nonces_processed};
 
   CUresult cu_err = cuLaunchKernel(resource->kernel,
                                    resource->optimal_grid_size, 1, 1,
@@ -480,6 +496,13 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
   }
 
   err = cudaMemcpyAsync(result, resource->result, sizeof(CudaResult), cudaMemcpyDeviceToHost, resource->stream);
+  if (err != cudaSuccess)
+  {
+    fprintf(stderr, "Result copy failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
+    return err;
+  }
+
+  err = cudaMemcpyAsync(nonces_processed, resource->nonces_processed, sizeof(CudaResult), cudaMemcpyDeviceToHost, resource->stream);
   if (err != cudaSuccess)
   {
     fprintf(stderr, "Result copy failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
@@ -512,6 +535,7 @@ void cleanup_cuda_resources(CudaResources *resource)
   free(resource->h_random_state);
   cudaFree(resource->previous_header);
   cudaFree(resource->timestamp);
+  cudaFree(resource->nonces_processed);
   cudaFree(resource->matrix);
   cudaFree(resource->target);
   cudaFree(resource->result);

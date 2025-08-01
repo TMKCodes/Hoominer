@@ -13,6 +13,7 @@ MiningState *init_mining_state()
   state->num_opencl_threads = 0;
   state->num_cuda_threads = 0;
   state->global_target = NULL;
+  state->extranonce = NULL;
   state->job = NULL;
   pthread_mutex_init(&state->job_mutex, NULL);
   pthread_mutex_init(&state->target_mutex, NULL);
@@ -260,7 +261,12 @@ void *mining_opencl_thread(void *arg)
   cl_ulong global_work_size = ctx->opencl_resources[mt->threadIndex].max_global_work_size;
   cl_ulong nonce_mask = 0xFFFFFFFFFFFFFFFFULL;
   cl_ulong nonce_fixed = (cl_ulong)mt->threadIndex * global_work_size;
-  cl_uint nonces_processed = 0;
+  if (ms->extranonce != NULL)
+  {
+    cl_ulong extranonce_val = strtoull(ms->extranonce, NULL, 10);
+    cl_ulong nonce_fixed = (extranonce_val << 32) | ((cl_ulong)mt->threadIndex * global_work_size);
+  }
+  cl_ulong nonces_processed = 0;
   int reporting_index = ctx->cpu_device_count + mt->threadIndex;
   ReportingDevice *opencl_reporting_device = ctx->hd->devices[reporting_index];
 
@@ -282,7 +288,7 @@ void *mining_opencl_thread(void *arg)
     clock_gettime(CLOCK_MONOTONIC, &start_time);
     if (ctx->config->debug == 1)
       printf("Starting job %s\n", current_job_id);
-    int nonces_processed_for_job = 0;
+    cl_ulong nonces_processed_for_job = 0;
 
     while (ctx->running)
     {
@@ -305,8 +311,9 @@ void *mining_opencl_thread(void *arg)
         break;
 
       OpenCLResult result = {0};
-      cl_int status = run_opencl_hoohash_kernel(&ctx->opencl_resources[mt->threadIndex], global_work_size, 
-        local_work_size, state.PrevHeader, ms->global_target, state.mat, state.Timestamp, nonce_mask, nonce_fixed, &result, &nonces_processed);
+      nonces_processed = 0;
+      cl_int status = run_opencl_hoohash_kernel(&ctx->opencl_resources[mt->threadIndex], mt->threadIndex, global_work_size,
+                                                local_work_size, state.PrevHeader, ms->global_target, state.mat, state.Timestamp, nonce_mask, nonce_fixed, ms->extranonce, &result, &nonces_processed);
 
       pthread_mutex_lock(&ctx->hd->hashrate_mutex);
       opencl_reporting_device->nonces_processed += nonces_processed;
@@ -351,7 +358,7 @@ void *mining_opencl_thread(void *arg)
                       (end_time.tv_nsec - start_time.tv_nsec);
     double elapsed_ms = elapsed_ns / 1e6;
     if (ctx->config->debug == 1)
-      printf("Job %s: runtime: %.3f ms, and nonces processed %d\n", current_job_id, elapsed_ms, nonces_processed_for_job);
+      printf("Job %s: runtime: %.3f ms, and nonces processed %lu\n", current_job_id, elapsed_ms, nonces_processed_for_job);
   }
 
   free(current_job_id);
@@ -368,8 +375,14 @@ void *mining_cuda_thread(void *arg)
   unsigned long nonce_mask = 0xFFFFFFFFFFFFFFFFULL;
   unsigned long hashes_per_cuda_call = ctx->cuda_resources[mt->threadIndex].optimal_grid_size * ctx->cuda_resources[mt->threadIndex].optimal_block_size;
   unsigned long nonce_fixed = (unsigned long)mt->threadIndex * hashes_per_cuda_call;
+  if (ms->extranonce != NULL)
+  {
+    unsigned long extranonce_val = strtoull(ms->extranonce, NULL, 10);
+    unsigned long nonce_fixed = (extranonce_val << 32) | ((unsigned long)mt->threadIndex * hashes_per_cuda_call);
+  }
   int reporting_index = ctx->cpu_device_count + ctx->opencl_device_count + mt->threadIndex;
   ReportingDevice *cuda_reporting_device = ctx->hd->devices[reporting_index];
+  unsigned long long nonces_processed = 0;
 
   while (ctx->running)
   {
@@ -411,19 +424,20 @@ void *mining_cuda_thread(void *arg)
         break;
 
       CudaResult result = {0};
+      nonces_processed = 0;
       int error = run_cuda_hoohash_kernel(&ctx->cuda_resources[mt->threadIndex],
                                           state.PrevHeader, ms->global_target, state.mat, state.Timestamp,
-                                          nonce_mask, nonce_fixed, &result);
+                                          nonce_mask, nonce_fixed, &result, nonces_processed);
 
       pthread_mutex_lock(&ctx->hd->hashrate_mutex);
-      cuda_reporting_device->nonces_processed += hashes_per_cuda_call;
-      nonces_processed_for_job += hashes_per_cuda_call;
+      cuda_reporting_device->nonces_processed += nonces_processed;
+      nonces_processed_for_job += nonces_processed;
       pthread_mutex_unlock(&ctx->hd->hashrate_mutex);
 
       if (error != 0)
       {
         fprintf(stderr, "Device %d: Kernel execution failed: %d\n", mt->threadIndex, error);
-        nonce_fixed += hashes_per_cuda_call;
+        nonce_fixed += nonces_processed;
         break;
       }
 
@@ -443,7 +457,7 @@ void *mining_cuda_thread(void *arg)
         }
       }
 
-      nonce_fixed += hashes_per_cuda_call;
+      nonce_fixed += nonces_processed;
     }
     current_job.running = 0;
     clock_gettime(CLOCK_MONOTONIC, &end_time);
@@ -469,7 +483,8 @@ int start_mining_threads(StratumContext *ctx, MiningState *ms)
       printf("start_mining_threads: Failed to allocate mining_threads\n");
       return 1;
     }
-    printf("Starting %d CPU threads", ms->num_opencl_threads);
+    if (ctx->config->debug == 1)
+      printf("Starting %d CPU threads\n", ms->num_cpu_threads);
     for (int i = 0; i < ms->num_cpu_threads; i++)
     {
       MiningThread *mt = malloc(sizeof(MiningThread));
@@ -499,7 +514,8 @@ int start_mining_threads(StratumContext *ctx, MiningState *ms)
         printf("start_mining_threads: Failed to allocate mining_threads\n");
         return 1;
       }
-      printf("Starting %d OpenCL threads", ms->num_opencl_threads);
+      if (ctx->config->debug == 1)
+        printf("Starting %d OpenCL threads\n", ms->num_opencl_threads);
       for (int i = 0; i < ms->num_opencl_threads; i++)
       {
         MiningThread *mt = malloc(sizeof(MiningThread));
@@ -527,7 +543,8 @@ int start_mining_threads(StratumContext *ctx, MiningState *ms)
         printf("start_mining_threads: Failed to allocate mining_threads\n");
         return 1;
       }
-      printf("Starting %d CUDA threads", ms->num_opencl_threads);
+      if (ctx->config->debug == 1)
+        printf("Starting %d CUDA threads\n", ms->num_cuda_threads);
       for (int i = 0; i < ms->num_cuda_threads; i++)
       {
         MiningThread *mt = malloc(sizeof(MiningThread));

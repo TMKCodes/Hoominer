@@ -181,6 +181,7 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
     printf("process_stratum_message: Null message received\n");
     return;
   }
+  // printf("%s\n", json_object_to_json_string_ext(message, JSON_C_TO_STRING_PRETTY));
 
   json_object *method_obj;
   if (json_object_object_get_ex(message, "method", &method_obj) && json_object_is_type(method_obj, json_type_string))
@@ -188,6 +189,14 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
     const char *method_str = json_object_get_string(method_obj);
     if (!strcmp(method_str, "mining.set_difficulty"))
     {
+      // {
+      //   "id":null,
+      //   "jsonrpc":"2.0",
+      //   "method":"mining.set_difficulty",
+      //   "params":[
+      //     0.0035335689045936395
+      //   ]
+      // }
       json_object *params;
       if (json_object_object_get_ex(message, "params", &params) && json_object_is_type(params, json_type_array))
       {
@@ -205,8 +214,47 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
         }
       }
     }
+    else if (!strcmp(method_str, "set_extranonce"))
+    {
+      // {
+      //   "id":null,
+      //   "jsonrpc":"2.0",
+      //   "method":"set_extranonce",
+      //   "params":[
+      //     "00"
+      //   ]
+      // }
+      json_object *params;
+      if (!json_object_object_get_ex(message, "params", &params) || !json_object_is_type(params, json_type_array))
+      {
+        printf("mining.notify: params missing or not an array\n");
+        return;
+      }
+      json_object *extranonce_param = json_object_array_get_idx(params, 0);
+
+      if (json_object_is_type(extranonce_param, json_type_string))
+      {
+        ms->extranonce = json_object_get_string(extranonce_param);
+      }
+    }
     else if (!strcmp(method_str, "mining.notify"))
     {
+      // {
+      //   "id":1,
+      //   "jsonrpc":"2.0",
+      //   "method":"mining.notify",
+      //   "params":[
+      //     "1",
+      //     [
+      //       9680649812803242576,
+      //       5479210451378731168,
+      //       9916984324433298320,
+      //       15931787360748167486
+      //     ],
+      //     1754036484859
+      //   ]
+      // }
+
       json_object *params;
       if (!json_object_object_get_ex(message, "params", &params) || !json_object_is_type(params, json_type_array))
       {
