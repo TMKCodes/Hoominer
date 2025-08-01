@@ -260,6 +260,7 @@ void *mining_opencl_thread(void *arg)
   cl_ulong global_work_size = ctx->opencl_resources[mt->threadIndex].max_global_work_size;
   cl_ulong nonce_mask = 0xFFFFFFFFFFFFFFFFULL;
   cl_ulong nonce_fixed = (cl_ulong)mt->threadIndex * global_work_size;
+  cl_uint nonces_processed = 0;
   int reporting_index = ctx->cpu_device_count + mt->threadIndex;
   ReportingDevice *opencl_reporting_device = ctx->hd->devices[reporting_index];
 
@@ -304,11 +305,12 @@ void *mining_opencl_thread(void *arg)
         break;
 
       OpenCLResult result = {0};
-      cl_int status = run_opencl_hoohash_kernel(&ctx->opencl_resources[mt->threadIndex], global_work_size, local_work_size, state.PrevHeader, ms->global_target, state.mat, state.Timestamp, nonce_mask, nonce_fixed, &result);
+      cl_int status = run_opencl_hoohash_kernel(&ctx->opencl_resources[mt->threadIndex], global_work_size, 
+        local_work_size, state.PrevHeader, ms->global_target, state.mat, state.Timestamp, nonce_mask, nonce_fixed, &result, &nonces_processed);
 
       pthread_mutex_lock(&ctx->hd->hashrate_mutex);
-      opencl_reporting_device->nonces_processed += global_work_size;
-      nonces_processed_for_job += global_work_size;
+      opencl_reporting_device->nonces_processed += nonces_processed;
+      nonces_processed_for_job += nonces_processed;
       pthread_mutex_unlock(&ctx->hd->hashrate_mutex);
 
       if (status != CL_SUCCESS)

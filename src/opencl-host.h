@@ -45,6 +45,7 @@ struct OpenCLResources
   cl_mem target_buf;
   cl_mem random_state_buf;
   cl_mem result_buf;
+  cl_mem nonces_buf;
   size_t max_work_group_size;
   size_t preferred_multiple;
   size_t max_global_work_size;

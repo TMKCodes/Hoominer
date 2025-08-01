@@ -648,7 +648,7 @@ cl_int load_opencl_kernel_binary(OpenCLResources *resource, const char *binary_f
 
 cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work_size, cl_ulong local_work_size,
                                  unsigned char *previous_header, unsigned char *target, double matrix[64][64],
-                                 unsigned long timestamp, cl_ulong nonce_mask, cl_ulong nonce_fixed, OpenCLResult *result)
+                                 unsigned long timestamp, cl_ulong nonce_mask, cl_ulong nonce_fixed, cl_uint nonces_processed, OpenCLResult *result)
 {
   cl_int err;
   cl_event write_events[5], kernel_event, read_event;
@@ -694,6 +694,12 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
     goto cleanup;
   }
 
+  err = clEnqueueWriteBuffer(resource->queue, resource->nonces_buf, CL_FALSE, 0, sizeof(cl_uint), &nonces, 0, NULL, NULL);
+  if (err != CL_SUCCESS) {
+    fprintf(stderr, "Nonces buffer write failed for %s: %d\n", resource->device_name, err);
+    goto cleanup;
+  }
+
   // Set kernel arguments
   cl_ulong random_type = RANDOM_TYPE_LEAN; // RANDOM_TYPE_LEAN OR RANDOM_TYPE_XOSHIRO
   err = clSetKernelArg(resource->kernel, 0, sizeof(cl_ulong), &local_work_size);
@@ -706,6 +712,7 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
   err |= clSetKernelArg(resource->kernel, 7, sizeof(cl_ulong), &random_type);
   err |= clSetKernelArg(resource->kernel, 8, sizeof(cl_mem), &resource->random_state_buf);
   err |= clSetKernelArg(resource->kernel, 9, sizeof(cl_mem), &resource->result_buf);
+  err |= clSetKernelArg(resource->kernel, 9, sizeof(cl_mem), &resource->nonces_buf);
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Arg setting failed for %s: %d\n", resource->device_name, err);
@@ -722,6 +729,13 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
 
   // Read result asynchronously
   err = clEnqueueReadBuffer(resource->queue, resource->result_buf, CL_FALSE, 0, sizeof(OpenCLResult), result, 1, &kernel_event, &read_event);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Read failed for %s: %d\n", resource->device_name, err);
+    goto cleanup;
+  }
+
+  err = clEnqueueReadBuffer(resource->queue, resource->nonces_buf, CL_FALSE, 0, sizeof(cl_uint), nonces, 1, &kernel_event, &read_event);
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Read failed for %s: %d\n", resource->device_name, err);
