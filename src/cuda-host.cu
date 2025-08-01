@@ -286,6 +286,7 @@ cleanup:
   free(res); // Free res, not final_res, as final_res may not be initialized
   return NULL;
 }
+
 cudaError_t load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename, const char *kernel_name)
 {
   cudaError_t err;
@@ -502,7 +503,7 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
     return err;
   }
 
-  err = cudaMemcpyAsync(nonces_processed, resource->nonces_processed, sizeof(CudaResult), cudaMemcpyDeviceToHost, resource->stream);
+  err = cudaMemcpyAsync(nonces_processed, resource->nonces_processed, sizeof(unsigned long long), cudaMemcpyDeviceToHost, resource->stream);
   if (err != cudaSuccess)
   {
     fprintf(stderr, "Result copy failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
