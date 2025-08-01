@@ -694,7 +694,7 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
     goto cleanup;
   }
 
-  err = clEnqueueWriteBuffer(resource->queue, resource->nonces_buf, CL_FALSE, 0, sizeof(cl_uint), &nonces, 0, NULL, NULL);
+  err = clEnqueueWriteBuffer(resource->queue, resource->nonces_buf, CL_FALSE, 0, sizeof(cl_uint), &nonces_processed, 0, NULL, NULL);
   if (err != CL_SUCCESS) {
     fprintf(stderr, "Nonces buffer write failed for %s: %d\n", resource->device_name, err);
     goto cleanup;
@@ -735,7 +735,7 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
     goto cleanup;
   }
 
-  err = clEnqueueReadBuffer(resource->queue, resource->nonces_buf, CL_FALSE, 0, sizeof(cl_uint), nonces, 1, &kernel_event, &read_event);
+  err = clEnqueueReadBuffer(resource->queue, resource->nonces_buf, CL_FALSE, 0, sizeof(cl_uint), nonces_processed, 1, &kernel_event, &read_event);
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Read failed for %s: %d\n", resource->device_name, err);
