@@ -575,6 +575,7 @@ cl_int compile_opencl_kernel_from_xxd_header(OpenCLResources *resource, const un
   }
 
   // Compile program
+  // const char *build_options = "-O0"; //No optimizations.
   const char *build_options = "";
   err = clBuildProgram(resource->program, 1, &resource->device, build_options, NULL, NULL);
   if (err != CL_SUCCESS)

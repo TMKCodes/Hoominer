@@ -812,7 +812,7 @@ __device__ double IntermediateComplexNonLinear(double x)
     {
         return 0; // Avoid singularity
     }
-    return sin(x) * cos(x) * tan(x);
+    return sin(x) * sin(x);
 }
 
 __device__ double HighComplexNonLinear(double x) { return 1.0 / sqrt(fabs(x) + 1); }

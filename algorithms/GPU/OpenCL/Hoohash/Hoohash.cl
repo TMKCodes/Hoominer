@@ -764,7 +764,7 @@ double IntermediateComplexNonLinear(double x) {
   if (x == PI / 2 || x == 3 * PI / 2) {
     return 0; // Avoid singularity
   }
-  return sin(x) * cos(x) * tan(x);
+  return sin(x) * sin(x);
 }
 
 double HighComplexNonLinear(double x) { return 1.0 / sqrt(fabs(x) + 1); }
@@ -827,9 +827,9 @@ double ForComplex(double forComplex) {
   return complexValue * rounds;
 }
 
-inline ulong rotl(const ulong x, int k) { return (x << k) | (x >> (64 - k)); }
+ulong rotl(const ulong x, int k) { return (x << k) | (x >> (64 - k)); }
 
-inline ulong xoshiro256_next(__global ulong4 *s) {
+ulong xoshiro256_next(__global ulong4 *s) {
   // Unpack the ulong4 state
   ulong s0 = s->x;
   ulong s1 = s->y;
