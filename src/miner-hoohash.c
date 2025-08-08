@@ -185,7 +185,8 @@ void *mining_cpu_thread(void *arg)
 
     struct timespec start_time, end_time;
     clock_gettime(CLOCK_MONOTONIC, &start_time);
-    printf("Starting job %s\n", current_job.job_id);
+    if (ctx->config->debug == 1)
+      printf("Starting job %s\n", current_job.job_id);
     int nonces_processed_for_job = 0;
 
     while (ctx->running)
@@ -243,7 +244,8 @@ void *mining_cpu_thread(void *arg)
     long elapsed_ns = (end_time.tv_sec - start_time.tv_sec) * 1000000000L +
                       (end_time.tv_nsec - start_time.tv_nsec);
     double elapsed_ms = elapsed_ns / 1e6;
-    printf("Job %s: runtime: %.3f ms, and nonces processed %d\n", current_job_id, elapsed_ms, nonces_processed_for_job);
+    if (ctx->config->debug == 1)
+      printf("Job %s: runtime: %.3f ms, and nonces processed %d\n", current_job_id, elapsed_ms, nonces_processed_for_job);
   }
 
   free(current_job_id);

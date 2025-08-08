@@ -258,25 +258,7 @@ void cleanup(int sig)
   }
 
   // Clean up CUDA resources
-  if (ctx->cuda_resources)
-  {
-    for (unsigned int i = 0; i < ctx->cuda_device_count; i++)
-    {
-      cudaSetDevice(ctx->cuda_resources[i].device_id);
-      free(ctx->cuda_resources[i].h_random_state);
-      cudaFree(ctx->cuda_resources[i].previous_header);
-      cudaFree(ctx->cuda_resources[i].timestamp);
-      cudaFree(ctx->cuda_resources[i].matrix);
-      cudaFree(ctx->cuda_resources[i].target);
-      cudaFree(ctx->cuda_resources[i].result);
-      cudaFree(ctx->cuda_resources[i].random_state);
-      cuModuleUnload(ctx->cuda_resources[i].module);
-      cudaStreamDestroy(ctx->cuda_resources[i].stream);
-    }
-    free(ctx->cuda_resources);
-    ctx->cuda_resources = NULL;
-    ctx->cuda_device_count = 0;
-  }
+  cleanup_all_cuda_gpus(ctx->cuda_resources, ctx->cuda_device_count);
 
   // Clean up hashrate display
   if (ctx->hd)
@@ -378,13 +360,11 @@ int initialize_mining(StratumContext *ctx, const char *username, const char *alg
               printf("Unsupported compute capability %d.%d for device %u\n", major, minor, i);
               continue;
             }
-            cudaError_t compile_kernel_error = load_cuda_kernel_binary(&ctx->cuda_resources[i], cubin_filename, "Hoohash_hash");
+            bool compile_kernel_error = load_cuda_kernel_binary(&ctx->cuda_resources[i], cubin_filename, "Hoohash_hash");
             if (compile_kernel_error != cudaSuccess)
             {
-              const char *err_str;
-              cuGetErrorString((CUresult)compile_kernel_error, &err_str);
-              printf("Failed to load CUDA kernel binary %s for device %u: Error code %d (%s)\n",
-                     cubin_filename, i, compile_kernel_error, err_str ? err_str : "Unknown");
+              printf("Failed to load CUDA kernel binary %s for device %u\n",
+                     cubin_filename, i, compile_kernel_error);
               continue;
             }
             printf("Loaded CUDA Hoohash kernel %s for device %u\n", cubin_filename, i);

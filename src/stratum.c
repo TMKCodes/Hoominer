@@ -383,53 +383,64 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
   {
     json_object *result;
     json_object *error;
-    int device_index;
     int devices = ctx->cpu_device_count + ctx->opencl_device_count + ctx->cuda_device_count;
-    dequeue_int_fifo(&ctx->mining_submit_fifo, &device_index);
-    if (devices >= device_index)
+    if (devices > 0)
     {
-      ReportingDevice *device = ctx->hd->devices[device_index];
-      if (json_object_object_get_ex(message, "error", &error))
+      int device_index;
+      int dequeue_result = dequeue_int_fifo(&ctx->mining_submit_fifo, &device_index);
+      if (dequeue_result == 1)
       {
-        if (!json_object_is_type(error, json_type_null))
+        if (ctx->config->debug == true)
         {
-          if (json_object_is_type(error, json_type_array))
+          printf("device index %d\n", device_index);
+          printf("deivces %d\n", devices);
+        }
+        if (devices >= device_index)
+        {
+          ReportingDevice *device = ctx->hd->devices[device_index];
+          if (json_object_object_get_ex(message, "error", &error))
           {
-            json_object *code = json_object_array_get_idx(error, 0);
-            int err_code = json_object_get_int(code);
-            if (err_code == 21)
+            if (!json_object_is_type(error, json_type_null))
             {
-              pthread_mutex_lock(&ms->job_queue.queue_mutex);
-              device->stales++;
-              pthread_mutex_unlock(&ms->job_queue.queue_mutex);
+              if (json_object_is_type(error, json_type_array))
+              {
+                json_object *code = json_object_array_get_idx(error, 0);
+                int err_code = json_object_get_int(code);
+                if (err_code == 21)
+                {
+                  pthread_mutex_lock(&ms->job_queue.queue_mutex);
+                  device->stales++;
+                  pthread_mutex_unlock(&ms->job_queue.queue_mutex);
+                }
+                else if (err_code == 20)
+                {
+                  pthread_mutex_lock(&ms->job_queue.queue_mutex);
+                  device->stales++;
+                  pthread_mutex_unlock(&ms->job_queue.queue_mutex);
+                }
+                else
+                {
+                  const char *result_str = json_object_to_json_string(message);
+                  printf("Error: %s\n", result_str);
+                  pthread_mutex_lock(&ms->job_queue.queue_mutex);
+                  device->rejected++;
+                  pthread_mutex_unlock(&ms->job_queue.queue_mutex);
+                }
+              }
             }
-            else if (err_code == 20)
+          }
+          if (json_object_object_get_ex(message, "result", &result))
+          {
+            if (json_object_is_type(result, json_type_boolean))
             {
               pthread_mutex_lock(&ms->job_queue.queue_mutex);
-              device->stales++;
-              pthread_mutex_unlock(&ms->job_queue.queue_mutex);
-            }
-            else
-            {
-              const char *result_str = json_object_to_json_string(message);
-              printf("Error: %s\n", result_str);
-              pthread_mutex_lock(&ms->job_queue.queue_mutex);
-              device->rejected++;
+              if (json_object_get_boolean(result))
+                device->accepted++;
+              else
+                device->rejected++;
               pthread_mutex_unlock(&ms->job_queue.queue_mutex);
             }
           }
-        }
-      }
-      if (json_object_object_get_ex(message, "result", &result))
-      {
-        if (json_object_is_type(result, json_type_boolean))
-        {
-          pthread_mutex_lock(&ms->job_queue.queue_mutex);
-          if (json_object_get_boolean(result))
-            device->accepted++;
-          else
-            device->rejected++;
-          pthread_mutex_unlock(&ms->job_queue.queue_mutex);
         }
       }
     }
