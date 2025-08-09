@@ -14,6 +14,7 @@ struct HoominerConfig
   char *password;
   char *algorithm;
   int opencl_optimization_level;
+  int gpu_work_multiplier;
   bool disable_cpu;
   bool disable_gpu;
   bool disable_opencl;

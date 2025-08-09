@@ -2,7 +2,7 @@
 
 #include "opencl-host.h"
 
-cl_int calculate_work_sizes(OpenCLResources *resource)
+cl_int calculate_work_sizes(StratumContext *ctx, OpenCLResources *resource)
 {
   // Query work group sizes
   cl_int err;
@@ -22,7 +22,7 @@ cl_int calculate_work_sizes(OpenCLResources *resource)
   }
   cl_uint compute_units;
   clGetDeviceInfo(resource->device, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cl_uint), &compute_units, NULL);
-  resource->max_global_work_size = compute_units * resource->max_work_group_size;
+  resource->max_global_work_size = compute_units * resource->max_work_group_size * ctx->config->gpu_work_multiplier;
 
   printf("Max local work size: %ld\n", resource->max_work_group_size);
   printf("Max global work size: %ld\n", resource->max_global_work_size);
@@ -281,14 +281,6 @@ OpenCLResources *initalize_all_opencl_gpus(StratumContext *ctx, cl_uint *device_
       goto cleanup;
     }
 
-    // Calculate work sizes and initialize random state
-    err = calculate_work_sizes(&res[devices_found]);
-    if (err != CL_SUCCESS)
-    {
-      fprintf(stderr, "Calculate work sizes failed for %s (PCI-BUS-ID: %u): %d\n", res[devices_found].device_name, res[devices_found].pci_bus_id, err);
-      goto cleanup;
-    }
-
     // Initialize buffers
     res[devices_found].previous_header_buf = clCreateBuffer(res[devices_found].context, CL_MEM_READ_ONLY, DOMAIN_HASH_SIZE, NULL, &err);
     if (err != CL_SUCCESS)
@@ -466,11 +458,19 @@ cl_int compile_opencl_kernel_from_xxd_header(StratumContext *ctx, OpenCLResource
     return err;
   }
 
+  err = calculate_work_sizes(ctx, resource);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Calculate worksizes failed for %s: %d\n", resource->device_name, err);
+    clReleaseProgram(resource->program);
+    return err;
+  }
+
   printf("Kernel %s compiled for %s\n", kernel_name, resource->device_name);
   return CL_SUCCESS;
 }
 
-cl_int load_opencl_kernel_binary(OpenCLResources *resource, const char *binary_filename, const char *kernel_name)
+cl_int load_opencl_kernel_binary(StratumContext *ctx, OpenCLResources *resource, const char *binary_filename, const char *kernel_name)
 {
   cl_int err;
   FILE *file = fopen(binary_filename, "rb");
@@ -518,21 +518,13 @@ cl_int load_opencl_kernel_binary(OpenCLResources *resource, const char *binary_f
     clReleaseProgram(resource->program);
     return err;
   }
-
-  err = calculate_work_sizes(resource);
+  err = calculate_work_sizes(ctx, resource);
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Calculate worksizes failed for %s: %d\n", resource->device_name, err);
     clReleaseProgram(resource->program);
     return err;
   }
-  // err = create_xoshiro_random_state(resource);
-  // if (err != CL_SUCCESS)
-  // {
-  //   fprintf(stderr, "Generating random state for xoshiro failed for %s: %d\n", resource->device_name, err);
-  //   clReleaseProgram(resource->program);
-  //   return err;
-  // }
   printf("Kernel %s loaded for %s\n", kernel_name, resource->device_name);
   return CL_SUCCESS;
 }

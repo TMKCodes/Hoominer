@@ -6,6 +6,7 @@ extern "C"
 {
 #endif
 
+#include <dlfcn.h> // For dynamic loading on Linux
 #include <cuda_runtime.h>
 #include <cuda.h>
 #include <stdio.h>
@@ -45,12 +46,10 @@ extern "C"
     unsigned long *timestamp;
     double *matrix;
     unsigned char *target;
-    unsigned long long *random_state;
-    unsigned long long *h_random_state; // Host-side random state (single state)
-    char *printf_buffer;                // Device printf buffer
-    size_t optimal_block_size;          // Optimal threads per block
-    size_t optimal_grid_size;           // Optimal blocks in grid
-    int device_id;                      // Store device ID for cudaSetDevice
+    char *printf_buffer;       // Device printf buffer
+    size_t optimal_block_size; // Optimal threads per block
+    size_t optimal_grid_size;  // Optimal blocks in grid
+    int device_id;             // Store device ID for cudaSetDevice
     char device_name[256];
     unsigned int pci_bus_id;
     int usegpu;
@@ -60,7 +59,7 @@ extern "C"
 
   // Function declarations
   CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int selected_gpus[256], int selected_gpus_num);
-  bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename, const char *kernel_name);
+  bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename, const char *kernel_name, int work_multiplier);
   void cleanup_cuda_resources(CudaResources *resource);
   void cleanup_all_cuda_gpus(CudaResources *resources, unsigned int device_count);
   cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *previous_header, unsigned char *target, double matrix[64][64],

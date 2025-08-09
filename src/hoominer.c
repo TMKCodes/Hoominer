@@ -360,7 +360,7 @@ int initialize_mining(StratumContext *ctx, const char *username, const char *alg
               printf("Unsupported compute capability %d.%d for device %u\n", major, minor, i);
               continue;
             }
-            bool compile_kernel_error = load_cuda_kernel_binary(&ctx->cuda_resources[i], cubin_filename, "Hoohash_hash");
+            bool compile_kernel_error = load_cuda_kernel_binary(&ctx->cuda_resources[i], cubin_filename, "Hoohash_hash", ctx->config->gpu_work_multiplier);
             if (compile_kernel_error != cudaSuccess)
             {
               printf("Failed to load CUDA kernel binary %s for device %u\n",

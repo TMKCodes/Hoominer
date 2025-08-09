@@ -1,5 +1,4 @@
 #include "cuda-host.h"
-#include <dlfcn.h> // For dynamic loading on Linux
 
 // Function pointers for CUDA Driver API
 typedef CUresult (*CUInit_t)(unsigned int);
@@ -72,7 +71,7 @@ int load_cuda_library()
 }
 
 // Function to calculate optimal grid and block dimensions
-static void calculate_optimal_dimensions(CudaResources *resource)
+static void calculate_optimal_dimensions(CudaResources *resource, int work_multiplier)
 {
     const int warp_size = 32;
     int sm_count = resource->device_prop.multiProcessorCount;
@@ -112,7 +111,7 @@ static void calculate_optimal_dimensions(CudaResources *resource)
     if (grid_size > resource->device_prop.maxGridSize[0])
         grid_size = resource->device_prop.maxGridSize[0];
 
-    resource->optimal_block_size = threads_per_block;
+    resource->optimal_block_size = threads_per_block * work_multiplier;
     resource->optimal_grid_size = grid_size;
 
     printf("Calculated for %s: block_size=%d, grid_size=%d\n",
@@ -124,61 +123,6 @@ int compare_pci_bus_id(const void *a, const void *b)
     const CudaResources *ra = (const CudaResources *)a;
     const CudaResources *rb = (const CudaResources *)b;
     return (int)(ra->pci_bus_id - rb->pci_bus_id);
-}
-
-static uint64_t splitmix64(uint64_t *state)
-{
-    uint64_t z = (*state += 0x9e3779b97f4a7c15ULL);
-    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL;
-    z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL;
-    return z ^ (z >> 31);
-}
-
-static cudaError_t create_xoshiro_random_state(CudaResources *resource)
-{
-    size_t total_bytes = 4 * sizeof(unsigned long long);
-    resource->h_random_state = (unsigned long long *)malloc(total_bytes);
-    if (resource->h_random_state == NULL)
-    {
-        fprintf(stderr, "Random state allocation failed for %s\n", resource->device_name);
-        return cudaErrorMemoryAllocation;
-    }
-
-    uint64_t seed_base[2];
-    int fd = open("/dev/urandom", O_RDONLY);
-    if (fd >= 0)
-    {
-        if (read(fd, seed_base, sizeof(seed_base)) != sizeof(seed_base))
-        {
-            fprintf(stderr, "Warning: Failed to read full entropy from /dev/urandom\n");
-            seed_base[0] = (uint64_t)time(NULL);
-            seed_base[1] = (uint64_t)clock();
-        }
-        close(fd);
-    }
-    else
-    {
-        fprintf(stderr, "Warning: /dev/urandom unavailable, using fallback seed\n");
-        seed_base[0] = (uint64_t)time(NULL);
-        seed_base[1] = (uint64_t)clock();
-    }
-
-    uint64_t state = seed_base[0] ^ seed_base[1];
-    resource->h_random_state[0] = splitmix64(&state);
-    resource->h_random_state[1] = splitmix64(&state);
-    resource->h_random_state[2] = splitmix64(&state);
-    resource->h_random_state[3] = splitmix64(&state);
-
-    if (resource->h_random_state[0] == 0 && resource->h_random_state[1] == 0 &&
-        resource->h_random_state[2] == 0 && resource->h_random_state[3] == 0)
-    {
-        resource->h_random_state[0] = 0x9e3779b97f4a7c15ULL;
-        resource->h_random_state[1] = 0x9e3779b97f4a7c15ULL;
-        resource->h_random_state[2] = 0x9e3779b97f4a7c15ULL;
-        resource->h_random_state[3] = 0x9e3779b97f4a7c15ULL;
-    }
-
-    return cudaSuccess;
 }
 
 CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int selected_gpus[256], int selected_gpus_num)
@@ -336,19 +280,6 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
             cudaFree(res[devices_found].target);
             continue;
         }
-        err = cudaMalloc(&res[devices_found].random_state, 4 * sizeof(unsigned long long));
-        if (err != cudaSuccess)
-        {
-            fprintf(stderr, "Device %u (PCI-BUS-ID: %u) random_state allocation failed: %s\n",
-                    i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
-            cudaStreamDestroy(res[devices_found].stream);
-            cudaFree(res[devices_found].previous_header);
-            cudaFree(res[devices_found].timestamp);
-            cudaFree(res[devices_found].matrix);
-            cudaFree(res[devices_found].target);
-            cudaFree(res[devices_found].result);
-            continue;
-        }
         err = cudaMalloc(&res[devices_found].nonces_processed, sizeof(unsigned long long));
         if (err != cudaSuccess)
         {
@@ -360,22 +291,6 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
             cudaFree(res[devices_found].matrix);
             cudaFree(res[devices_found].target);
             cudaFree(res[devices_found].result);
-            cudaFree(res[devices_found].random_state);
-            continue;
-        }
-
-        err = create_xoshiro_random_state(&res[devices_found]);
-        if (err != cudaSuccess)
-        {
-            fprintf(stderr, "Random state initialization failed for %s (PCI-BUS-ID: %u): %s\n",
-                    res[devices_found].device_name, res[devices_found].pci_bus_id, cudaGetErrorString(err));
-            cudaStreamDestroy(res[devices_found].stream);
-            cudaFree(res[devices_found].previous_header);
-            cudaFree(res[devices_found].timestamp);
-            cudaFree(res[devices_found].matrix);
-            cudaFree(res[devices_found].target);
-            cudaFree(res[devices_found].result);
-            cudaFree(res[devices_found].random_state);
             continue;
         }
 
@@ -405,7 +320,7 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
     return res;
 }
 
-bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename, const char *kernel_name)
+bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename, const char *kernel_name, int work_multiplier)
 {
     cudaError_t err;
     CUresult cu_err;
@@ -462,7 +377,7 @@ bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename
     }
 
     // Calculate optimal grid and block dimensions after kernel is loaded
-    calculate_optimal_dimensions(resource);
+    calculate_optimal_dimensions(resource, work_multiplier);
 
     printf("Kernel %s loaded for %s\n", kernel_name, resource->device_name);
 
@@ -581,7 +496,6 @@ void cleanup_cuda_resources(CudaResources *resource)
         return;
 
     cudaSetDevice(resource->device_id);
-    free(resource->h_random_state);
     cudaFree(resource->previous_header);
     cudaFree(resource->timestamp);
     cudaFree(resource->matrix);

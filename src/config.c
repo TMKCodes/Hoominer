@@ -10,6 +10,7 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
   config->cpu_threads = 0;
   config->debug = false;
   config->opencl_optimization_level = 2;
+  config->gpu_work_multiplier = 1;
   bool gpus_selected = false;
   for (int i = 1; i < argc; i++)
   {
@@ -21,6 +22,8 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
       config->algorithm = argv[++i];
     else if (!strcmp(argv[i], "--opencl-o") && i + 1 < argc)
       config->opencl_optimization_level = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--gpu-work-multiplier") && i + 1 < argc)
+      config->gpu_work_multiplier = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--disable-cpu"))
       config->disable_cpu = true;
     else if (!strcmp(argv[i], "--disable-gpu"))

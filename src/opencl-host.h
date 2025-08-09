@@ -56,7 +56,7 @@ struct OpenCLResources
 
 OpenCLResources *initalize_all_opencl_gpus(StratumContext *ctx, cl_uint *device_count);
 cl_int compile_opencl_kernel_from_xxd_header(StratumContext *ctx, OpenCLResources *resource, const unsigned char *kernel, unsigned int kernel_length, const char *kernel_name, const char **required_extensions, size_t num_required_extensions);
-cl_int load_opencl_kernel_binary(OpenCLResources *resource, const char *binary_filename, const char *kernel_name);
+cl_int load_opencl_kernel_binary(StratumContext *ctx, OpenCLResources *resource, const char *binary_filename, const char *kernel_name);
 void cleanup_opencl_resources(OpenCLResources *resource);
 void cleanup_all_opencl_gpus(OpenCLResources *resources, cl_uint device_count);
 
