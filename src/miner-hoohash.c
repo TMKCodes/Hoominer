@@ -261,14 +261,13 @@ void *mining_opencl_thread(void *arg)
   char *current_job_id = NULL;
   cl_ulong local_work_size = ctx->opencl_resources[mt->threadIndex].max_work_group_size;
   cl_ulong global_work_size = ctx->opencl_resources[mt->threadIndex].max_global_work_size;
-  cl_ulong nonce_mask = 0xFFFFFFFFFFFFFFFFULL;
-  cl_ulong nonce_fixed = (cl_ulong)mt->threadIndex * global_work_size;
+  uint64_t random_base = rand() & 0x3FFFF;
+  cl_ulong start_nonce = random_base * ((cl_ulong)mt->threadIndex * global_work_size);
   if (ms->extranonce != NULL)
   {
     cl_ulong extranonce_val = strtoull(ms->extranonce, NULL, 10);
-    cl_ulong nonce_fixed = (extranonce_val << 32) | ((cl_ulong)mt->threadIndex * global_work_size);
+    start_nonce = (extranonce_val << 32) | start_nonce;
   }
-  cl_ulong nonces_processed = 0;
   int reporting_index = ctx->cpu_device_count + mt->threadIndex;
   ReportingDevice *opencl_reporting_device = ctx->hd->devices[reporting_index];
 
@@ -313,19 +312,18 @@ void *mining_opencl_thread(void *arg)
         break;
 
       OpenCLResult result = {0};
-      nonces_processed = 0;
       cl_int status = run_opencl_hoohash_kernel(&ctx->opencl_resources[mt->threadIndex], mt->threadIndex, global_work_size,
-                                                local_work_size, state.PrevHeader, ms->global_target, state.mat, state.Timestamp, nonce_mask, nonce_fixed, ms->extranonce, &result, &nonces_processed);
+                                                local_work_size, state.PrevHeader, ms->global_target, state.mat, state.Timestamp, start_nonce, &result);
 
       pthread_mutex_lock(&ctx->hd->hashrate_mutex);
-      opencl_reporting_device->nonces_processed += nonces_processed;
-      nonces_processed_for_job += nonces_processed;
+      opencl_reporting_device->nonces_processed += global_work_size;
+      nonces_processed_for_job += global_work_size;
       pthread_mutex_unlock(&ctx->hd->hashrate_mutex);
 
       if (status != CL_SUCCESS)
       {
         fprintf(stderr, "Device %d: Kernel execution failed: %d\n", mt->threadIndex, status);
-        nonce_fixed += global_work_size;
+        start_nonce += global_work_size;
         break;
       }
 
@@ -352,7 +350,7 @@ void *mining_opencl_thread(void *arg)
         }
       }
 
-      nonce_fixed += global_work_size;
+      start_nonce += global_work_size;
     }
     current_job.running = 0;
     clock_gettime(CLOCK_MONOTONIC, &end_time);
@@ -376,11 +374,11 @@ void *mining_cuda_thread(void *arg)
   char *current_job_id = NULL;
   unsigned long nonce_mask = 0xFFFFFFFFFFFFFFFFULL;
   unsigned long hashes_per_cuda_call = ctx->cuda_resources[mt->threadIndex].optimal_grid_size * ctx->cuda_resources[mt->threadIndex].optimal_block_size;
-  unsigned long nonce_fixed = (unsigned long)mt->threadIndex * hashes_per_cuda_call;
+  unsigned long start_nonce = (unsigned long)mt->threadIndex * hashes_per_cuda_call;
   if (ms->extranonce != NULL)
   {
     unsigned long extranonce_val = strtoull(ms->extranonce, NULL, 10);
-    unsigned long nonce_fixed = (extranonce_val << 32) | ((unsigned long)mt->threadIndex * hashes_per_cuda_call);
+    unsigned long start_nonce = (extranonce_val << 32) | ((unsigned long)mt->threadIndex * hashes_per_cuda_call);
   }
   int reporting_index = ctx->cpu_device_count + ctx->opencl_device_count + mt->threadIndex;
   ReportingDevice *cuda_reporting_device = ctx->hd->devices[reporting_index];
@@ -426,20 +424,19 @@ void *mining_cuda_thread(void *arg)
         break;
 
       CudaResult result = {0};
-      nonces_processed = 0;
       int error = run_cuda_hoohash_kernel(&ctx->cuda_resources[mt->threadIndex],
                                           state.PrevHeader, ms->global_target, state.mat, state.Timestamp,
-                                          nonce_mask, nonce_fixed, &result, &nonces_processed);
+                                          start_nonce, &result);
 
       pthread_mutex_lock(&ctx->hd->hashrate_mutex);
-      cuda_reporting_device->nonces_processed += nonces_processed;
-      nonces_processed_for_job += nonces_processed;
+      cuda_reporting_device->nonces_processed += hashes_per_cuda_call;
+      nonces_processed_for_job += hashes_per_cuda_call;
       pthread_mutex_unlock(&ctx->hd->hashrate_mutex);
 
       if (error != 0)
       {
         fprintf(stderr, "Device %d: Kernel execution failed: %d\n", mt->threadIndex, error);
-        nonce_fixed += nonces_processed;
+        start_nonce += hashes_per_cuda_call;
         break;
       }
 
@@ -459,7 +456,7 @@ void *mining_cuda_thread(void *arg)
         }
       }
 
-      nonce_fixed += nonces_processed;
+      start_nonce += hashes_per_cuda_call;
     }
     current_job.running = 0;
     clock_gettime(CLOCK_MONOTONIC, &end_time);

@@ -311,7 +311,7 @@ int initialize_mining(StratumContext *ctx, const char *username, const char *alg
           {
             const char *required_extensions[] = {"cl_khr_fp64"};
             size_t num_required_extensions = 1;
-            cl_int compile_kernel_error = compile_opencl_kernel_from_xxd_header(&ctx->opencl_resources[i], Hoohash_cl, Hoohash_cl_len, "Hoohash_hash", required_extensions, num_required_extensions);
+            cl_int compile_kernel_error = compile_opencl_kernel_from_xxd_header(ctx, &ctx->opencl_resources[i], Hoohash_cl, Hoohash_cl_len, "Hoohash_hash", required_extensions, num_required_extensions);
             if (compile_kernel_error != CL_SUCCESS)
             {
               printf("Failed to initialize OpenCL kernels, Error code %d.\n", compile_kernel_error);

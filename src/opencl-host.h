@@ -55,7 +55,7 @@ struct OpenCLResources
 };
 
 OpenCLResources *initalize_all_opencl_gpus(StratumContext *ctx, cl_uint *device_count);
-cl_int compile_opencl_kernel_from_xxd_header(OpenCLResources *resource, const unsigned char *kernel, unsigned int kernel_length, const char *kernel_name, const char **required_extensions, size_t num_required_extensions);
+cl_int compile_opencl_kernel_from_xxd_header(StratumContext *ctx, OpenCLResources *resource, const unsigned char *kernel, unsigned int kernel_length, const char *kernel_name, const char **required_extensions, size_t num_required_extensions);
 cl_int load_opencl_kernel_binary(OpenCLResources *resource, const char *binary_filename, const char *kernel_name);
 void cleanup_opencl_resources(OpenCLResources *resource);
 void cleanup_all_opencl_gpus(OpenCLResources *resources, cl_uint device_count);
@@ -63,5 +63,5 @@ void cleanup_all_opencl_gpus(OpenCLResources *resources, cl_uint device_count);
 // Move to hoohash-miner?
 cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, int threadindex, cl_ulong global_work_size, cl_ulong local_work_size,
                                  unsigned char *previous_header, unsigned char *target, double matrix[64][64],
-                                 unsigned long timestamp, cl_ulong nonce_mask, cl_ulong nonce_fixed, char *extranonce, OpenCLResult *result, cl_ulong *nonces_processed);
+                                 unsigned long timestamp, cl_ulong start_nonce, OpenCLResult *result);
 #endif

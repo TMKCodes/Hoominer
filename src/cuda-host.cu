@@ -27,9 +27,11 @@ CULaunchKernel_t p_cuLaunchKernel = NULL;
 CUModuleUnload_t p_cuModuleUnload = NULL;
 
 // Load CUDA driver library dynamically
-int load_cuda_library() {
+int load_cuda_library()
+{
     cuda_lib_handle = dlopen("libcuda.so.1", RTLD_LAZY);
-    if (!cuda_lib_handle) {
+    if (!cuda_lib_handle)
+    {
         fprintf(stderr, "Failed to load libcuda.so.1: %s\n", dlerror());
         return 0; // Indicate failure
     }
@@ -47,7 +49,8 @@ int load_cuda_library() {
 
     if (!p_cuInit || !p_cuDeviceGetCount || !p_cuDeviceGet || !p_cuDeviceGetName ||
         !p_cuDeviceGetAttribute || !p_cuModuleLoadData || !p_cuModuleGetFunction ||
-        !p_cuLaunchKernel || !p_cuModuleUnload) {
+        !p_cuLaunchKernel || !p_cuModuleUnload)
+    {
         fprintf(stderr, "Failed to resolve CUDA Driver API functions: %s\n", dlerror());
         dlclose(cuda_lib_handle);
         cuda_lib_handle = NULL;
@@ -56,7 +59,8 @@ int load_cuda_library() {
 
     // Initialize CUDA Driver API
     CUresult cu_err = p_cuInit(0);
-    if (cu_err != CUDA_SUCCESS) {
+    if (cu_err != CUDA_SUCCESS)
+    {
         // Note: cuGetErrorString is not dynamically loaded here for simplicity
         fprintf(stderr, "cuInit failed: %d\n", cu_err);
         dlclose(cuda_lib_handle);
@@ -186,7 +190,8 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
     devices_found = 0;
 
     // Check if CUDA library is loaded
-    if (!load_cuda_library()) {
+    if (!load_cuda_library())
+    {
         fprintf(stderr, "CUDA library loading failed, checking for AMD GPUs...\n");
         // TODO: Add OpenCL initialization for AMD GPUs here
         return NULL;
@@ -405,7 +410,8 @@ bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename
     cudaError_t err;
     CUresult cu_err;
 
-    if (!cuda_lib_handle) {
+    if (!cuda_lib_handle)
+    {
         fprintf(stderr, "CUDA library not loaded for %s\n", resource->device_name);
         return cudaErrorInitializationError;
     }
@@ -459,12 +465,12 @@ bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename
     calculate_optimal_dimensions(resource);
 
     printf("Kernel %s loaded for %s\n", kernel_name, resource->device_name);
-    
+
     return cudaSuccess;
 }
 
 cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *previous_header, unsigned char *target, double matrix[64][64],
-                                    unsigned long timestamp, unsigned long nonce_mask, unsigned long nonce_fixed, CudaResult *result, unsigned long long *nonces_processed)
+                                    unsigned long timestamp, unsigned long start_nonce, CudaResult *result)
 {
     cudaError_t err;
 
@@ -474,7 +480,8 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
         return cudaErrorInvalidValue;
     }
 
-    if (!cuda_lib_handle) {
+    if (!cuda_lib_handle)
+    {
         fprintf(stderr, "CUDA library not loaded for %s\n", resource->device_name);
         return cudaErrorInitializationError;
     }
@@ -514,15 +521,6 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
         return err;
     }
 
-    err = cudaMemcpyAsync(resource->random_state, resource->h_random_state,
-                          4 * sizeof(unsigned long long),
-                          cudaMemcpyHostToDevice, resource->stream);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Memory copy to random_state failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
-        return err;
-    }
-
     CudaResult init_result = {0};
     err = cudaMemcpyAsync(resource->result, &init_result, sizeof(CudaResult), cudaMemcpyHostToDevice, resource->stream);
     if (err != cudaSuccess)
@@ -531,24 +529,12 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
         return err;
     }
 
-    *nonces_processed = 0;
-    err = cudaMemcpyAsync(resource->nonces_processed, nonces_processed, sizeof(unsigned long long), cudaMemcpyHostToDevice, resource->stream);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Memory copy to nonces_processed failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
-        return err;
-    }
-
-    unsigned long random_type = RANDOM_TYPE_LEAN;
     void *args[] = {
-        &nonce_mask,
-        &nonce_fixed,
+        &start_nonce,
         &resource->previous_header,
         &resource->timestamp,
         &resource->matrix,
         &resource->target,
-        &random_type,
-        &resource->random_state,
         &resource->result,
         &resource->nonces_processed};
 
@@ -579,13 +565,6 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
         return err;
     }
 
-    err = cudaMemcpyAsync(nonces_processed, resource->nonces_processed, sizeof(unsigned long long), cudaMemcpyDeviceToHost, resource->stream);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Result copy failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
-        return err;
-    }
-
     err = cudaStreamSynchronize(resource->stream);
     if (err != cudaSuccess)
     {
@@ -605,12 +584,11 @@ void cleanup_cuda_resources(CudaResources *resource)
     free(resource->h_random_state);
     cudaFree(resource->previous_header);
     cudaFree(resource->timestamp);
-    cudaFree(resource->nonces_processed);
     cudaFree(resource->matrix);
     cudaFree(resource->target);
     cudaFree(resource->result);
-    cudaFree(resource->random_state);
-    if (resource->module && p_cuModuleUnload) {
+    if (resource->module && p_cuModuleUnload)
+    {
         p_cuModuleUnload(resource->module);
     }
     cudaStreamDestroy(resource->stream);
@@ -625,7 +603,8 @@ void cleanup_all_cuda_gpus(CudaResources *resources, unsigned int device_count)
         cleanup_cuda_resources(&resources[i]);
     }
     free(resources);
-    if (cuda_lib_handle) {
+    if (cuda_lib_handle)
+    {
         dlclose(cuda_lib_handle);
         cuda_lib_handle = NULL;
     }

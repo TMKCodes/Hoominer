@@ -942,13 +942,12 @@ typedef struct {
   uchar hash[32];
 } Result;
 
-__kernel void
-Hoohash_hash(const ulong local_size, const ulong nonce_mask,
-             const ulong nonce_fixed, __global uchar *previous_header,
-             __global long *timestamp, __global double matrix[64][64],
-             __global uchar *target, const ulong random_type,
-             __global ulong4 *random_state, volatile __global Result *result,
-             volatile __global ulong *nonces_processed) {
+__kernel void Hoohash_hash(const ulong local_size, const ulong start_nonce,
+                           __global uchar *previous_header,
+                           __global long *timestamp,
+                           __global double matrix[64][64],
+                           __global uchar *target,
+                           volatile __global Result *result) {
 #if defined(PAL)
   int nonceId = get_group_id(0) * local_size + get_local_id(0);
 #else
@@ -961,17 +960,7 @@ Hoohash_hash(const ulong local_size, const ulong nonce_mask,
   work_group_barrier(CLK_GLOBAL_MEM_FENCE);
 #endif
 
-  ulong nonce;
-  switch (random_type) {
-  case RANDOM_TYPE_LEAN:
-    // nonce = ((ulong *)random_state)[0] + nonceId;
-    nonce = (((__global ulong *)random_state)[0]) ^ nonceId;
-    break;
-  case RANDOM_TYPE_XOSHIRO:
-  default:
-    nonce = xoshiro256_next(((global ulong4 *)random_state) + nonceId);
-  }
-  nonce = (nonce & nonce_mask) | nonce_fixed;
+  ulong nonce = start_nonce + nonceId;
   // printf("Trying nonce %lu\n", nonce);
 
   // Compute BLAKE3 hash
@@ -991,7 +980,6 @@ Hoohash_hash(const ulong local_size, const ulong nonce_mask,
   uchar vector[64] = {0};
   double product[64] = {0};
   HoohashMatrixMultiplication(matrix, first_pass, final_hash, nonce);
-  atom_inc(nonces_processed);
   // printf("Work item %d incremented nonces_processed\n", nonceId);
   uchar reversed_hash[DOMAIN_HASH_SIZE];
 #pragma unroll

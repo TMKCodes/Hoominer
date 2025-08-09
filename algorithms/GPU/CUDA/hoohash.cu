@@ -1027,30 +1027,15 @@ struct CudaResult
 
 // CUDA kernel
 extern "C" __global__ void Hoohash_hash(
-    unsigned long nonce_mask,
-    unsigned long nonce_fixed,
+    unsigned long start_nonce,
     const unsigned char *previous_header,
     const unsigned long *timestamp,
     const double matrix[64][64],
     unsigned char *target,
-    unsigned long random_type,
-    unsigned long long *random_state,
-    CudaResult *result,
-    unsigned long long *nonces_processed)
+    CudaResult *result)
 {
     int nonceId = threadIdx.x + blockIdx.x * blockDim.x;
-    uint64_t nonce;
-    switch (random_type)
-    {
-    case RANDOM_TYPE_LEAN:
-        // nonce = ((ulong *)random_state)[0] + nonceId;
-        nonce = (((ulong *)random_state)[0]) ^ nonceId;
-        break;
-    case RANDOM_TYPE_XOSHIRO:
-    default:
-        nonce = xoshiro256_next(((ulong4 *)random_state) + nonceId);
-    }
-    nonce = (nonce & nonce_mask) | nonce_fixed;
+    uint64_t nonce = start_nonce + nonceId;
     // Hash computation
     blake3_hasher hasher;
     blake3_hasher_init(&hasher);
@@ -1068,7 +1053,6 @@ extern "C" __global__ void Hoohash_hash(
 
     unsigned char final_hash[DOMAIN_HASH_SIZE];
     HoohashMatrixMultiplication(matrix, first_pass, final_hash, nonce);
-    atomicAdd(nonces_processed, 1ULL);
     unsigned char reversed_hash[DOMAIN_HASH_SIZE];
     for (int i = 0; i < DOMAIN_HASH_SIZE; i++)
     {

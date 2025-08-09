@@ -9,6 +9,7 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
   config->list_gpus = false;
   config->cpu_threads = 0;
   config->debug = false;
+  config->opencl_optimization_level = 2;
   bool gpus_selected = false;
   for (int i = 1; i < argc; i++)
   {
@@ -18,6 +19,8 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
       config->password = argv[++i];
     else if (!strcmp(argv[i], "--algorithm") && i + 1 < argc)
       config->algorithm = argv[++i];
+    else if (!strcmp(argv[i], "--opencl-o") && i + 1 < argc)
+      config->opencl_optimization_level = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--disable-cpu"))
       config->disable_cpu = true;
     else if (!strcmp(argv[i], "--disable-gpu"))
@@ -101,6 +104,7 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
       printf("\nGPU parameters: \n");
       printf("--list-gpus\t\t\t\t\tList gpu bus id's.\n");
       printf("--gpu-ids <bus-id list>\t\t\t\tSelect which GPU's to use, seperate bus id's with comma (if not specified all devices will be used).\n");
+      printf("--opencl-o <level>\t\t\tSelect OpenCL compile time optimization level");
 
       exit(0);
     }
