@@ -1,39 +1,3 @@
-# Compiler
-NVCC = nvcc
-
-# Flags
-CFLAGS = -Xcompiler "-fPIC -g -O0 -Wall -Wextra -DTEST -DDEBUG"
-INCLUDES = -Ialgorithms/blake3/c -I/opt/cuda/include -I/usr/local/include -I/usr/include
-NVCCFLAGS = $(CFLAGS) $(INCLUDES)
-LDFLAGS = -lcudart_static -lm -lOpenCL -L/opt/cuda/lib64 -lcuda -lcudart -lnvidia-ml
-NVCCFLAGS = --compiler-options "-static-libgcc -static-libstdc++"
-# Directories
-SRC_DIR = src
-BUILD_DIR = build
-
-# Output binary
-MINER_BIN = $(BUILD_DIR)/hoominer
-
-# Source files
-C_SRCS = $(wildcard $(SRC_DIR)/*.c)
-CU_SRCS = $(wildcard $(SRC_DIR)/*.cu)
-
-ALL_SRCS = $(C_SRCS) $(CU_SRCS)
-
-OBJS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SRCS)) \
-       $(patsubst $(SRC_DIR)/%.cu, $(BUILD_DIR)/%.cu.o, $(CU_SRCS))
-
-# Default rule
-all: hoohash $(MINER_BIN)
-
-# Build static libs
-.PHONY: hoohash hoohash-clean
-hoohash:
-	$(MAKE) -C algorithms/hoohash
-
-hoohash-clean:
-	$(MAKE) -C algorithms/hoohash clean
-
 ## blake3
 
 # cmake --build c/build --target install
@@ -60,6 +24,42 @@ hoohash-clean:
 
 # pciaccess-clean:
 # 	rm -rf external/libpciaccess/build external/libpciaccess/install
+
+# Compiler
+NVCC = nvcc
+
+# Flags
+CFLAGS = -Xcompiler "-fPIC -g -O0 -Wall -Wextra -DTEST -DDEBUG -static-libgcc -static-libstdc++"
+INCLUDES = -Ialgorithms/blake3/c -I/opt/cuda/include -I/usr/local/include -I/usr/include
+NVCCFLAGS = $(CFLAGS) $(INCLUDES) --linker-options "-static"
+LDFLAGS = -lcudart_static -lm -lOpenCL
+
+# Directories
+SRC_DIR = src
+BUILD_DIR = build
+
+# Output binary
+MINER_BIN = $(BUILD_DIR)/hoominer
+
+# Source files
+C_SRCS = $(wildcard $(SRC_DIR)/*.c)
+CU_SRCS = $(wildcard $(SRC_DIR)/*.cu)
+
+ALL_SRCS = $(C_SRCS) $(CU_SRCS)
+
+OBJS = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SRCS)) \
+       $(patsubst $(SRC_DIR)/%.cu, $(BUILD_DIR)/%.cu.o, $(CU_SRCS))
+
+# Default rule
+all: hoohash $(MINER_BIN)
+
+# Build static libs
+.PHONY: hoohash hoohash-clean
+hoohash:
+	$(MAKE) -C algorithms/hoohash
+
+hoohash-clean:
+	$(MAKE) -C algorithms/hoohash clean
 
 # Ensure build dir exists
 $(BUILD_DIR):

@@ -107,7 +107,8 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
       printf("\nGPU parameters: \n");
       printf("--list-gpus\t\t\t\t\tList gpu bus id's.\n");
       printf("--gpu-ids <bus-id list>\t\t\t\tSelect which GPU's to use, seperate bus id's with comma (if not specified all devices will be used).\n");
-      printf("--opencl-o <level>\t\t\tSelect OpenCL compile time optimization level");
+      printf("--opencl-o <level>\t\t\tSelect OpenCL compile time optimization level.");
+      printf("--gpu-work-multiplier <level>\t\t\tSelect multiplier for OpenCL global work size or Nvidia blocks size.");
 
       exit(0);
     }
