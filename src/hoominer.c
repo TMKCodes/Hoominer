@@ -345,7 +345,7 @@ int initialize_mining(StratumContext *ctx, const char *username, const char *alg
               continue;
             }
             fclose(file_check);
-            int supported_archs[] = {50, 52, 60, 61, 70, 75, 80, 86, 89, 90, 100};
+            int supported_archs[] = {50, 52, 60, 61, 70, 75, 80, 86, 89, 90, 100, 110, 120};
             int supported = 0;
             for (long unsigned int j = 0; j < sizeof(supported_archs) / sizeof(supported_archs[0]); j++)
             {

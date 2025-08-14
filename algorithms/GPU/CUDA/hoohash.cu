@@ -804,7 +804,12 @@ __device__ void blake3_hasher_finalize(const blake3_hasher *self, uint8_t *out,
     blake3_hasher_finalize_seek(self, 0, out, out_len);
 }
 
-__device__ double MediumComplexNonLinear(double x) { return exp(sin(x) + cos(x)); }
+__device__ double MediumComplexNonLinear(double x)
+{
+    double s, c;
+    sincos(x, &s, &c);
+    return exp(s + c);
+}
 
 __device__ double IntermediateComplexNonLinear(double x)
 {

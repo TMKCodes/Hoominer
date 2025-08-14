@@ -14,3 +14,5 @@ nvcc -arch=sm_80 -cubin hoohash.cu -o ../../../releases/hoominer/cubins/hoohash_
 nvcc -arch=sm_89 -cubin hoohash.cu -o ../../../releases/hoominer/cubins/hoohash_sm89.cubin -I/usr/local/cuda/include -I/usr/include -fmad=false -prec-div=true -expt-relaxed-constexpr
 nvcc -arch=sm_90 -cubin hoohash.cu -o ../../../releases/hoominer/cubins/hoohash_sm90.cubin -I/usr/local/cuda/include -I/usr/include -fmad=false -prec-div=true -expt-relaxed-constexpr
 nvcc -arch=sm_100 -cubin hoohash.cu -o ../../../releases/hoominer/cubins/hoohash_sm100.cubin -I/usr/local/cuda/include -I/usr/include -fmad=false -prec-div=true -expt-relaxed-constexpr
+nvcc -arch=sm_110 -cubin hoohash.cu -o ../../../releases/hoominer/cubins/hoohash_sm100.cubin -I/usr/local/cuda/include -I/usr/include -fmad=false -prec-div=true -expt-relaxed-constexpr
+nvcc -arch=sm_120 -cubin hoohash.cu -o ../../../releases/hoominer/cubins/hoohash_sm100.cubin -I/usr/local/cuda/include -I/usr/include -fmad=false -prec-div=true -expt-relaxed-constexpr

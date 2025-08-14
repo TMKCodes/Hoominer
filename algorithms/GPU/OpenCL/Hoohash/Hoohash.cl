@@ -758,7 +758,11 @@ void ConvertBytesToUint32Array(uint *H, uchar *bytes) {
   }
 }
 
-double MediumComplexNonLinear(double x) { return exp(sin(x) + cos(x)); }
+double MediumComplexNonLinear(double x) {
+  double sin_x, cos_x;
+  sin_x = sincos(x, &cos_x); // OpenCL's sincos function
+  return exp(sin_x + cos_x);
+}
 
 double IntermediateComplexNonLinear(double x) {
   if (x == PI / 2 || x == 3 * PI / 2) {
