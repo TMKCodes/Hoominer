@@ -529,25 +529,56 @@ cl_int load_opencl_kernel_binary(StratumContext *ctx, OpenCLResources *resource,
   return CL_SUCCESS;
 }
 
-cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, int threadindex, cl_ulong global_work_size, cl_ulong local_work_size,
-                                 unsigned char *previous_header, unsigned char *target, double matrix[64][64],
-                                 unsigned long timestamp, cl_ulong start_nonce, OpenCLResult *result)
+cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, int threadindex,
+                                 cl_ulong global_work_size, cl_ulong local_work_size,
+                                 unsigned char *previous_header, unsigned char *target,
+                                 double matrix[64][64], unsigned long timestamp,
+                                 cl_ulong start_nonce, OpenCLResult *result)
 {
-  cl_int err;
-  cl_event write_events[5], kernel_event, read_result_event;
+  cl_int err = CL_SUCCESS;
+  cl_event write_events[5] = {NULL, NULL, NULL, NULL, NULL};
+  cl_event kernel_event = NULL;
+  cl_event read_result_event = NULL;
 
   // Validate inputs
   if (!resource || !previous_header || !target || !matrix || !result)
   {
-    fprintf(stderr, "Invalid input pointers for %s\n", resource ? resource->device_name : "unknown");
+    fprintf(stderr, "Invalid input pointers for %s\n",
+            resource ? resource->device_name : "unknown");
     return CL_INVALID_VALUE;
   }
 
+  // Flatten matrix into row-major 1D array to guarantee layout
+  const size_t MAT_DIM = 64;
+  const size_t MAT_COUNT = MAT_DIM * MAT_DIM;
+  const size_t MAT_BYTES = MAT_COUNT * sizeof(double);
+  double *flat_matrix = (double *)malloc(MAT_BYTES);
+  if (!flat_matrix)
+  {
+    fprintf(stderr, "Failed to allocate host buffer for flattened matrix\n");
+    return CL_OUT_OF_HOST_MEMORY;
+  }
+  for (size_t r = 0; r < MAT_DIM; ++r)
+  {
+    for (size_t c = 0; c < MAT_DIM; ++c)
+    {
+      flat_matrix[r * MAT_DIM + c] = matrix[r][c];
+    }
+  }
+
   // Write to persistent buffers asynchronously
-  err = clEnqueueWriteBuffer(resource->queue, resource->previous_header_buf, CL_FALSE, 0, DOMAIN_HASH_SIZE, previous_header, 0, NULL, &write_events[0]);
-  err |= clEnqueueWriteBuffer(resource->queue, resource->timestamp_buf, CL_FALSE, 0, sizeof(cl_long), &timestamp, 0, NULL, &write_events[1]);
-  err |= clEnqueueWriteBuffer(resource->queue, resource->matrix_buf, CL_FALSE, 0, 64 * 64 * sizeof(double), matrix, 0, NULL, &write_events[2]);
-  err |= clEnqueueWriteBuffer(resource->queue, resource->target_buf, CL_FALSE, 0, DOMAIN_HASH_SIZE, target, 0, NULL, &write_events[3]);
+  err = clEnqueueWriteBuffer(resource->queue, resource->previous_header_buf,
+                             CL_FALSE, 0, DOMAIN_HASH_SIZE, previous_header,
+                             0, NULL, &write_events[0]);
+  err |= clEnqueueWriteBuffer(resource->queue, resource->timestamp_buf,
+                              CL_FALSE, 0, sizeof(cl_long), &timestamp,
+                              0, NULL, &write_events[1]);
+  err |= clEnqueueWriteBuffer(resource->queue, resource->matrix_buf,
+                              CL_FALSE, 0, MAT_BYTES, flat_matrix,
+                              0, NULL, &write_events[2]);
+  err |= clEnqueueWriteBuffer(resource->queue, resource->target_buf,
+                              CL_FALSE, 0, DOMAIN_HASH_SIZE, target,
+                              0, NULL, &write_events[3]);
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Buffer write failed for %s: %d\n", resource->device_name, err);
@@ -556,14 +587,16 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, int threadindex, cl_
 
   // Initialize result buffer
   OpenCLResult init_result = {0};
-  err = clEnqueueWriteBuffer(resource->queue, resource->result_buf, CL_FALSE, 0, sizeof(OpenCLResult), &init_result, 0, NULL, &write_events[4]);
+  err = clEnqueueWriteBuffer(resource->queue, resource->result_buf, CL_FALSE,
+                             0, sizeof(OpenCLResult), &init_result,
+                             0, NULL, &write_events[4]);
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Result buffer write failed for %s: %d\n", resource->device_name, err);
     goto cleanup;
   }
 
-  // Set kernel arguments
+  // Set kernel arguments (assumes kernel signature expects matrix as __global const double *matrix)
   err = clSetKernelArg(resource->kernel, 0, sizeof(cl_ulong), &local_work_size);
   err |= clSetKernelArg(resource->kernel, 1, sizeof(cl_ulong), &start_nonce);
   err |= clSetKernelArg(resource->kernel, 2, sizeof(cl_mem), &resource->previous_header_buf);
@@ -577,16 +610,21 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, int threadindex, cl_
     goto cleanup;
   }
 
-  // Execute kernel asynchronously
-  err = clEnqueueNDRangeKernel(resource->queue, resource->kernel, 1, NULL, &global_work_size, &local_work_size, 5, write_events, &kernel_event);
+  // Execute kernel asynchronously, waiting for all writes to finish
+  err = clEnqueueNDRangeKernel(resource->queue, resource->kernel, 1, NULL,
+                               (const size_t *)&global_work_size,
+                               (const size_t *)&local_work_size,
+                               5, write_events, &kernel_event);
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Kernel execution failed for %s: %d\n", resource->device_name, err);
     goto cleanup;
   }
 
-  // Read result asynchronously
-  err = clEnqueueReadBuffer(resource->queue, resource->result_buf, CL_FALSE, 0, sizeof(OpenCLResult), result, 1, &kernel_event, &read_result_event);
+  // Read result asynchronously (wait on kernel_event)
+  err = clEnqueueReadBuffer(resource->queue, resource->result_buf, CL_FALSE,
+                            0, sizeof(OpenCLResult), result, 1,
+                            &kernel_event, &read_result_event);
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Read failed for %s: %d\n", resource->device_name, err);
@@ -594,22 +632,40 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, int threadindex, cl_
   }
 
   // Wait for completion
-  cl_event read_events[1] = {read_result_event};
-  err = clWaitForEvents(1, read_events);
-  if (err != CL_SUCCESS)
   {
-    fprintf(stderr, "Event wait failed for %s: %d\n", resource->device_name, err);
+    cl_event read_events[1] = {read_result_event};
+    err = clWaitForEvents(1, read_events);
+    if (err != CL_SUCCESS)
+    {
+      fprintf(stderr, "Event wait failed for %s: %d\n", resource->device_name, err);
+    }
   }
 
 cleanup:
+  // Free host buffer
+  if (flat_matrix)
+    free(flat_matrix);
+
   // Clean up events
   for (int i = 0; i < 5; i++)
+  {
     if (write_events[i])
+    {
       clReleaseEvent(write_events[i]);
+      write_events[i] = NULL;
+    }
+  }
   if (kernel_event)
+  {
     clReleaseEvent(kernel_event);
+    kernel_event = NULL;
+  }
   if (read_result_event)
+  {
     clReleaseEvent(read_result_event);
+    read_result_event = NULL;
+  }
+
   return err;
 }
 

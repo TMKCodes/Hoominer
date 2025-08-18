@@ -888,9 +888,8 @@ int compare_target(uchar *hash, __global uchar *target) {
   return 0;
 }
 
-void HoohashMatrixMultiplication(__global double mat[64][64],
-                                 const uchar *hashBytes, uchar *output,
-                                 ulong nonce) {
+void HoohashMatrixMultiplication(__global double *mat, const uchar *hashBytes,
+                                 uchar *output, ulong nonce) {
   uchar vector[64] = {0};
   double product[64] = {0};
   uchar scaledValues[32] = {0};
@@ -916,7 +915,7 @@ void HoohashMatrixMultiplication(__global double mat[64][64],
   for (int i = 0; i < 64; i++) {
     for (int j = 0; j < 64; j++) {
       if (sw <= 0.02) {
-        double matrixScaledByHash = mat[i][j] * hashMod;
+        double matrixScaledByHash = mat[i * 64 + j] * hashMod;
         double matrixScaledByHashAndVector =
             matrixScaledByHash * (double)vector[j];
         double input = matrixScaledByHashAndVector + nonceMod;
@@ -925,7 +924,7 @@ void HoohashMatrixMultiplication(__global double mat[64][64],
         double output = scaledByVector * multiplier;
         product[i] += output;
       } else {
-        double matrixElementScaledByDivider = mat[i][j] * divider;
+        double matrixElementScaledByDivider = mat[i * 64 + j] * divider;
         double output = matrixElementScaledByDivider * (double)vector[j];
         product[i] += output;
       }
@@ -954,8 +953,7 @@ typedef struct {
 
 __kernel void Hoohash_hash(const ulong local_size, const ulong start_nonce,
                            __global uchar *previous_header,
-                           __global long *timestamp,
-                           __global double matrix[64][64],
+                           __global long *timestamp, __global double *matrix,
                            __global uchar *target,
                            volatile __global Result *result) {
 #if defined(PAL)
