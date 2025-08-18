@@ -1,6 +1,7 @@
 #pragma OPENCL EXTENSION cl_khr_fp64 : enable
 #pragma OPENCL EXTENSION cl_khr_int64_base_atomics : enable
 #pragma OPENCL SELECT_ROUNDING_MODE rte
+#pragma OPENCL FP_CONTRACT OFF
 
 #define BLAKE3_VERSION_STRING "1.8.2"
 #define BLAKE3_KEY_LEN 32
@@ -49,9 +50,9 @@ typedef struct {
 typedef struct {
   uint input_cv[8];
   ulong counter;
-  char block[BLAKE3_BLOCK_LEN];
-  char block_len;
-  char flags;
+  uchar block[BLAKE3_BLOCK_LEN];
+  uchar block_len;
+  uchar flags;
 } output_t;
 
 __constant uchar MSG_SCHEDULE[7][16] = {
@@ -120,10 +121,13 @@ uint load32(const void *src) {
   return ((uint)(p[0]) << 0) | ((uint)(p[1]) << 8) | ((uint)(p[2]) << 16) |
          ((uint)(p[3]) << 24);
 }
+__attribute__((noinline)) uint counter_low(ulong counter) {
+  return (uint)counter;
+}
 
-uint counter_low(ulong counter) { return (uint)counter; }
-
-uint counter_high(ulong counter) { return (uint)(counter >> 32); }
+__attribute__((noinline)) uint counter_high(ulong counter) {
+  return (uint)(counter >> 32);
+}
 
 uint rotr32(uint w, uint c) { return (w >> c) | (w << (32 - c)); }
 
@@ -201,12 +205,11 @@ void blake3_compress_in_place(uint cv[8], const uchar block[BLAKE3_BLOCK_LEN],
   blake3_compress_in_place_portable(cv, block, block_len, counter, flags);
 }
 
-void store32(void *dst, uint w) {
-  uchar *p = (uchar *)dst;
-  p[0] = (uchar)(w >> 0);
-  p[1] = (uchar)(w >> 8);
-  p[2] = (uchar)(w >> 16);
-  p[3] = (uchar)(w >> 24);
+void store32(uchar *dst, uint w) {
+  dst[0] = (uchar)(w >> 0);
+  dst[1] = (uchar)(w >> 8);
+  dst[2] = (uchar)(w >> 16);
+  dst[3] = (uchar)(w >> 24);
 }
 
 void store_cv_words(uchar bytes_out[32], uint cv_words[8]) {
@@ -220,13 +223,15 @@ void output_chaining_value(const output_t *self, uchar cv[32]) {
   for (int i = 0; i < 8; i++) {
     cv_words[i] = self->input_cv[i];
   }
-  blake3_compress_in_place(cv_words, (const uchar *)self->block,
-                           self->block_len, self->counter, self->flags);
+  blake3_compress_in_place(cv_words, self->block, self->block_len,
+                           self->counter, self->flags);
   store_cv_words(cv, cv_words);
 }
-
-unsigned int highest_one(ulong x) {
-  return sizeof(x) * 8 - clz(x); // Use OpenCL's clz (count leading zeros)
+__attribute__((noinline)) uint highest_one(ulong x) {
+  if (x == 0ul)
+    return 0u;
+  // clz(x) is defined for x!=0; return index (1..64)
+  return 64u - (uint)clz(x);
 }
 
 void hasher_merge_cv_stack(blake3_hasher *self, ulong total_len) {
@@ -263,7 +268,7 @@ size_t chunk_state_fill_buf(blake3_chunk_state *self, const uchar *input,
   return take;
 }
 
-void chunk_state_update(blake3_chunk_state *self, const char *input,
+void chunk_state_update(blake3_chunk_state *self, const uchar *input,
                         size_t input_len) {
   if (self->buf_len > 0) {
     size_t take = chunk_state_fill_buf(self, (const uchar *)input, input_len);
@@ -281,7 +286,7 @@ void chunk_state_update(blake3_chunk_state *self, const char *input,
     }
   }
   while (input_len > BLAKE3_BLOCK_LEN) {
-    blake3_compress_in_place(self->cv, (const uchar *)input, BLAKE3_BLOCK_LEN,
+    blake3_compress_in_place(self->cv, input, BLAKE3_BLOCK_LEN,
                              self->chunk_counter,
                              self->flags | chunk_state_maybe_start_flag(self));
     self->blocks_compressed += 1;
@@ -308,8 +313,9 @@ void chunk_state_reset(blake3_chunk_state *self, const uint key[8],
   }
   self->buf_len = 0;
 }
-
-ulong round_down_to_power_of_2(ulong x) {
+__attribute__((noinline)) ulong round_down_to_power_of_2(ulong x) {
+  if (x == 0ul)
+    return 0ul;
   x |= x >> 1;
   x |= x >> 2;
   x |= x >> 4;
@@ -408,7 +414,7 @@ size_t compress_chunks_parallel(const uchar *input, size_t input_len,
     blake3_chunk_state chunk_state;
     chunk_state_init(&chunk_state, key, flags);
     chunk_state.chunk_counter = counter;
-    chunk_state_update(&chunk_state, (const char *)&input[input_position],
+    chunk_state_update(&chunk_state, &input[input_position],
                        input_len - input_position);
     output_t output = chunk_state_output(&chunk_state);
     output_chaining_value(&output, &out[chunks_array_len * BLAKE3_OUT_LEN]);
@@ -473,7 +479,7 @@ void blake3_hasher_update_base_global(blake3_hasher *self, __global void *input,
   if (input_len == 0) {
     return;
   }
-  __global char *global_input_bytes = (__global char *)input;
+  __global uchar *global_input_bytes = (__global char *)input;
   if (chunk_state_len(&self->chunk) > 0) {
     size_t take = BLAKE3_CHUNK_LEN - chunk_state_len(&self->chunk);
     if (take > input_len) {
@@ -483,7 +489,7 @@ void blake3_hasher_update_base_global(blake3_hasher *self, __global void *input,
     for (size_t i = 0; i < take; i++) {
       private_buffer[i] = global_input_bytes[i];
     }
-    chunk_state_update(&self->chunk, (char *)private_buffer, take);
+    chunk_state_update(&self->chunk, (uchar *)private_buffer, take);
     global_input_bytes += take;
     input_len -= take;
     if (input_len > 0) {
@@ -497,12 +503,12 @@ void blake3_hasher_update_base_global(blake3_hasher *self, __global void *input,
     }
   }
   while (input_len > BLAKE3_CHUNK_LEN) {
-    size_t subtree_len = round_down_to_power_of_2(input_len);
-    ulong count_so_far = self->chunk.chunk_counter * BLAKE3_CHUNK_LEN;
-    while ((((ulong)(subtree_len - 1)) & count_so_far) != 0) {
-      subtree_len /= 2;
+    ulong subtree_len = round_down_to_power_of_2((ulong)input_len);
+    ulong count_so_far = self->chunk.chunk_counter * (ulong)BLAKE3_CHUNK_LEN;
+    while (((subtree_len - 1ul) & count_so_far) != 0ul) {
+      subtree_len >>= 1; // divide by 2
     }
-    size_t subtree_chunks = subtree_len >> BLAKE3_CHUNK_LEN_LOG2;
+    size_t subtree_chunks = (size_t)(subtree_len >> BLAKE3_CHUNK_LEN_LOG2);
     if (subtree_len <= BLAKE3_CHUNK_LEN) {
       blake3_chunk_state chunk_state;
       chunk_state_init(&chunk_state, self->key, self->chunk.flags);
@@ -511,7 +517,7 @@ void blake3_hasher_update_base_global(blake3_hasher *self, __global void *input,
       for (size_t i = 0; i < subtree_len; i++) {
         private_buffer[i] = global_input_bytes[i];
       }
-      chunk_state_update(&chunk_state, (char *)private_buffer, subtree_len);
+      chunk_state_update(&chunk_state, (uchar *)private_buffer, subtree_len);
       output_t output = chunk_state_output(&chunk_state);
       uchar cv[BLAKE3_OUT_LEN];
       output_chaining_value(&output, cv);
@@ -538,7 +544,7 @@ void blake3_hasher_update_base_global(blake3_hasher *self, __global void *input,
     for (size_t i = 0; i < input_len; i++) {
       private_buffer[i] = global_input_bytes[i];
     }
-    chunk_state_update(&self->chunk, (char *)private_buffer, input_len);
+    chunk_state_update(&self->chunk, (uchar *)private_buffer, input_len);
     hasher_merge_cv_stack(self, self->chunk.chunk_counter);
   }
 }
@@ -549,7 +555,7 @@ void blake3_hasher_update_base_private(blake3_hasher *self,
   if (input_len == 0) {
     return;
   }
-  __private char *private_input_bytes = (__private char *)input;
+  __private uchar *private_input_bytes = (__private char *)input;
   if (chunk_state_len(&self->chunk) > 0) {
     size_t take = BLAKE3_CHUNK_LEN - chunk_state_len(&self->chunk);
     if (take > input_len) {
@@ -559,7 +565,7 @@ void blake3_hasher_update_base_private(blake3_hasher *self,
     for (size_t i = 0; i < take; i++) {
       private_buffer[i] = private_input_bytes[i];
     }
-    chunk_state_update(&self->chunk, (char *)private_buffer, take);
+    chunk_state_update(&self->chunk, (uchar *)private_buffer, take);
     private_input_bytes += take;
     input_len -= take;
     if (input_len > 0) {
@@ -587,13 +593,13 @@ void blake3_hasher_update_base_private(blake3_hasher *self,
       for (size_t i = 0; i < subtree_len; i++) {
         private_buffer[i] = private_input_bytes[i];
       }
-      chunk_state_update(&chunk_state, (char *)private_buffer, subtree_len);
+      chunk_state_update(&chunk_state, (uchar *)private_buffer, subtree_len);
       output_t output = chunk_state_output(&chunk_state);
       uchar cv[BLAKE3_OUT_LEN];
       output_chaining_value(&output, cv);
       hasher_push_cv(self, cv, chunk_state.chunk_counter);
     } else {
-      char cv_pair[2 * BLAKE3_OUT_LEN];
+      uchar cv_pair[2 * BLAKE3_OUT_LEN];
       uchar private_buffer[BLAKE3_CHUNK_LEN];
       for (size_t i = 0; i < subtree_len; i++) {
         private_buffer[i] = private_input_bytes[i];
@@ -614,7 +620,7 @@ void blake3_hasher_update_base_private(blake3_hasher *self,
     for (size_t i = 0; i < input_len; i++) {
       private_buffer[i] = private_input_bytes[i];
     }
-    chunk_state_update(&self->chunk, (char *)private_buffer, input_len);
+    chunk_state_update(&self->chunk, (uchar *)private_buffer, input_len);
     hasher_merge_cv_stack(self, self->chunk.chunk_counter);
   }
 }
@@ -684,7 +690,7 @@ void output_root_bytes(output_t *self, ulong seek, uchar *out, size_t out_len) {
     return;
   }
   ulong output_block_counter = seek >> 6;
-  size_t offset_within_block = seek & 63;
+  size_t offset_within_block = (size_t)(seek & 63ul);
   uchar wide_buf[64];
   if (offset_within_block) {
     blake3_compress_xof(self->input_cv, (uchar *)self->block, self->block_len,
