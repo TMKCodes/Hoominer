@@ -479,7 +479,7 @@ void blake3_hasher_update_base_global(blake3_hasher *self, __global void *input,
   if (input_len == 0) {
     return;
   }
-  __global uchar *global_input_bytes = (__global char *)input;
+  __global uchar *global_input_bytes = (__global uchar *)input;
   if (chunk_state_len(&self->chunk) > 0) {
     size_t take = BLAKE3_CHUNK_LEN - chunk_state_len(&self->chunk);
     if (take > input_len) {
@@ -502,43 +502,6 @@ void blake3_hasher_update_base_global(blake3_hasher *self, __global void *input,
       return;
     }
   }
-  while (input_len > BLAKE3_CHUNK_LEN) {
-    ulong subtree_len = round_down_to_power_of_2((ulong)input_len);
-    ulong count_so_far = self->chunk.chunk_counter * (ulong)BLAKE3_CHUNK_LEN;
-    while (((subtree_len - 1ul) & count_so_far) != 0ul) {
-      subtree_len >>= 1; // divide by 2
-    }
-    size_t subtree_chunks = (size_t)(subtree_len >> BLAKE3_CHUNK_LEN_LOG2);
-    if (subtree_len <= BLAKE3_CHUNK_LEN) {
-      blake3_chunk_state chunk_state;
-      chunk_state_init(&chunk_state, self->key, self->chunk.flags);
-      chunk_state.chunk_counter = self->chunk.chunk_counter;
-      uchar private_buffer[BLAKE3_CHUNK_LEN];
-      for (size_t i = 0; i < subtree_len; i++) {
-        private_buffer[i] = global_input_bytes[i];
-      }
-      chunk_state_update(&chunk_state, (uchar *)private_buffer, subtree_len);
-      output_t output = chunk_state_output(&chunk_state);
-      uchar cv[BLAKE3_OUT_LEN];
-      output_chaining_value(&output, cv);
-      hasher_push_cv(self, cv, chunk_state.chunk_counter);
-    } else {
-      char cv_pair[2 * BLAKE3_OUT_LEN];
-      uchar private_buffer[BLAKE3_CHUNK_LEN];
-      for (size_t i = 0; i < subtree_len; i++) {
-        private_buffer[i] = global_input_bytes[i];
-      }
-      compress_subtree_to_parent_node(
-          private_buffer, subtree_len, self->key, self->chunk.chunk_counter,
-          self->chunk.flags, (uchar *)cv_pair, use_tbb);
-      hasher_push_cv(self, (uchar *)cv_pair, self->chunk.chunk_counter);
-      hasher_push_cv(self, (uchar *)&cv_pair[BLAKE3_OUT_LEN],
-                     self->chunk.chunk_counter + (subtree_chunks / 2));
-    }
-    self->chunk.chunk_counter += subtree_chunks;
-    global_input_bytes += subtree_len;
-    input_len -= subtree_len;
-  }
   if (input_len > 0) {
     uchar private_buffer[BLAKE3_CHUNK_LEN];
     for (size_t i = 0; i < input_len; i++) {
@@ -555,7 +518,7 @@ void blake3_hasher_update_base_private(blake3_hasher *self,
   if (input_len == 0) {
     return;
   }
-  __private uchar *private_input_bytes = (__private char *)input;
+  __private uchar *private_input_bytes = (__private uchar *)input;
   if (chunk_state_len(&self->chunk) > 0) {
     size_t take = BLAKE3_CHUNK_LEN - chunk_state_len(&self->chunk);
     if (take > input_len) {
@@ -577,43 +540,6 @@ void blake3_hasher_update_base_private(blake3_hasher *self,
     } else {
       return;
     }
-  }
-  while (input_len > BLAKE3_CHUNK_LEN) {
-    size_t subtree_len = round_down_to_power_of_2(input_len);
-    ulong count_so_far = self->chunk.chunk_counter * BLAKE3_CHUNK_LEN;
-    while ((((ulong)(subtree_len - 1)) & count_so_far) != 0) {
-      subtree_len /= 2;
-    }
-    size_t subtree_chunks = subtree_len >> BLAKE3_CHUNK_LEN_LOG2;
-    if (subtree_len <= BLAKE3_CHUNK_LEN) {
-      blake3_chunk_state chunk_state;
-      chunk_state_init(&chunk_state, self->key, self->chunk.flags);
-      chunk_state.chunk_counter = self->chunk.chunk_counter;
-      uchar private_buffer[BLAKE3_CHUNK_LEN];
-      for (size_t i = 0; i < subtree_len; i++) {
-        private_buffer[i] = private_input_bytes[i];
-      }
-      chunk_state_update(&chunk_state, (uchar *)private_buffer, subtree_len);
-      output_t output = chunk_state_output(&chunk_state);
-      uchar cv[BLAKE3_OUT_LEN];
-      output_chaining_value(&output, cv);
-      hasher_push_cv(self, cv, chunk_state.chunk_counter);
-    } else {
-      uchar cv_pair[2 * BLAKE3_OUT_LEN];
-      uchar private_buffer[BLAKE3_CHUNK_LEN];
-      for (size_t i = 0; i < subtree_len; i++) {
-        private_buffer[i] = private_input_bytes[i];
-      }
-      compress_subtree_to_parent_node(
-          private_buffer, subtree_len, self->key, self->chunk.chunk_counter,
-          self->chunk.flags, (uchar *)cv_pair, use_tbb);
-      hasher_push_cv(self, (uchar *)cv_pair, self->chunk.chunk_counter);
-      hasher_push_cv(self, (uchar *)&cv_pair[BLAKE3_OUT_LEN],
-                     self->chunk.chunk_counter + (subtree_chunks / 2));
-    }
-    self->chunk.chunk_counter += subtree_chunks;
-    private_input_bytes += subtree_len;
-    input_len -= subtree_len;
   }
   if (input_len > 0) {
     uchar private_buffer[BLAKE3_CHUNK_LEN];
