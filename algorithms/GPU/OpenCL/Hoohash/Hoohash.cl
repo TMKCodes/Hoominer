@@ -741,7 +741,7 @@ double ForComplex(double forComplex) {
   double rounds = 1.0;
 
   complexValue = ComplexNonLinear(forComplex);
-  while (isnan(complexValue) || isinf(complexValue)) {
+  while (complexValue != complexValue) {
     forComplex *= 0.1;
     if (forComplex <= 0.1) {
       return 0.0 * rounds;
@@ -794,7 +794,6 @@ void print_hash(uchar *hash) {
 }
 
 int compare_target(uchar *hash, __global uchar *target) {
-#pragma unroll
   for (size_t i = 0; i < DOMAIN_HASH_SIZE; i++) {
     if (hash[i] > target[i])
       return 1;
@@ -811,7 +810,6 @@ void HoohashMatrixMultiplication(__global double *mat, const uchar *hashBytes,
   uchar scaledValues[32] = {0};
   __private uchar result[32] = {0};
   uint H[8] = {0};
-#pragma unroll
   for (int i = 0; i < 8; i++) {
     H[i] = ((uint)hashBytes[i * 4] << 24) | ((uint)hashBytes[i * 4 + 1] << 16) |
            ((uint)hashBytes[i * 4 + 2] << 8) | (uint)hashBytes[i * 4 + 3];
@@ -821,7 +819,6 @@ void HoohashMatrixMultiplication(__global double *mat, const uchar *hashBytes,
   double nonceMod = (nonce & 0xFF);
   double divider = 0.0001;
   double multiplier = 1234;
-#pragma unroll
   for (int i = 0; i < 32; i++) {
     vector[2 * i] = hashBytes[i] >> 4;
     vector[2 * i + 1] = hashBytes[i] & 0x0F;
@@ -847,12 +844,10 @@ void HoohashMatrixMultiplication(__global double *mat, const uchar *hashBytes,
       sw = TransformFactor(product[i]);
     }
   }
-#pragma unroll
   for (int i = 0; i < 64; i += 2) {
     ulong pval = (ulong)product[i] + (ulong)product[i + 1];
     scaledValues[i / 2] = (uchar)(pval & 0xFF);
   }
-#pragma unroll
   for (int i = 0; i < 32; i++) {
     result[i] = hashBytes[i] ^ scaledValues[i];
   }
@@ -908,13 +903,11 @@ __kernel void Hoohash_hash(const ulong local_size, const ulong start_nonce,
   HoohashMatrixMultiplication(matrix, first_pass, final_hash, nonce);
   // printf("Work item %d incremented nonces_processed\n", nonceId);
   uchar reversed_hash[DOMAIN_HASH_SIZE];
-#pragma unroll
   for (size_t i = 0; i < DOMAIN_HASH_SIZE; i++) {
     reversed_hash[i] = final_hash[DOMAIN_HASH_SIZE - 1 - i];
   }
   if (compare_target(reversed_hash, target) <= 0) {
     if (atom_cmpxchg(&result->nonce, 0, nonce) == 0) {
-#pragma unroll
       for (int i = 0; i < 32; i++) {
         result->hash[i] = final_hash[i];
       }
