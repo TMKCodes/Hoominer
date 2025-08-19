@@ -21,6 +21,7 @@ struct HoominerConfig
   bool disable_cuda;
   int cpu_threads;
   char *selected_gpus_str;
+  char *build_options;
   bool ssl_enabled;
   bool list_gpus;
   bool debug;

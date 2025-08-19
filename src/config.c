@@ -12,6 +12,7 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
   config->opencl_optimization_level = 2;
   config->gpu_work_multiplier = 1;
   config->selected_gpus_num = 0;
+  config->build_options = NULL;
   bool gpus_selected = false;
   for (int i = 1; i < argc; i++)
   {
@@ -37,6 +38,16 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
       config->list_gpus = true;
     else if (!strcmp(argv[i], "--debug"))
       config->debug = true;
+    else if (!strcmp(argv[i], "--opencl-build-options") && i + 1 < argc)
+    {
+      config->build_options = strdup(argv[++i]);
+      if (!config->build_options)
+      {
+        fprintf(stderr, "Memory allocation failed for build options\n");
+        exit(1);
+      }
+      printf("Parsed OpenCL build options: %s\n", config->build_options);
+    }
     else if (!strcmp(argv[i], "--cpu-threads") && i + 1 < argc)
       config->cpu_threads = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--gpu-ids") && i + 1 < argc)

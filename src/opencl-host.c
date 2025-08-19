@@ -428,8 +428,15 @@ cl_int compile_opencl_kernel_from_xxd_header(StratumContext *ctx, OpenCLResource
 
   // Compile program
   // const char *build_options = "-cl-opt-disable"; // No optimizations.
-  char build_options[128];
-  snprintf(build_options, sizeof(build_options), "-O%d -cl-std=CL1.2", ctx->config->opencl_optimization_level);
+  char build_options[512];
+  if (ctx->config->build_options)
+  {
+    snprintf(build_options, sizeof(build_options), "%s", ctx->config->build_options);
+  }
+  else
+  {
+    snprintf(build_options, sizeof(build_options), "-O%d", ctx->config->opencl_optimization_level);
+  }
   err = clBuildProgram(resource->program, 1, &resource->device, build_options, NULL, NULL);
   if (err != CL_SUCCESS)
   {
