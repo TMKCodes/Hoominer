@@ -431,7 +431,7 @@ int main(int argc, char **argv)
     return 1;
   }
   ctx->config = config;
-  ctx->version = "0.3.1";
+  ctx->version = "0.3.2";
   printf("Welcome to Hoominer v%s\n", ctx->version);
 
   // Parse arguments
