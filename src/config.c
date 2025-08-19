@@ -11,6 +11,7 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
   config->debug = false;
   config->opencl_optimization_level = 2;
   config->gpu_work_multiplier = 1;
+  config->selected_gpus_num = 0;
   bool gpus_selected = false;
   for (int i = 1; i < argc; i++)
   {
