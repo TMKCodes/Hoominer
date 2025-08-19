@@ -65,6 +65,17 @@ __constant uchar MSG_SCHEDULE[7][16] = {
     {11, 15, 5, 0, 1, 9, 8, 6, 14, 10, 2, 12, 3, 4, 7, 13},
 };
 
+uint clz_own(ulong x) {
+  if (x == 0)
+    return 64;
+  uint n = 0;
+  while (!(x & (1UL << 63))) {
+    x <<= 1;
+    n++;
+  }
+  return n;
+}
+
 void chunk_state_init(blake3_chunk_state *self, const uint key[8],
                       uchar flags) {
   self->cv[0] = key[0];
@@ -230,7 +241,7 @@ uint highest_one(ulong x) {
   if (x == 0ul)
     return 0u;
   // clz(x) is defined for x!=0; return index (1..64)
-  return 64u - (uint)clz(x);
+  return 64u - (uint)clz_own(x);
 }
 
 void hasher_merge_cv_stack(blake3_hasher *self, ulong total_len) {
