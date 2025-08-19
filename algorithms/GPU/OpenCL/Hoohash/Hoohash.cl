@@ -466,7 +466,7 @@ void compress_subtree_to_parent_node(const uchar *input, size_t input_len,
                                      const uint key[8], ulong chunk_counter,
                                      uchar flags, uchar out[2 * BLAKE3_OUT_LEN],
                                      bool use_tbb) {
-  uchar cv_array[BLAKE3_OUT_LEN];
+  uchar cv_array[2 * BLAKE3_OUT_LEN];
   size_t num_cvs = blake3_compress_subtree_wide(
       input, input_len, key, chunk_counter, flags, cv_array, use_tbb);
   for (size_t i = 0; i < 2 * BLAKE3_OUT_LEN; i++) {
