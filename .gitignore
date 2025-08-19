@@ -1,5 +1,6 @@
 build/
 releases/*tar.gz
+releases/*sha1sum
 releases/hoominer/hoominer
 releases/hoominer/cubins
 algorithms/GPU/OpenCL/opencl-compiler
