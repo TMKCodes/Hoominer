@@ -390,7 +390,7 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
       int dequeue_result = dequeue_int_fifo(&ctx->mining_submit_fifo, &device_index);
       if (dequeue_result == 1)
       {
-        if (ctx->config->debug == true)
+        if (ctx->config->debug == 1)
         {
           printf("device index %d\n", device_index);
           printf("deivces %d\n", devices);

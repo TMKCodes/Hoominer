@@ -388,8 +388,11 @@ cl_int compile_opencl_kernel_from_xxd_header(StratumContext *ctx, OpenCLResource
   char extensions[2048];
   clGetDeviceInfo(resource->device, CL_DEVICE_OPENCL_C_VERSION, sizeof(version), version, NULL);
   clGetDeviceInfo(resource->device, CL_DEVICE_EXTENSIONS, sizeof(extensions), extensions, NULL);
-  // printf("Device OpenCL C version: %s\n", version);
-  // printf("Device extensions: %s\n", extensions);
+  if (ctx->config->debug == 1)
+  {
+    printf("Device OpenCL C version: %s\n", version);
+    printf("Device extensions: %s\n", extensions);
+  }
 
   // Check required extensions
   for (size_t i = 0; i < num_required_extensions; i++)
@@ -414,14 +417,12 @@ cl_int compile_opencl_kernel_from_xxd_header(StratumContext *ctx, OpenCLResource
   if (!resource->program)
   {
     fprintf(stderr, "Invalid program for %s\n", resource->device_name);
-    free(source);
     return CL_INVALID_VALUE;
   }
 
   if (!resource->device)
   {
     fprintf(stderr, "Invalid device for %s\n", resource->device_name);
-    free(source);
     return CL_INVALID_VALUE;
   }
 

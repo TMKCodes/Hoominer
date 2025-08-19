@@ -105,6 +105,8 @@ int submit_mining_solution(int sockfd, const char *worker, const char *job_id, u
   json_object_array_add(params, json_object_new_string(hash_hex));
   json_object_object_add(req, "params", params);
 
+  printf("Solution found, Nonce: %d, PoW hash: %s\n", nonce, hash_hex);
+
   const char *msg = json_object_to_json_string_ext(req, JSON_C_TO_STRING_PLAIN);
   if (!msg)
   {
