@@ -953,12 +953,6 @@ __kernel void Hoohash_hash(const ulong local_size, const ulong start_nonce,
   int nonceId = get_global_id(0);
 #endif
 
-#ifndef cl_khr_int64_base_atomics
-  if (nonceId == 0)
-    lock = 0;
-  work_group_barrier(CLK_GLOBAL_MEM_FENCE);
-#endif
-
   ulong nonce = start_nonce + nonceId;
   // printf("Trying nonce %lu\n", nonce);
 
@@ -986,11 +980,11 @@ __kernel void Hoohash_hash(const ulong local_size, const ulong start_nonce,
     reversed_hash[i] = final_hash[DOMAIN_HASH_SIZE - 1 - i];
   }
   if (compare_target(reversed_hash, target) <= 0) {
-    if (atom_cmpxchg(&result->nonce, 0, nonce) == 0) {
+    // if (atom_cmpxchg(&result->nonce, 0, nonce) == 0) {
 #pragma unroll
-      for (int i = 0; i < 32; i++) {
-        result->hash[i] = final_hash[i];
-      }
+    for (int i = 0; i < 32; i++) {
+      result->hash[i] = final_hash[i];
     }
+    // }
   }
 }
