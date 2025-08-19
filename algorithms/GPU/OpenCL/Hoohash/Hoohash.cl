@@ -474,88 +474,8 @@ void compress_subtree_to_parent_node(const uchar *input, size_t input_len,
   }
 }
 
-void blake3_hasher_update_base_global(blake3_hasher *self, __global void *input,
-                                      size_t input_len, bool use_tbb) {
-  if (input_len == 0) {
-    return;
-  }
-  __global uchar *global_input_bytes = (__global uchar *)input;
-
-  // Directly process input from global memory, no private buffer allocation
-  if (chunk_state_len(&self->chunk) > 0) {
-    size_t take = BLAKE3_CHUNK_LEN - chunk_state_len(&self->chunk);
-    if (take > input_len) {
-      take = input_len;
-    }
-    uchar private_buffer[BLAKE3_CHUNK_LEN];
-    for (size_t i = 0; i < take; i++) {
-      private_buffer[i] = global_input_bytes[i];
-    }
-    chunk_state_update(&self->chunk, (uchar *)private_buffer, take);
-    global_input_bytes += take;
-    input_len -= take;
-    if (input_len > 0) {
-      output_t output = chunk_state_output(&self->chunk);
-      uchar chunk_cv[32];
-      output_chaining_value(&output, chunk_cv);
-      hasher_push_cv(self, chunk_cv, self->chunk.chunk_counter);
-      chunk_state_reset(&self->chunk, self->key, self->chunk.chunk_counter + 1);
-    } else {
-      return;
-    }
-  }
-  while (input_len > BLAKE3_CHUNK_LEN) {
-    size_t subtree_len = round_down_to_power_of_2(input_len);
-    ulong count_so_far = self->chunk.chunk_counter * BLAKE3_CHUNK_LEN;
-    while ((((ulong)(subtree_len - 1)) & count_so_far) != 0) {
-      subtree_len /= 2;
-    }
-    size_t subtree_chunks = subtree_len >> BLAKE3_CHUNK_LEN_LOG2;
-    if (subtree_len <= BLAKE3_CHUNK_LEN) {
-      blake3_chunk_state chunk_state;
-      chunk_state_init(&chunk_state, self->key, self->chunk.flags);
-      chunk_state.chunk_counter = self->chunk.chunk_counter;
-      uchar private_buffer[BLAKE3_CHUNK_LEN];
-      for (size_t i = 0; i < subtree_len; i++) {
-        private_buffer[i] = global_input_bytes[i];
-      }
-      chunk_state_update(&chunk_state, (const uchar *)private_buffer,
-                         subtree_len);
-      output_t output = chunk_state_output(&chunk_state);
-      uchar cv[BLAKE3_OUT_LEN];
-      output_chaining_value(&output, cv);
-      hasher_push_cv(self, cv, chunk_state.chunk_counter);
-    } else {
-      uchar cv_pair[2 * BLAKE3_OUT_LEN];
-      uchar private_buffer[BLAKE3_CHUNK_LEN];
-      for (size_t i = 0; i < BLAKE3_CHUNK_LEN; i++) {
-        private_buffer[i] = global_input_bytes[i];
-      }
-      compress_subtree_to_parent_node(
-          (const uchar *)private_buffer, subtree_len, self->key,
-          self->chunk.chunk_counter, self->chunk.flags, (uchar *)cv_pair,
-          use_tbb);
-      hasher_push_cv(self, (uchar *)cv_pair, self->chunk.chunk_counter);
-      hasher_push_cv(self, (uchar *)&cv_pair[BLAKE3_OUT_LEN],
-                     self->chunk.chunk_counter + (subtree_chunks / 2));
-    }
-    self->chunk.chunk_counter += subtree_chunks;
-    global_input_bytes += subtree_len;
-    input_len -= subtree_len;
-  }
-  if (input_len > 0) {
-    uchar private_buffer[BLAKE3_CHUNK_LEN];
-    for (size_t i = 0; i < input_len; i++) {
-      private_buffer[i] = global_input_bytes[i];
-    }
-    chunk_state_update(&self->chunk, (uchar *)private_buffer, input_len);
-    hasher_merge_cv_stack(self, self->chunk.chunk_counter);
-  }
-}
-
-void blake3_hasher_update_base_private(blake3_hasher *self,
-                                       __private void *input, size_t input_len,
-                                       bool use_tbb) {
+void blake3_hasher_update_base(blake3_hasher *self, __private void *input,
+                               size_t input_len, bool use_tbb) {
   if (input_len == 0) {
     return;
   }
@@ -632,16 +552,10 @@ void blake3_hasher_init(blake3_hasher *self) {
   hasher_init_base(self, local_IV, 0);
 }
 
-void blake3_hasher_update_private(blake3_hasher *self, __private void *input,
-                                  ulong input_len) {
+void blake3_hasher_update(blake3_hasher *self, __private void *input,
+                          ulong input_len) {
   bool use_tbb = false;
-  blake3_hasher_update_base_private(self, input, input_len, use_tbb);
-}
-
-void blake3_hasher_update_global(blake3_hasher *self, __global void *input,
-                                 ulong input_len) {
-  bool use_tbb = false;
-  blake3_hasher_update_base_global(self, input, input_len, use_tbb);
+  blake3_hasher_update_base(self, input, input_len, use_tbb);
 }
 
 void blake3_compress_xof_portable(uint cv[8], uchar block[BLAKE3_BLOCK_LEN],
@@ -884,7 +798,7 @@ void HoohashMatrixMultiplication(__global double *mat, const uchar *hashBytes,
   uchar vector[64] = {0};
   double product[64] = {0};
   uchar scaledValues[32] = {0};
-  uchar result[32] = {0};
+  __private uchar result[32] = {0};
   uint H[8] = {0};
 #pragma unroll
   for (int i = 0; i < 8; i++) {
@@ -933,7 +847,7 @@ void HoohashMatrixMultiplication(__global double *mat, const uchar *hashBytes,
   }
   blake3_hasher hasher;
   blake3_hasher_init(&hasher);
-  blake3_hasher_update_private(&hasher, result, DOMAIN_HASH_SIZE);
+  blake3_hasher_update(&hasher, result, DOMAIN_HASH_SIZE);
   blake3_hasher_finalize(&hasher, output, DOMAIN_HASH_SIZE);
 }
 
@@ -960,11 +874,19 @@ __kernel void Hoohash_hash(const ulong local_size, const ulong start_nonce,
   blake3_hasher hasher;
   blake3_hasher_init(&hasher);
 
-  blake3_hasher_update_global(&hasher, previous_header, DOMAIN_HASH_SIZE);
-  blake3_hasher_update_global(&hasher, timestamp, 8);
+  __private uchar private_previous_header[DOMAIN_HASH_SIZE];
+  for (int i = 0; i < DOMAIN_HASH_SIZE; i++) {
+    private_previous_header[i] = previous_header[i];
+  }
+  blake3_hasher_update(&hasher, private_previous_header, DOMAIN_HASH_SIZE);
+  __private long private_timestamp[8];
+  for (int i = 0; i < 8; i++) {
+    private_timestamp[i] = timestamp[i];
+  }
+  blake3_hasher_update(&hasher, private_timestamp, 8);
   uchar zeroes[DOMAIN_HASH_SIZE] = {0};
-  blake3_hasher_update_private(&hasher, zeroes, DOMAIN_HASH_SIZE);
-  blake3_hasher_update_private(&hasher, &nonce, sizeof(nonce));
+  blake3_hasher_update(&hasher, zeroes, DOMAIN_HASH_SIZE);
+  blake3_hasher_update(&hasher, &nonce, sizeof(nonce));
   uchar first_pass[DOMAIN_HASH_SIZE];
   blake3_hasher_finalize(&hasher, first_pass, DOMAIN_HASH_SIZE);
 

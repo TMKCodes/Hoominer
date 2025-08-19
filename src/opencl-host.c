@@ -411,6 +411,20 @@ cl_int compile_opencl_kernel_from_xxd_header(StratumContext *ctx, OpenCLResource
     return err;
   }
 
+  if (!resource->program)
+  {
+    fprintf(stderr, "Invalid program for %s\n", resource->device_name);
+    free(source);
+    return CL_INVALID_VALUE;
+  }
+
+  if (!resource->device)
+  {
+    fprintf(stderr, "Invalid device for %s\n", resource->device_name);
+    free(source);
+    return CL_INVALID_VALUE;
+  }
+
   // Compile program
   // const char *build_options = "-cl-opt-disable"; // No optimizations.
   char build_options[128];
