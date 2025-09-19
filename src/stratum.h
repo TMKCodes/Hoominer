@@ -3,19 +3,35 @@
 #define STRATUM_H
 #include <assert.h>
 #include <json-c/json.h>
+#include <signal.h>
+#include <time.h>
+#include <stdlib.h>
+#include <stdio.h>
+#ifndef _WIN32
 #include <pthread.h>
 #include <unistd.h>
-#include <signal.h>
 #include <endian.h>
-#include <time.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <stdlib.h>
-#include <stdio.h>
 #include <sys/select.h>
 #include <sys/socket.h>
+#else
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <pthread.h>
+// Fallback for endian macros
+#ifndef __LITTLE_ENDIAN
+#define __LITTLE_ENDIAN 1234
+#endif
+#ifndef __BIG_ENDIAN
+#define __BIG_ENDIAN 4321
+#endif
+#ifndef __BYTE_ORDER
+#define __BYTE_ORDER __LITTLE_ENDIAN
+#endif
+#endif
 #include <stdbool.h>
 #include <string.h>
 #include <openssl/ssl.h>
@@ -52,6 +68,7 @@ struct StratumContext
   HashrateDisplay *hd;
   MiningState *ms;
   pthread_t recv_thread;
+  int recv_thread_created;
   IntFifo mining_submit_fifo;
   HoominerConfig *config;
 };

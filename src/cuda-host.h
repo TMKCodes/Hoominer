@@ -6,7 +6,13 @@ extern "C"
 {
 #endif
 
+#ifndef _WIN32
 #include <dlfcn.h> // For dynamic loading on Linux
+#include <fcntl.h>
+#include <unistd.h>
+#else
+#include <windows.h>
+#endif
 #include <cuda_runtime.h>
 #include <cuda.h>
 #include <stdio.h>
@@ -14,8 +20,6 @@ extern "C"
 #include <string.h>
 #include <time.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <unistd.h>
 
 // Constants
 #define DOMAIN_HASH_SIZE 32
@@ -43,7 +47,7 @@ extern "C"
     CUmodule module;
     CUfunction kernel;
     unsigned char *previous_header;
-    unsigned long *timestamp;
+    unsigned long long *timestamp;
     double *matrix;
     unsigned char *target;
     char *printf_buffer;       // Device printf buffer
@@ -63,7 +67,7 @@ extern "C"
   void cleanup_cuda_resources(CudaResources *resource);
   void cleanup_all_cuda_gpus(CudaResources *resources, unsigned int device_count);
   cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *previous_header, unsigned char *target, double matrix[64][64],
-                                      unsigned long timestamp, unsigned long start_nonce, CudaResult *result);
+                                      unsigned long long timestamp, unsigned long start_nonce, CudaResult *result);
   cudaError_t retrieve_kernel_printf(CudaResources *resource);
 
 #ifdef __cplusplus

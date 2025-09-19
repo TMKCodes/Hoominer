@@ -1,5 +1,48 @@
 #include "miner-hoohash.h"
 #include <time.h>
+#include <inttypes.h>
+#include "platform_compat.h"
+
+#ifdef _WIN32
+#include <windows.h>
+// Simple CLOCK_MONOTONIC shim using QPC
+static void clock_gettime_monotonic(struct timespec *ts)
+{
+  static LARGE_INTEGER freq = {0};
+  LARGE_INTEGER now;
+  if (!freq.QuadPart)
+  {
+    QueryPerformanceFrequency(&freq);
+  }
+  QueryPerformanceCounter(&now);
+  long double seconds = (long double)now.QuadPart / (long double)freq.QuadPart;
+  ts->tv_sec = (time_t)seconds;
+  ts->tv_nsec = (long)((seconds - ts->tv_sec) * 1e9);
+}
+#ifndef CLOCK_MONOTONIC
+#define CLOCK_MONOTONIC 1
+#endif
+#define clock_gettime(id, ts) clock_gettime_monotonic(ts)
+
+// endian helpers for Windows
+static inline uint64_t __byte_swap_u64(uint64_t x) {
+  return ((x & 0x00000000000000FFULL) << 56) |
+         ((x & 0x000000000000FF00ULL) << 40) |
+         ((x & 0x0000000000FF0000ULL) << 24) |
+         ((x & 0x00000000FF000000ULL) << 8)  |
+         ((x & 0x000000FF00000000ULL) >> 8)  |
+         ((x & 0x0000FF0000000000ULL) >> 24) |
+         ((x & 0x00FF000000000000ULL) >> 40) |
+         ((x & 0xFF00000000000000ULL) >> 56);
+}
+static inline uint64_t htole64(uint64_t x) {
+  // Windows is little-endian; keep x
+  return x;
+}
+static inline uint64_t le64toh(uint64_t x) {
+  return x;
+}
+#endif
 
 MiningState *init_mining_state()
 {
@@ -105,7 +148,7 @@ int submit_mining_solution(int sockfd, const char *worker, const char *job_id, u
   json_object_array_add(params, json_object_new_string(hash_hex));
   json_object_object_add(req, "params", params);
 
-  printf("Solution found, Nonce: %d, PoW hash: %s\n", nonce, hash_hex);
+  printf("Solution found, Nonce: %" PRIu64 ", PoW hash: %s\n", (uint64_t)nonce, hash_hex);
 
   const char *msg = json_object_to_json_string_ext(req, JSON_C_TO_STRING_PLAIN);
   if (!msg)
@@ -177,7 +220,7 @@ void *mining_cpu_thread(void *arg)
     QueuedJob current_job = {0};
     if (!get_current_job(ms, &current_job, &current_job_id))
     {
-      usleep(100);
+      sleep_ms(100);
       continue;
     }
 
@@ -279,7 +322,7 @@ void *mining_opencl_thread(void *arg)
     QueuedJob current_job = {0};
     if (!get_current_job(ms, &current_job, &current_job_id))
     {
-      usleep(100);
+      sleep_ms(100);
       continue;
     }
 
@@ -392,7 +435,8 @@ void *mining_cuda_thread(void *arg)
     QueuedJob current_job = {0};
     if (!get_current_job(ms, &current_job, &current_job_id))
     {
-      usleep(100);
+      sleep_ms(100);
+      sleep_ms(100);
       continue;
     }
 

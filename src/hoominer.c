@@ -1,8 +1,6 @@
 #define CL_TARGET_OPENCL_VERSION 200
-#include <unistd.h>
 #include <stdio.h>
 #include <signal.h>
-#include <libgen.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <time.h> // Added for time tracking
@@ -14,6 +12,7 @@
 #include "miner-hoohash.h"
 #include "hoohash_cl.h"
 #include "api.h"
+#include "platform_compat.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -46,6 +45,101 @@ int get_cpu_threads()
 
 char *exe_path = NULL;
 StratumContext *ctx = NULL;
+static void self_test_hash_endianness(void)
+{
+#ifdef _WIN32
+  printf("[self-test] Verifying header endianness on Windows...\n");
+  uint64_t ids[4] = {0x0102030405060708ULL, 0x1112131415161718ULL, 0x2122232425262728ULL, 0x3132333435363738ULL};
+  uint8_t header_le[32] = {0};
+  uint8_t header_memcpy[32] = {0};
+  // Variant A: current little-endian staging
+  smallJobHeader(ids, header_le);
+  // Variant B: memcpy without swapping
+  memcpy(header_memcpy + 0,  &ids[0], 8);
+  memcpy(header_memcpy + 8,  &ids[1], 8);
+  memcpy(header_memcpy + 16, &ids[2], 8);
+  memcpy(header_memcpy + 24, &ids[3], 8);
+
+  State s1 = {0};
+  memcpy(s1.PrevHeader, header_le, 32);
+  s1.Timestamp = 0;
+  s1.Nonce = 0;
+  generateHoohashMatrix(s1.PrevHeader, s1.mat);
+  uint8_t out1[32] = {0};
+  CalculateProofOfWorkValue(&s1, out1);
+
+  State s2 = {0};
+  memcpy(s2.PrevHeader, header_memcpy, 32);
+  s2.Timestamp = 0;
+  s2.Nonce = 0;
+  generateHoohashMatrix(s2.PrevHeader, s2.mat);
+  uint8_t out2[32] = {0};
+  CalculateProofOfWorkValue(&s2, out2);
+
+  printf("[self-test] Variant A (LE swap) header: ");
+  print_hex("", header_le, 32);
+  printf("[self-test] Variant A hash: ");
+  print_hex("", out1, 32);
+  printf("[self-test] Variant B (memcpy) header: ");
+  print_hex("", header_memcpy, 32);
+  printf("[self-test] Variant B hash: ");
+  print_hex("", out2, 32);
+  if (memcmp(out1, out2, 32) != 0)
+  {
+    printf("[self-test] Hashes differ. If pool accepts only one variant, we will align header staging accordingly.\n");
+  }
+#endif
+}
+
+static void self_test_from_main_vectors(void)
+{
+  // Two vectors adapted from algorithms/hoohash/main_test.c
+  {
+    printf("[self-test] --------------------------------------------------------------\n");
+    State state = (State){0};
+    uint8_t result[DOMAIN_HASH_SIZE] = {0};
+    uint8_t PrevHeader[DOMAIN_HASH_SIZE] = {
+        0xa4, 0x9d, 0xbc, 0x7d, 0x44, 0xae, 0x83, 0x25,
+        0x38, 0x23, 0x59, 0x2f, 0xd3, 0x88, 0xf2, 0x19,
+        0xf3, 0xcb, 0x83, 0x63, 0x9d, 0x54, 0xc9, 0xe4,
+        0xc3, 0x15, 0x4d, 0xb3, 0x6f, 0x2b, 0x51, 0x57};
+    memcpy(state.PrevHeader, PrevHeader, DOMAIN_HASH_SIZE);
+    state.Timestamp = 1725374568455ULL;
+    state.Nonce = 7598630810654817703ULL;
+    generateHoohashMatrix(state.PrevHeader, state.mat);
+    CalculateProofOfWorkValue(&state, result);
+    printf("[self-test] Vector1 PrevHeader: ");
+    print_hex("", PrevHeader, DOMAIN_HASH_SIZE);
+    printf("[self-test] Vector1 Timestamp: %llu, Nonce: %llu\n",
+           (unsigned long long)state.Timestamp,
+           (unsigned long long)state.Nonce);
+    printf("[self-test] Vector1 Output: ");
+    print_hex("", result, DOMAIN_HASH_SIZE);
+  }
+  {
+    printf("[self-test] --------------------------------------------------------------\n");
+    State state = (State){0};
+    uint8_t result[DOMAIN_HASH_SIZE] = {0};
+    uint8_t PrevHeader[DOMAIN_HASH_SIZE] = {
+        0xb7, 0xc8, 0xf4, 0x3d, 0x8a, 0x99, 0xae, 0xcd,
+        0xd3, 0x79, 0x12, 0xc9, 0xad, 0x4f, 0x2e, 0x51,
+        0xc8, 0x00, 0x9f, 0x7c, 0xe1, 0xcd, 0xf6, 0xe3,
+        0xbe, 0x27, 0x67, 0x97, 0x2c, 0xc6, 0x8a, 0x1c};
+    memcpy(state.PrevHeader, PrevHeader, DOMAIN_HASH_SIZE);
+    state.Timestamp = 1725374568234ULL;
+    state.Nonce = 14449448288038978941ULL;
+    generateHoohashMatrix(state.PrevHeader, state.mat);
+    CalculateProofOfWorkValue(&state, result);
+    printf("[self-test] Vector2 PrevHeader: ");
+    print_hex("", PrevHeader, DOMAIN_HASH_SIZE);
+    printf("[self-test] Vector2 Timestamp: %llu, Nonce: %llu\n",
+           (unsigned long long)state.Timestamp,
+           (unsigned long long)state.Nonce);
+    printf("[self-test] Vector2 Output: ");
+    print_hex("", result, DOMAIN_HASH_SIZE);
+  }
+}
+
 
 void cleanup(int sig)
 {
@@ -62,13 +156,13 @@ void cleanup(int sig)
   ctx->running = false;
 
   // Cancel and join threads
-  if (ctx->hd && ctx->hd->display_thread)
+  if (ctx->hd && ctx->hd->display_thread_created)
   {
     pthread_cancel(ctx->hd->display_thread);
     pthread_join(ctx->hd->display_thread, NULL);
   }
 
-  if (ctx->recv_thread)
+  if (ctx->recv_thread_created)
   {
     pthread_cancel(ctx->recv_thread);
     pthread_join(ctx->recv_thread, NULL);
@@ -81,11 +175,8 @@ void cleanup(int sig)
     {
       for (int i = 0; i < ctx->ms->num_cpu_threads; i++)
       {
-        if (ctx->ms->mining_cpu_threads[i])
-        {
-          pthread_cancel(ctx->ms->mining_cpu_threads[i]);
-          pthread_join(ctx->ms->mining_cpu_threads[i], NULL);
-        }
+        pthread_cancel(ctx->ms->mining_cpu_threads[i]);
+        pthread_join(ctx->ms->mining_cpu_threads[i], NULL);
       }
       free(ctx->ms->mining_cpu_threads);
       ctx->ms->mining_cpu_threads = NULL;
@@ -95,11 +186,8 @@ void cleanup(int sig)
     {
       for (int i = 0; i < ctx->ms->num_opencl_threads; i++)
       {
-        if (ctx->ms->mining_opencl_threads[i])
-        {
-          pthread_cancel(ctx->ms->mining_opencl_threads[i]);
-          pthread_join(ctx->ms->mining_opencl_threads[i], NULL);
-        }
+        pthread_cancel(ctx->ms->mining_opencl_threads[i]);
+        pthread_join(ctx->ms->mining_opencl_threads[i], NULL);
       }
       free(ctx->ms->mining_opencl_threads);
       ctx->ms->mining_opencl_threads = NULL;
@@ -109,41 +197,35 @@ void cleanup(int sig)
     {
       for (int i = 0; i < ctx->ms->num_cuda_threads; i++)
       {
-        if (ctx->ms->mining_cuda_threads[i])
-        {
-          pthread_cancel(ctx->ms->mining_cuda_threads[i]);
-          pthread_join(ctx->ms->mining_cuda_threads[i], NULL);
-        }
+        pthread_cancel(ctx->ms->mining_cuda_threads[i]);
+        pthread_join(ctx->ms->mining_cuda_threads[i], NULL);
       }
       free(ctx->ms->mining_cuda_threads);
       ctx->ms->mining_cuda_threads = NULL;
     }
 
-    // Clean up job queueif (ctx->hd && ctx->hd->display_thread)
+    // Clean up job queue
+    if (ctx->hd && ctx->hd->display_thread_created)
     {
       // printf("Cleaning display thread\n");
       pthread_cancel(ctx->hd->display_thread);
       pthread_join(ctx->hd->display_thread, NULL);
-      ctx->hd->display_thread = 0;
+      ctx->hd->display_thread_created = 0;
     }
-    if (ctx->recv_thread)
+    if (ctx->recv_thread_created)
     {
       // printf("Cleaning receive thread\n");
       pthread_cancel(ctx->recv_thread);
       pthread_join(ctx->recv_thread, NULL);
-      ctx->recv_thread = 0;
+      ctx->recv_thread_created = 0;
     }
     if (ctx->ms && ctx->ms->mining_cpu_threads)
     {
       // printf("Cleaning CPU threads\n");
       for (int i = 0; i < ctx->ms->num_cpu_threads; i++)
       {
-        if (ctx->ms->mining_cpu_threads[i])
-        {
-          pthread_cancel(ctx->ms->mining_cpu_threads[i]);
-          pthread_join(ctx->ms->mining_cpu_threads[i], NULL);
-          ctx->ms->mining_cpu_threads[i] = 0;
-        }
+        pthread_cancel(ctx->ms->mining_cpu_threads[i]);
+        pthread_join(ctx->ms->mining_cpu_threads[i], NULL);
       }
       free(ctx->ms->mining_cpu_threads);
       ctx->ms->mining_cpu_threads = NULL;
@@ -153,12 +235,8 @@ void cleanup(int sig)
       // printf("Cleaning OpenCL threads\n");
       for (int i = 0; i < ctx->ms->num_opencl_threads; i++)
       {
-        if (ctx->ms->mining_opencl_threads[i])
-        {
-          pthread_cancel(ctx->ms->mining_opencl_threads[i]);
-          pthread_join(ctx->ms->mining_opencl_threads[i], NULL);
-          ctx->ms->mining_opencl_threads[i] = 0;
-        }
+        pthread_cancel(ctx->ms->mining_opencl_threads[i]);
+        pthread_join(ctx->ms->mining_opencl_threads[i], NULL);
       }
       free(ctx->ms->mining_opencl_threads);
       ctx->ms->mining_opencl_threads = NULL;
@@ -168,12 +246,8 @@ void cleanup(int sig)
       // printf("Cleaning CUDA threads\n");
       for (int i = 0; i < ctx->ms->num_cuda_threads; i++)
       {
-        if (ctx->ms->mining_cuda_threads[i])
-        {
-          pthread_cancel(ctx->ms->mining_cuda_threads[i]);
-          pthread_join(ctx->ms->mining_cuda_threads[i], NULL);
-          ctx->ms->mining_cuda_threads[i] = 0;
-        }
+        pthread_cancel(ctx->ms->mining_cuda_threads[i]);
+        pthread_join(ctx->ms->mining_cuda_threads[i], NULL);
       }
       free(ctx->ms->mining_cuda_threads);
       ctx->ms->mining_cuda_threads = NULL;
@@ -416,7 +490,9 @@ int main(int argc, char **argv)
 {
   signal(SIGINT, cleanup);
   signal(SIGTERM, cleanup);
+#ifndef _WIN32
   signal(SIGPIPE, SIG_IGN);
+#endif
 
   struct HoominerConfig *config = malloc(sizeof(struct HoominerConfig));
   config->username = "user";
@@ -436,6 +512,13 @@ int main(int argc, char **argv)
 
   // Parse arguments
   parse_args(argc, argv, config);
+  // Run a quick endianness self-test on Windows to aid debugging
+  self_test_hash_endianness();
+  if (config->debug == 1)
+  {
+    printf("[self-test] Running hoohash test vectors...\n");
+    self_test_from_main_vectors();
+  }
 
   if (config->list_gpus == false)
   {
@@ -476,6 +559,11 @@ int main(int argc, char **argv)
   // printf("Initialized Hashrate calculation for %d\n", display_devices_length);
 
   // Get executable's directory
+  char exe_dir_buf[1024] = {0};
+#ifdef _WIN32
+  get_exe_dir(exe_dir_buf, sizeof(exe_dir_buf));
+  char *exe_dir = exe_dir_buf;
+#else
   exe_path = strdup(argv[0]);
   if (!exe_path)
   {
@@ -484,6 +572,7 @@ int main(int argc, char **argv)
     return 1;
   }
   char *exe_dir = dirname(exe_path);
+#endif
 
   // Initialize mining resources
   if (initialize_mining(ctx, config->username, config->algorithm, exe_dir) != 0)
@@ -517,7 +606,7 @@ int main(int argc, char **argv)
       // Run until disconnection
       while (ctx->running)
       {
-        sleep(0.1); // Check running status periodically
+        sleep_ms(100); // Check running status periodically
       }
     }
 
@@ -526,17 +615,17 @@ int main(int argc, char **argv)
     ctx->running = false;
 
     // Clean up threads and socket
-    if (ctx->hd && ctx->hd->display_thread)
+    if (ctx->hd && ctx->hd->display_thread_created)
     {
       pthread_cancel(ctx->hd->display_thread);
       pthread_join(ctx->hd->display_thread, NULL);
-      ctx->hd->display_thread = 0;
+      ctx->hd->display_thread_created = 0;
     }
-    if (ctx->recv_thread)
+    if (ctx->recv_thread_created)
     {
       pthread_cancel(ctx->recv_thread);
       pthread_join(ctx->recv_thread, NULL);
-      ctx->recv_thread = 0;
+      ctx->recv_thread_created = 0;
     }
     if (reconnect_start_time == 0)
     {
@@ -550,7 +639,7 @@ int main(int argc, char **argv)
     }
 
     printf("Reconnecting in 0.1 second...\n");
-    sleep(1);
+    sleep_ms(100);
   }
   stop_api(daemon);
   cleanup(0); // Unreachable due to infinite loop, kept for completeness

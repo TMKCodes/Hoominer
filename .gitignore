@@ -10,3 +10,8 @@ algorithms/GPU/OpenCL/test-hoohash-kernel
 vgcore*
 kernel.bin
 Makefile
+*.dll
+*.zip
+*.sha1sum
+*.exe
+*.lib

@@ -1,4 +1,5 @@
 #include "stratum.h"
+#include "platform_compat.h"
 
 StratumContext *init_stratum_context()
 {
@@ -84,6 +85,7 @@ int init_ssl_connection(StratumContext *ctx)
 
 int start_stratum_connection(StratumContext *ctx, HoominerConfig *config)
 {
+  winsock_init_once();
   ctx->sockfd = connect_to_stratum_server(config->pool_ip, config->pool_port);
   if (ctx->sockfd < 0)
   {
@@ -97,7 +99,7 @@ int start_stratum_connection(StratumContext *ctx, HoominerConfig *config)
     if (init_ssl_connection(ctx) < 0)
     {
       printf("Failed to initialize SSL connection.\n");
-      close(ctx->sockfd);
+      socket_close_portable(ctx->sockfd);
       ctx->sockfd = -1;
       return -1;
     }
@@ -115,7 +117,7 @@ int start_stratum_connection(StratumContext *ctx, HoominerConfig *config)
       SSL_CTX_free(ctx->ssl_ctx);
       ctx->ssl_ctx = NULL;
     }
-    close(ctx->sockfd);
+    socket_close_portable(ctx->sockfd);
     ctx->sockfd = -1;
     return -1;
   }
@@ -131,10 +133,11 @@ int start_stratum_connection(StratumContext *ctx, HoominerConfig *config)
       SSL_CTX_free(ctx->ssl_ctx);
       ctx->ssl_ctx = NULL;
     }
-    close(ctx->sockfd);
+    socket_close_portable(ctx->sockfd);
     ctx->sockfd = -1;
     return -1;
   }
+  else { ctx->recv_thread_created = 1; }
   if (pthread_create(&ctx->hd->display_thread, NULL, hashrate_display_thread, ctx) != 0)
   {
     printf("Failed to create display or receive threads.\n");
@@ -150,6 +153,7 @@ int start_stratum_connection(StratumContext *ctx, HoominerConfig *config)
     ctx->sockfd = -1;
     return -1;
   }
+  else { ctx->hd->display_thread_created = 1; }
 
   if (start_mining_threads(ctx, ctx->ms) != 0)
   {
@@ -678,7 +682,7 @@ int connect_to_stratum_server(const char *hostname, int port)
       printf("Connected to %s (resolved IP: %s)\n", hostname, ip_str);
       break;
     }
-    close(sockfd);
+    socket_close_portable(sockfd);
   }
 
   freeaddrinfo(res);
@@ -705,7 +709,7 @@ void free_stratum_context(StratumContext *ctx)
   }
   if (ctx->sockfd >= 0)
   {
-    close(ctx->sockfd);
+    socket_close_portable(ctx->sockfd);
     ctx->sockfd = -1;
   }
   free(ctx);

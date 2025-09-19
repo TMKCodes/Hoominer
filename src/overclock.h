@@ -1,7 +1,11 @@
 #ifndef OVERCLOCKS_H
 #define OVERCLOCKS_H
 #include <stdio.h>
+#ifndef _WIN32
 #include <dlfcn.h>
+#else
+#include <windows.h>
+#endif
 
 typedef int (*nvmlInit_t)(void);
 typedef int (*nvmlShutdown_t)(void);

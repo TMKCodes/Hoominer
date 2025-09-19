@@ -1,12 +1,16 @@
 // reporting.h
 #ifndef REPORTING_H
 #define REPORTING_H
+#ifndef _WIN32
 #include <pthread.h>
+#include <unistd.h>
+#else
+#include <pthread.h>
+#endif
 #include <stdint.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include "stratum.h"
 
 typedef struct ReportingDevice ReportingDevice;
@@ -32,6 +36,7 @@ struct HashrateDisplay
   uint32_t device_capacity;
   pthread_mutex_t hashrate_mutex;
   pthread_t display_thread;
+  int display_thread_created;
   sig_atomic_t running;
 };
 

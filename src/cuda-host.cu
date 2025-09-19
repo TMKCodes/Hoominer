@@ -28,6 +28,25 @@ CUModuleUnload_t p_cuModuleUnload = NULL;
 // Load CUDA driver library dynamically
 int load_cuda_library()
 {
+#ifdef _WIN32
+    HMODULE lib = LoadLibraryA("nvcuda.dll");
+    if (!lib)
+    {
+        fprintf(stderr, "Failed to load nvcuda.dll\n");
+        return 0;
+    }
+    cuda_lib_handle = lib;
+
+    p_cuInit = (CUInit_t)GetProcAddress(lib, "cuInit");
+    p_cuDeviceGetCount = (CUDeviceGetCount_t)GetProcAddress(lib, "cuDeviceGetCount");
+    p_cuDeviceGet = (CUDeviceGet_t)GetProcAddress(lib, "cuDeviceGet");
+    p_cuDeviceGetName = (CUDeviceGetName_t)GetProcAddress(lib, "cuDeviceGetName");
+    p_cuDeviceGetAttribute = (CUDeviceGetAttribute_t)GetProcAddress(lib, "cuDeviceGetAttribute");
+    p_cuModuleLoadData = (CUModuleLoadData_t)GetProcAddress(lib, "cuModuleLoadData");
+    p_cuModuleGetFunction = (CUModuleGetFunction_t)GetProcAddress(lib, "cuModuleGetFunction");
+    p_cuLaunchKernel = (CULaunchKernel_t)GetProcAddress(lib, "cuLaunchKernel");
+    p_cuModuleUnload = (CUModuleUnload_t)GetProcAddress(lib, "cuModuleUnload");
+#else
     cuda_lib_handle = dlopen("libcuda.so.1", RTLD_LAZY);
     if (!cuda_lib_handle)
     {
@@ -45,13 +64,19 @@ int load_cuda_library()
     p_cuModuleGetFunction = (CUModuleGetFunction_t)dlsym(cuda_lib_handle, "cuModuleGetFunction");
     p_cuLaunchKernel = (CULaunchKernel_t)dlsym(cuda_lib_handle, "cuLaunchKernel");
     p_cuModuleUnload = (CUModuleUnload_t)dlsym(cuda_lib_handle, "cuModuleUnload");
+#endif
 
     if (!p_cuInit || !p_cuDeviceGetCount || !p_cuDeviceGet || !p_cuDeviceGetName ||
         !p_cuDeviceGetAttribute || !p_cuModuleLoadData || !p_cuModuleGetFunction ||
         !p_cuLaunchKernel || !p_cuModuleUnload)
     {
+        #ifdef _WIN32
+        fprintf(stderr, "Failed to resolve CUDA Driver API functions\n");
+        FreeLibrary((HMODULE)cuda_lib_handle);
+        #else
         fprintf(stderr, "Failed to resolve CUDA Driver API functions: %s\n", dlerror());
         dlclose(cuda_lib_handle);
+        #endif
         cuda_lib_handle = NULL;
         return 0; // Indicate failure
     }
@@ -62,7 +87,11 @@ int load_cuda_library()
     {
         // Note: cuGetErrorString is not dynamically loaded here for simplicity
         fprintf(stderr, "cuInit failed: %d\n", cu_err);
+        #ifdef _WIN32
+        FreeLibrary((HMODULE)cuda_lib_handle);
+        #else
         dlclose(cuda_lib_handle);
+        #endif
         cuda_lib_handle = NULL;
         return 0;
     }
@@ -146,7 +175,11 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
     if (cu_err != CUDA_SUCCESS || num_devices == 0)
     {
         fprintf(stderr, "No CUDA devices found or cuDeviceGetCount failed: %d\n", cu_err);
+        #ifdef _WIN32
+        FreeLibrary((HMODULE)cuda_lib_handle);
+        #else
         dlclose(cuda_lib_handle);
+        #endif
         cuda_lib_handle = NULL;
         return NULL;
     }
@@ -156,7 +189,11 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
     if (!res)
     {
         fprintf(stderr, "Memory allocation failed\n");
+        #ifdef _WIN32
+        FreeLibrary((HMODULE)cuda_lib_handle);
+        #else
         dlclose(cuda_lib_handle);
+        #endif
         cuda_lib_handle = NULL;
         return NULL;
     }
@@ -187,7 +224,15 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
             continue;
         }
 
-        if (temp_prop.computeMode == cudaComputeModeProhibited || temp_prop.major < 2)
+        int compute_mode = 0;
+        // Query compute mode via Driver API to avoid relying on deprecated runtime field
+        cu_err = p_cuDeviceGetAttribute(&compute_mode, CU_DEVICE_ATTRIBUTE_COMPUTE_MODE, device);
+        if (cu_err != CUDA_SUCCESS)
+        {
+            fprintf(stderr, "Device %u compute mode query failed: %d\n", i, cu_err);
+            compute_mode = 0; // assume default
+        }
+        if (compute_mode == CU_COMPUTEMODE_PROHIBITED || temp_prop.major < 2)
         {
             fprintf(stderr, "Device %u (PCI-BUS-ID: %u, %s) lacks sufficient compute capability\n",
                     i, temp_prop.pciBusID, temp_prop.name);
@@ -300,7 +345,11 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
     if (devices_found == 0)
     {
         free(res);
+        #ifdef _WIN32
+        FreeLibrary((HMODULE)cuda_lib_handle);
+        #else
         dlclose(cuda_lib_handle);
+        #endif
         cuda_lib_handle = NULL;
         return NULL;
     }
@@ -310,7 +359,11 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
     if (!res)
     {
         fprintf(stderr, "Memory reallocation failed\n");
+        #ifdef _WIN32
+        FreeLibrary((HMODULE)cuda_lib_handle);
+        #else
         dlclose(cuda_lib_handle);
+        #endif
         cuda_lib_handle = NULL;
         return NULL;
     }
@@ -385,7 +438,7 @@ bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename
 }
 
 cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *previous_header, unsigned char *target, double matrix[64][64],
-                                    unsigned long timestamp, unsigned long start_nonce, CudaResult *result)
+                                    unsigned long long timestamp, unsigned long start_nonce, CudaResult *result)
 {
     cudaError_t err;
 
@@ -415,7 +468,7 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
         return err;
     }
 
-    err = cudaMemcpyAsync(resource->timestamp, &timestamp, sizeof(unsigned long), cudaMemcpyHostToDevice, resource->stream);
+    err = cudaMemcpyAsync(resource->timestamp, &timestamp, sizeof(unsigned long long), cudaMemcpyHostToDevice, resource->stream);
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Memory copy to timestamp failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
@@ -519,7 +572,11 @@ void cleanup_all_cuda_gpus(CudaResources *resources, unsigned int device_count)
     free(resources);
     if (cuda_lib_handle)
     {
+        #ifdef _WIN32
+        FreeLibrary((HMODULE)cuda_lib_handle);
+        #else
         dlclose(cuda_lib_handle);
+        #endif
         cuda_lib_handle = NULL;
     }
 }

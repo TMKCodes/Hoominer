@@ -1,4 +1,5 @@
 #include "reporting.h"
+#include "platform_compat.h"
 
 ReportingDevice *init_reporting_device(uint32_t device_id, char *device_name)
 {
@@ -103,7 +104,7 @@ void *hashrate_display_thread(void *arg)
 
   while (ctx->running)
   {
-    sleep(seconds);
+    sleep_ms(seconds * 1000);
     pthread_mutex_lock(&hd->hashrate_mutex);
     if (hd->device_count == 0)
     {
@@ -113,7 +114,11 @@ void *hashrate_display_thread(void *arg)
 
     time_t t = time(NULL);
     struct tm tm;
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
     localtime_r(&t, &tm);
+#endif
     char time_str[9];
     strftime(time_str, sizeof(time_str), "%H:%M:%S", &tm);
 
@@ -171,7 +176,11 @@ void list_gpus(StratumContext *ctx)
 {
   time_t t = time(NULL);
   struct tm tm;
+#ifdef _WIN32
+  localtime_s(&tm, &t);
+#else
   localtime_r(&t, &tm);
+#endif
   char time_str[9];
   strftime(time_str, sizeof(time_str), "%H:%M:%S", &tm);
   printf("[%-8s] =======================================================================\n", time_str);

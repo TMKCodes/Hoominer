@@ -1,11 +1,32 @@
 #ifndef MINER_HOOHASH_H
 #define MINER_HOOHASH_H
 #include <json-c/json.h>
+#ifndef _WIN32
 #include <pthread.h>
 #include <unistd.h>
+#else
+#include <windows.h>
+#endif
+#ifndef _WIN32
 #include <sys/socket.h>
+#else
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
 #include <signal.h>
+#ifdef _WIN32
+#ifndef __LITTLE_ENDIAN
+#define __LITTLE_ENDIAN 1234
+#endif
+#ifndef __BIG_ENDIAN
+#define __BIG_ENDIAN 4321
+#endif
+#ifndef __BYTE_ORDER
+#define __BYTE_ORDER __LITTLE_ENDIAN
+#endif
+#else
 #include <endian.h>
+#endif
 #include <time.h>
 #include "stratum.h"
 #include "target.h"

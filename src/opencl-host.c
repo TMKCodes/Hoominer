@@ -1,6 +1,7 @@
 
 
 #include "opencl-host.h"
+#include "platform_compat.h"
 
 cl_int calculate_work_sizes(StratumContext *ctx, OpenCLResources *resource)
 {
@@ -31,6 +32,11 @@ cl_int calculate_work_sizes(StratumContext *ctx, OpenCLResources *resource)
 
 static cl_uint get_pci_bus_id_from_libpciaccess(cl_uint device_idx)
 {
+#ifdef _WIN32
+  // libpciaccess is not available on Windows; return 0 to indicate unknown
+  (void)device_idx;
+  return 0;
+#else
   struct pci_device_iterator *iter = NULL;
   struct pci_device *dev = NULL;
   cl_uint pci_bus_id = 0;
@@ -83,6 +89,7 @@ static cl_uint get_pci_bus_id_from_libpciaccess(cl_uint device_idx)
   pci_iterator_destroy(iter);
   pci_system_cleanup();
   return pci_bus_id;
+#endif
 }
 
 int compare_pci_bus_id(const void *a, const void *b)
@@ -554,7 +561,7 @@ cl_int load_opencl_kernel_binary(StratumContext *ctx, OpenCLResources *resource,
 cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, int threadindex,
                                  cl_ulong global_work_size, cl_ulong local_work_size,
                                  unsigned char *previous_header, unsigned char *target,
-                                 double matrix[64][64], unsigned long timestamp,
+                                 double matrix[64][64], unsigned long long timestamp,
                                  cl_ulong start_nonce, OpenCLResult *result)
 {
   cl_int err = CL_SUCCESS;

@@ -26,7 +26,7 @@
 # 	rm -rf external/libpciaccess/build external/libpciaccess/install
 
 # Compiler
-NVCC = nvcc
+NVCC = nvcc -ccbin "/c/MinGW/bin/gcc" --allow-unsupported-compiler
 
 # Flags
 CFLAGS = -Xcompiler "-fPIC -g -O0 -Wall -Wextra -DTEST -DDEBUG -static-libgcc -static-libstdc++"
