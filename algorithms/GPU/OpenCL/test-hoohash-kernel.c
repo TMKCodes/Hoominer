@@ -130,7 +130,7 @@ int compare_target(uint8_t *hash, uint8_t *target)
 
 int run_kernel(cl_context context, cl_command_queue queue, cl_program program, cl_kernel kernel,
                cl_ulong local_size, cl_ulong global_size, unsigned char *testname, unsigned char *previous_header,
-               unsigned char *target, double matrix[64][64], unsigned long timestamp,
+               unsigned char *target, double matrix[64][64], int64_t timestamp,
                cl_ulong nonce_mask, cl_ulong nonce_fixed, cl_device_id device)
 {
   cl_int err;

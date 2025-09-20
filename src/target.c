@@ -55,7 +55,7 @@ uint8_t *target_from_pool_difficulty(double difficulty, size_t len)
   mpz_export(target_bytes, &count, 1, sizeof(uint8_t), 0, 0, target);
   if (target_bytes == NULL)
   {
-    fprintf(stderr, "Invalid input: target_bytes=%p, len=%ld, count=%ld\n",
+    fprintf(stderr, "Invalid input: target_bytes=%p, len=%zd, count=%zd\n",
             (void *)target_bytes, len, count);
   }
   else if (count < len)
@@ -83,7 +83,6 @@ cleanup:
 
 int compare_target(uint8_t *hash, uint8_t *target, size_t len)
 {
-#pragma GCC unroll 0
   for (size_t i = 0; i < len; i++)
   {
     size_t rev_idx = len - 1 - i;

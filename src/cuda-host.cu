@@ -283,7 +283,7 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
             cudaStreamDestroy(res[devices_found].stream);
             continue;
         }
-        err = cudaMalloc(&res[devices_found].timestamp, sizeof(unsigned long long));
+        err = cudaMalloc(&res[devices_found].timestamp, sizeof(int64_t));
         if (err != cudaSuccess)
         {
             fprintf(stderr, "Device %u (PCI-BUS-ID: %u) timestamp allocation failed: %s\n",
@@ -325,7 +325,7 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
             cudaFree(res[devices_found].target);
             continue;
         }
-        err = cudaMalloc(&res[devices_found].nonces_processed, sizeof(unsigned long long));
+        err = cudaMalloc(&res[devices_found].nonces_processed, sizeof(uint64_t));
         if (err != cudaSuccess)
         {
             fprintf(stderr, "Device %u (PCI-BUS-ID: %u) nonces_processed allocation failed: %s\n",
@@ -381,14 +381,14 @@ bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename
     if (!cuda_lib_handle)
     {
         fprintf(stderr, "CUDA library not loaded for %s\n", resource->device_name);
-        return cudaErrorInitializationError;
+        return false;
     }
 
     FILE *file = fopen(cubin_filename, "rb");
     if (!file)
     {
         fprintf(stderr, "Failed to open %s: %s\n", cubin_filename, strerror(errno));
-        return cudaErrorInvalidValue;
+        return false;
     }
 
     fseek(file, 0, SEEK_END);
@@ -418,7 +418,7 @@ bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename
     {
         // Note: cuGetErrorString is not dynamically loaded for simplicity
         fprintf(stderr, "Module load failed for %s: %d\n", resource->device_name, cu_err);
-        return cudaErrorInvalidPtx;
+        return false;
     }
 
     cu_err = p_cuModuleGetFunction(&resource->kernel, resource->module, kernel_name);
@@ -426,7 +426,7 @@ bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename
     {
         fprintf(stderr, "Kernel %s creation failed for %s: %d\n", kernel_name, resource->device_name, cu_err);
         p_cuModuleUnload(resource->module);
-        return cudaErrorInvalidKernelImage;
+        return false;
     }
 
     // Calculate optimal grid and block dimensions after kernel is loaded
@@ -438,7 +438,7 @@ bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename
 }
 
 cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *previous_header, unsigned char *target, double matrix[64][64],
-                                    unsigned long long timestamp, unsigned long start_nonce, CudaResult *result)
+                                    int64_t timestamp, uint64_t start_nonce, CudaResult *result)
 {
     cudaError_t err;
 
@@ -468,7 +468,7 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
         return err;
     }
 
-    err = cudaMemcpyAsync(resource->timestamp, &timestamp, sizeof(unsigned long long), cudaMemcpyHostToDevice, resource->stream);
+    err = cudaMemcpyAsync(resource->timestamp, &timestamp, sizeof(int64_t), cudaMemcpyHostToDevice, resource->stream);
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Memory copy to timestamp failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
@@ -533,11 +533,29 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
         return err;
     }
 
+    // Check if the matrix is correct
+    double matrix_back[64][64];
+    err = cudaMemcpyAsync(matrix_back, resource->matrix, 64 * 64 * sizeof(double), cudaMemcpyDeviceToHost, resource->stream);
+    if (err != cudaSuccess)
+    {
+        fprintf(stderr, "matrix_back copy failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
+        return err;
+    }
+
     err = cudaStreamSynchronize(resource->stream);
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Stream synchronization failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
         return err;
+    }
+
+    // Check if the matrix is correct
+    for (size_t r = 0; r < 64; ++r) {
+        for (size_t c = 0; c < 64; ++c) {
+            if (matrix_back[r][c] != matrix[r][c]) {
+                fprintf(stderr, "Matrix mismatch at [%zu][%zu]: %f vs %f\n", r, c, matrix_back[r][c], matrix[r][c]);
+            }
+        }
     }
 
     return cudaSuccess;

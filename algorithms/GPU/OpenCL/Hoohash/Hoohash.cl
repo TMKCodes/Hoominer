@@ -682,7 +682,7 @@ void ConvertBytesToUint32Array(uint *H, uchar *bytes) {
 
 double MediumComplexNonLinear(double x) {
   double sin_x, cos_x;
-  sin_x = sincos(x, &cos_x); // OpenCL's sincos function
+  sin_x = sincos(x, &cos_x); 
   return exp(sin_x + cos_x);
 }
 
@@ -696,8 +696,8 @@ double IntermediateComplexNonLinear(double x) {
 double HighComplexNonLinear(double x) { return 1.0 / sqrt(fabs(x) + 1); }
 
 double ComplexNonLinear(double x) {
-  double transformFactorOne = fmod(x * COMPLEX_TRANSFORM_MULTIPLIER, 8) / 8;
-  double transformFactorTwo = fmod(x * COMPLEX_TRANSFORM_MULTIPLIER, 4) / 4;
+  double transformFactorOne = (x * COMPLEX_TRANSFORM_MULTIPLIER) / 8.0 - floor((x * COMPLEX_TRANSFORM_MULTIPLIER) / 8.0);
+  double transformFactorTwo = (x * COMPLEX_TRANSFORM_MULTIPLIER) / 4.0 - floor((x * COMPLEX_TRANSFORM_MULTIPLIER) / 4.0);
   if (transformFactorOne < 0.33) {
     if (transformFactorTwo < 0.25) {
       return MediumComplexNonLinear(x + (1 + transformFactorTwo));
@@ -733,7 +733,7 @@ double ComplexNonLinear(double x) {
 
 double TransformFactor(double x) {
   const double granularity = 1024.0;
-  return fmod(x, granularity) / granularity;
+  return x / granularity - floor(x / granularity);
 }
 
 double ForComplex(double forComplex) {
@@ -864,7 +864,7 @@ typedef struct {
 
 __kernel void Hoohash_hash(const ulong local_size, const ulong start_nonce,
                            __global uchar *previous_header,
-                           __global long *timestamp, __global double *matrix,
+                           __global int64_t *timestamp, __global double *matrix,
                            __global uchar *target,
                            volatile __global Result *result) {
 #if defined(PAL)
@@ -885,7 +885,7 @@ __kernel void Hoohash_hash(const ulong local_size, const ulong start_nonce,
     private_previous_header[i] = previous_header[i];
   }
   blake3_hasher_update(&hasher, private_previous_header, DOMAIN_HASH_SIZE);
-  __private long private_timestamp[8];
+  __private int64_t private_timestamp[8];
   for (int i = 0; i < 8; i++) {
     private_timestamp[i] = timestamp[i];
   }

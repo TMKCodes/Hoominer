@@ -320,7 +320,7 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
         const char *hex_str = json_object_get_string(header_item);
         if (strlen(hex_str) != 64)
         {
-          printf("Invalid hex string length: %lu\n", strlen(hex_str));
+          printf("Invalid hex string length: %zu\n", strlen(hex_str));
           return;
         }
         if (hex_to_bytes(hex_str, header, DOMAIN_HASH_SIZE) != 0)

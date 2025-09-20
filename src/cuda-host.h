@@ -35,7 +35,7 @@ extern "C"
   // Struct holding results from CUDA kernel
   struct CudaResult
   {
-    unsigned long long nonce;
+    uint64_t nonce;
     unsigned char hash[32];
   };
 
@@ -47,7 +47,7 @@ extern "C"
     CUmodule module;
     CUfunction kernel;
     unsigned char *previous_header;
-    unsigned long long *timestamp;
+    int64_t *timestamp;
     double *matrix;
     unsigned char *target;
     char *printf_buffer;       // Device printf buffer
@@ -58,7 +58,7 @@ extern "C"
     unsigned int pci_bus_id;
     int usegpu;
     CudaResult *result;
-    unsigned long long *nonces_processed;
+    uint64_t *nonces_processed;
   };
 
   // Function declarations
@@ -67,7 +67,7 @@ extern "C"
   void cleanup_cuda_resources(CudaResources *resource);
   void cleanup_all_cuda_gpus(CudaResources *resources, unsigned int device_count);
   cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *previous_header, unsigned char *target, double matrix[64][64],
-                                      unsigned long long timestamp, unsigned long start_nonce, CudaResult *result);
+                                      int64_t timestamp, uint64_t start_nonce, CudaResult *result);
   cudaError_t retrieve_kernel_printf(CudaResources *resource);
 
 #ifdef __cplusplus

@@ -380,21 +380,29 @@ void *mining_opencl_thread(void *arg)
 
         if (meets_target <= 0)
         {
-          struct timespec now;
-          clock_gettime(CLOCK_MONOTONIC, &now);
-          uint64_t current_time_ms = now.tv_sec * 1000ULL + now.tv_nsec / 1000000ULL;
-          if (current_job.timestamp * 1000ULL + JOB_MAX_AGE > current_time_ms)
-          {
-            if (ctx->config->debug == 1)
-              printf("Submitting solution for job %s", current_job_id);
-            submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, result.nonce, result.hash, ms, ctx, reporting_index);
-            current_job.completed = 1;
-            current_job.running = 0;
-            break;
+          uint8_t cpu_result[DOMAIN_HASH_SIZE];
+          state.Nonce = result.nonce;
+          CalculateProofOfWorkValue(&state, cpu_result);
+          if (memcmp(cpu_result, result.hash, DOMAIN_HASH_SIZE) != 0) {
+              printf("Warning: Mismatch between CPU and GPU result for nonce %" PRIu64 "\n", result.nonce);
+              print_hex("CPU Result", cpu_result, DOMAIN_HASH_SIZE);
+              print_hex("GPU Result", result.hash, DOMAIN_HASH_SIZE);
+          } else {
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            uint64_t current_time_ms = now.tv_sec * 1000ULL + now.tv_nsec / 1000000ULL;
+            if (current_job.timestamp * 1000ULL + JOB_MAX_AGE > current_time_ms)
+            {
+              if (ctx->config->debug == 1)
+                printf("Submitting solution for job %s", current_job_id);
+              submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, result.nonce, result.hash, ms, ctx, reporting_index);
+              current_job.completed = 1;
+              current_job.running = 0;
+              break;
+            }
           }
         }
       }
-
       start_nonce += global_work_size;
     }
     current_job.running = 0;
@@ -403,7 +411,7 @@ void *mining_opencl_thread(void *arg)
                       (end_time.tv_nsec - start_time.tv_nsec);
     double elapsed_ms = elapsed_ns / 1e6;
     if (ctx->config->debug == 1)
-      printf("Job %s: runtime: %.3f ms, and nonces processed %lu\n", current_job_id, elapsed_ms, nonces_processed_for_job);
+      printf("Job %s: runtime: %.3f ms, and nonces processed %llu\n", current_job_id, elapsed_ms, nonces_processed_for_job);
   }
 
   free(current_job_id);
@@ -417,17 +425,17 @@ void *mining_cuda_thread(void *arg)
   MiningState *ms = ctx->ms;
   State state = {0};
   char *current_job_id = NULL;
-  unsigned long nonce_mask = 0xFFFFFFFFFFFFFFFFULL;
-  unsigned long hashes_per_cuda_call = ctx->cuda_resources[mt->threadIndex].optimal_grid_size * ctx->cuda_resources[mt->threadIndex].optimal_block_size;
-  unsigned long start_nonce = (unsigned long)mt->threadIndex * hashes_per_cuda_call;
+  uint64_t nonce_mask = 0xFFFFFFFFFFFFFFFFULL;
+  uint64_t hashes_per_cuda_call = ctx->cuda_resources[mt->threadIndex].optimal_grid_size * ctx->cuda_resources[mt->threadIndex].optimal_block_size;
+  uint64_t start_nonce = (uint64_t)mt->threadIndex * hashes_per_cuda_call;
   if (ms->extranonce != NULL)
   {
-    unsigned long extranonce_val = strtoull(ms->extranonce, NULL, 10);
-    unsigned long start_nonce = (extranonce_val << 32) | ((unsigned long)mt->threadIndex * hashes_per_cuda_call);
+    uint64_t extranonce_val = strtoull(ms->extranonce, NULL, 10);
+    uint64_t start_nonce = (extranonce_val << 32) | ((uint64_t)mt->threadIndex * hashes_per_cuda_call);
   }
   int reporting_index = ctx->cpu_device_count + ctx->opencl_device_count + mt->threadIndex;
   ReportingDevice *cuda_reporting_device = ctx->hd->devices[reporting_index];
-  unsigned long long nonces_processed = 0;
+  uint64_t nonces_processed = 0;
 
   while (ctx->running)
   {
@@ -435,7 +443,6 @@ void *mining_cuda_thread(void *arg)
     QueuedJob current_job = {0};
     if (!get_current_job(ms, &current_job, &current_job_id))
     {
-      sleep_ms(100);
       sleep_ms(100);
       continue;
     }
@@ -488,17 +495,33 @@ void *mining_cuda_thread(void *arg)
 
       if (result.nonce != 0)
       {
-        struct timespec now;
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        uint64_t current_time_ms = now.tv_sec * 1000ULL + now.tv_nsec / 1000000ULL;
-        if (current_job.timestamp * 1000ULL + JOB_MAX_AGE > current_time_ms)
+        pthread_mutex_lock(&ms->target_mutex);
+        int meets_target = compare_target(result.hash, ms->global_target, DOMAIN_HASH_SIZE);
+        pthread_mutex_unlock(&ms->target_mutex);
+
+        if (meets_target <= 0)
         {
-          if (ctx->config->debug == 1)
-            printf("Submitting solution for job %s", current_job_id);
-          submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, result.nonce, result.hash, ms, ctx, reporting_index);
-          current_job.completed = 1;
-          current_job.running = 0;
-          break;
+          uint8_t cpu_result[DOMAIN_HASH_SIZE];
+          state.Nonce = result.nonce;
+          CalculateProofOfWorkValue(&state, cpu_result);
+          if (memcmp(cpu_result, result.hash, DOMAIN_HASH_SIZE) != 0) {
+              printf("Warning: Mismatch between CPU and GPU result for nonce %" PRIu64 "\n", result.nonce);
+              print_hex("CPU Result", cpu_result, DOMAIN_HASH_SIZE);
+              print_hex("GPU Result", result.hash, DOMAIN_HASH_SIZE);
+          } else {
+            struct timespec now;
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            uint64_t current_time_ms = now.tv_sec * 1000ULL + now.tv_nsec / 1000000ULL;
+            if (current_job.timestamp * 1000ULL + JOB_MAX_AGE > current_time_ms)
+            {
+              if (ctx->config->debug == 1)
+                printf("Submitting solution for job %s", current_job_id);
+              submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, result.nonce, result.hash, ms, ctx, reporting_index);
+              current_job.completed = 1;
+              current_job.running = 0;
+              break;
+            }
+          }
         }
       }
 

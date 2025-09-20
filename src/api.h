@@ -16,5 +16,9 @@ struct PostData
 
 struct MHD_Daemon *start_api(struct StratumContext *ctx);
 int stop_api(struct MHD_Daemon *daemon);
+static enum MHD_Result request_handler(void *cls, struct MHD_Connection *connection,
+  const char *url, const char *method,
+  const char *version, const char *upload_data,
+  size_t *upload_data_size, void **con_cls);
 
 #endif

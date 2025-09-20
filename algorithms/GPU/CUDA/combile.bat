@@ -1,13 +1,9 @@
 @echo off
-
-nvcc -cubin -arch=sm_50 -O3 -Xptxas -O3 -ccbin "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.41.34120\bin\Hostx64\x64" hoohash.cu -o C:\Users\tonil\Repositories\Hoominer\cubins\hoohash_sm50.cubin
-nvcc -cubin -arch=sm_52 -O3 -Xptxas -O3 -ccbin "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.41.34120\bin\Hostx64\x64" hoohash.cu -o C:\Users\tonil\Repositories\Hoominer\cubins\hoohash_sm52.cubin
-nvcc -cubin -arch=sm_60 -O3 -Xptxas -O3 -ccbin "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.41.34120\bin\Hostx64\x64" hoohash.cu -o C:\Users\tonil\Repositories\Hoominer\cubins\hoohash_sm60.cubin
-nvcc -cubin -arch=sm_61 -O3 -Xptxas -O3 -ccbin "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.41.34120\bin\Hostx64\x64" hoohash.cu -o C:\Users\tonil\Repositories\Hoominer\cubins\hoohash_sm61.cubin
-nvcc -cubin -arch=sm_70 -O3 -Xptxas -O3 -ccbin "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.41.34120\bin\Hostx64\x64" hoohash.cu -o C:\Users\tonil\Repositories\Hoominer\cubins\hoohash_sm70.cubin
-nvcc -cubin -arch=sm_75 -O3 -Xptxas -O3 -ccbin "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.41.34120\bin\Hostx64\x64" hoohash.cu -o C:\Users\tonil\Repositories\Hoominer\cubins\hoohash_sm75.cubin
-nvcc -cubin -arch=sm_80 -O3 -Xptxas -O3 -ccbin "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.41.34120\bin\Hostx64\x64" hoohash.cu -o C:\Users\tonil\Repositories\Hoominer\cubins\hoohash_sm80.cubin
-nvcc -cubin -arch=sm_89 -O3 -Xptxas -O3 -ccbin "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.41.34120\bin\Hostx64\x64" hoohash.cu -o C:\Users\tonil\Repositories\Hoominer\cubins\hoohash_sm89.cubin
-nvcc -cubin -arch=sm_90 -O3 -Xptxas -O3 -ccbin "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.41.34120\bin\Hostx64\x64" hoohash.cu -o C:\Users\tonil\Repositories\Hoominer\cubins\hoohash_sm90.cubin
-nvcc -cubin -arch=sm_100 -O3 -Xptxas -O3 -ccbin "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.41.34120\bin\Hostx64\x64" hoohash.cu -o C:\Users\tonil\Repositories\Hoominer\cubins\hoohash_sm100.cubin
-nvcc -cubin -arch=sm_120 -O3 -Xptxas -O3 -ccbin "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.41.34120\bin\Hostx64\x64" hoohash.cu -o C:\Users\tonil\Repositories\Hoominer\cubins\hoohash_sm120.cubin
+set CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.6
+set MSVC_PATH=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.41.34120\bin\Hostx64\x64
+set OUTPUT_DIR=C:\Users\tonil\Repositories\Hoominer\releases\hoominer\cubins
+mkdir "%OUTPUT_DIR%"
+for %%a in (sm_50 sm_52 sm_60 sm_61 sm_70 sm_75 sm_80 sm_86 sm_89 sm_90 sm_100 sm_120) do (
+    nvcc -cubin -arch=%%a -fmad=false -prec-div=true -expt-relaxed-constexpr -ftz=false ^
+         -ccbin "%MSVC_PATH%" -I"%CUDA_PATH%\include" hoohash.cu -o "%OUTPUT_DIR%\hoohash_%%a.cubin"
+)

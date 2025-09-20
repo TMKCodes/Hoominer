@@ -110,9 +110,7 @@ static void self_test_from_main_vectors(void)
     CalculateProofOfWorkValue(&state, result);
     printf("[self-test] Vector1 PrevHeader: ");
     print_hex("", PrevHeader, DOMAIN_HASH_SIZE);
-    printf("[self-test] Vector1 Timestamp: %llu, Nonce: %llu\n",
-           (unsigned long long)state.Timestamp,
-           (unsigned long long)state.Nonce);
+    printf("[self-test] Vector1 Timestamp: %llu, Nonce: %llu\n", state.Timestamp, state.Nonce);
     printf("[self-test] Vector1 Output: ");
     print_hex("", result, DOMAIN_HASH_SIZE);
   }
@@ -132,9 +130,7 @@ static void self_test_from_main_vectors(void)
     CalculateProofOfWorkValue(&state, result);
     printf("[self-test] Vector2 PrevHeader: ");
     print_hex("", PrevHeader, DOMAIN_HASH_SIZE);
-    printf("[self-test] Vector2 Timestamp: %llu, Nonce: %llu\n",
-           (unsigned long long)state.Timestamp,
-           (unsigned long long)state.Nonce);
+    printf("[self-test] Vector2 Timestamp: %llu, Nonce: %llu\n", state.Timestamp, state.Nonce);
     printf("[self-test] Vector2 Output: ");
     print_hex("", result, DOMAIN_HASH_SIZE);
   }
@@ -411,7 +407,7 @@ int initialize_mining(StratumContext *ctx, const char *username, const char *alg
             int minor = ctx->cuda_resources[i].device_prop.minor;
             printf("Device %u: %s, Compute capability %d.%d\n", i, ctx->cuda_resources[i].device_name, major, minor);
             int arch_code = major * 10 + minor;
-            snprintf(cubin_filename, sizeof(cubin_filename), "%s/cubins/hoohash_sm%d%d.cubin", exe_dir, major, minor);
+            snprintf(cubin_filename, sizeof(cubin_filename), "%s/cubins/hoohash_sm_%d%d.cubin", exe_dir, major, minor);
             FILE *file_check = fopen(cubin_filename, "rb");
             if (!file_check)
             {

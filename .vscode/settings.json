@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "cmath": "cpp",
+        "miner-hoohash.h": "c"
+    }
+}

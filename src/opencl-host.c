@@ -25,8 +25,8 @@ cl_int calculate_work_sizes(StratumContext *ctx, OpenCLResources *resource)
   clGetDeviceInfo(resource->device, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cl_uint), &compute_units, NULL);
   resource->max_global_work_size = compute_units * resource->max_work_group_size * ctx->config->gpu_work_multiplier;
 
-  printf("Max local work size: %ld\n", resource->max_work_group_size);
-  printf("Max global work size: %ld\n", resource->max_global_work_size);
+  printf("Max local work size: %zd\n", resource->max_work_group_size);
+  printf("Max global work size: %zd\n", resource->max_global_work_size);
   return CL_SUCCESS;
 }
 
@@ -561,8 +561,8 @@ cl_int load_opencl_kernel_binary(StratumContext *ctx, OpenCLResources *resource,
 cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, int threadindex,
                                  cl_ulong global_work_size, cl_ulong local_work_size,
                                  unsigned char *previous_header, unsigned char *target,
-                                 double matrix[64][64], unsigned long long timestamp,
-                                 cl_ulong start_nonce, OpenCLResult *result)
+                                 double matrix[64][64], int64_t timestamp,
+                                 uint64_t start_nonce, OpenCLResult *result)
 {
   cl_int err = CL_SUCCESS;
   cl_event write_events[5] = {NULL, NULL, NULL, NULL, NULL};
@@ -600,7 +600,7 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, int threadindex,
                              CL_FALSE, 0, DOMAIN_HASH_SIZE, previous_header,
                              0, NULL, &write_events[0]);
   err |= clEnqueueWriteBuffer(resource->queue, resource->timestamp_buf,
-                              CL_FALSE, 0, sizeof(cl_long), &timestamp,
+                              CL_FALSE, 0, sizeof(int64_t), &timestamp,
                               0, NULL, &write_events[1]);
   err |= clEnqueueWriteBuffer(resource->queue, resource->matrix_buf,
                               CL_FALSE, 0, MAT_BYTES, flat_matrix,
@@ -627,7 +627,7 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, int threadindex,
 
   // Set kernel arguments (assumes kernel signature expects matrix as __global const double *matrix)
   err = clSetKernelArg(resource->kernel, 0, sizeof(cl_ulong), &local_work_size);
-  err |= clSetKernelArg(resource->kernel, 1, sizeof(cl_ulong), &start_nonce);
+  err |= clSetKernelArg(resource->kernel, 1, sizeof(uint64_t), &start_nonce);
   err |= clSetKernelArg(resource->kernel, 2, sizeof(cl_mem), &resource->previous_header_buf);
   err |= clSetKernelArg(resource->kernel, 3, sizeof(cl_mem), &resource->timestamp_buf);
   err |= clSetKernelArg(resource->kernel, 4, sizeof(cl_mem), &resource->matrix_buf);
