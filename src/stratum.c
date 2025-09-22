@@ -86,7 +86,12 @@ int init_ssl_connection(StratumContext *ctx)
 int start_stratum_connection(StratumContext *ctx, HoominerConfig *config)
 {
   winsock_init_once();
-  ctx->sockfd = connect_to_stratum_server(config->pool_ip, config->pool_port);
+  StratumConfig *stratumConfig = get_next_stratum(config);
+  if(!config) {
+    fprintf(stderr, "No valid stratum configuration available.\n");
+    return -1;
+  }
+  ctx->sockfd = connect_to_stratum_server(stratumConfig->pool_ip, stratumConfig->pool_port);
   if (ctx->sockfd < 0)
   {
     printf("Failed to connect to stratum server.\n");
@@ -94,7 +99,7 @@ int start_stratum_connection(StratumContext *ctx, HoominerConfig *config)
   }
 
   // Initialize SSL if enabled
-  if (config->ssl_enabled)
+  if (stratumConfig->ssl_enabled)
   {
     if (init_ssl_connection(ctx) < 0)
     {
@@ -105,8 +110,8 @@ int start_stratum_connection(StratumContext *ctx, HoominerConfig *config)
     }
   }
 
-  if (stratum_subscribe(ctx->sockfd, ctx, config->ssl_enabled ? ctx->ssl : NULL) < 0 ||
-      stratum_authenticate(ctx->sockfd, config->username, config->password, config->ssl_enabled ? ctx->ssl : NULL) < 0)
+  if (stratum_subscribe(ctx->sockfd, ctx, stratumConfig->ssl_enabled ? ctx->ssl : NULL) < 0 ||
+      stratum_authenticate(ctx->sockfd, config->username, config->password, stratumConfig->ssl_enabled ? ctx->ssl : NULL) < 0)
   {
     printf("Stratum initialization failed.\n");
     if (ctx->ssl)

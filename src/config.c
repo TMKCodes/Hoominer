@@ -13,7 +13,9 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
   config->gpu_work_multiplier = 1;
   config->selected_gpus_num = 0;
   config->build_options = NULL;
+  config->stratum_urls_num = 0;
   bool gpus_selected = false;
+
   for (int i = 1; i < argc; i++)
   {
     if (!strcmp(argv[i], "--user") && i + 1 < argc)
@@ -58,70 +60,99 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
     }
     else if (!strcmp(argv[i], "--stratum") && i + 1 < argc)
     {
-      const char *stratum_url = argv[++i];
-      if (strncmp(stratum_url, "stratum+tcp://", 14) == 0)
+      char *stratum_urls_str = strdup(argv[++i]);
+      if (!stratum_urls_str)
       {
-        config->ssl_enabled = false;
-      }
-      else if (strncmp(stratum_url, "stratum+ssl://", 14) == 0 || strncmp(stratum_url, "stratum+tls://", 14) == 0)
-      {
-        config->ssl_enabled = true;
-      }
-      else
-      {
-        fprintf(stderr, "Invalid stratum URL format: must start with stratum+tcp://, stratum+ssl://, or stratum+tls://\n");
+        fprintf(stderr, "Memory allocation failed for stratum URLs\n");
         exit(1);
       }
 
-      const char *url_part = stratum_url + 14;
-      char *url = malloc(strlen(url_part) + 1);
-      if (!url)
+      char *token = strtok(stratum_urls_str, " ");
+      while (token && config->stratum_urls_num < MAX_STRATUM_URLS)
       {
-        fprintf(stderr, "Memory allocation failed\n");
-        exit(1);
-      }
-      strcpy(url, url_part);
+        // Check if token is a flag (starts with --)
+        if (strncmp(token, "--", 2) == 0)
+        {
+          // Put the flag back into argv and adjust i to process it in the next iteration
+          i--;
+          argv[i] = token;
+          break;
+        }
 
-      char *colon = strchr(url, ':');
-      if (!colon)
-      {
-        fprintf(stderr, "Stratum URL missing port\n");
-        exit(1);
-      }
-      *colon = '\0';
+        struct StratumConfig *stratum = &config->stratum_urls[config->stratum_urls_num];
 
-      config->pool_ip = malloc(strlen(url) + 1);
-      if (!config->pool_ip)
-      {
-        fprintf(stderr, "Memory allocation failed\n");
-        exit(1);
-      }
-      strcpy(config->pool_ip, url);
+        if (strncmp(token, "stratum+tcp://", 14) == 0)
+        {
+          stratum->ssl_enabled = false;
+        }
+        else if (strncmp(token, "stratum+ssl://", 14) == 0 || strncmp(token, "stratum+tls://", 14) == 0)
+        {
+          stratum->ssl_enabled = true;
+        }
+        else
+        {
+          fprintf(stderr, "Invalid stratum URL format: must start with stratum+tcp://, stratum+ssl://, or stratum+tls://\n");
+          free(stratum_urls_str);
+          exit(1);
+        }
 
-      config->pool_port = atoi(colon + 1);
-      free(url);
+        const char *url_part = token + 14;
+        char *url = malloc(strlen(url_part) + 1);
+        if (!url)
+        {
+          fprintf(stderr, "Memory allocation failed\n");
+          free(stratum_urls_str);
+          exit(1);
+        }
+        strcpy(url, url_part);
+
+        char *colon = strchr(url, ':');
+        if (!colon)
+        {
+          fprintf(stderr, "Stratum URL missing port\n");
+          free(url);
+          free(stratum_urls_str);
+          exit(1);
+        }
+        *colon = '\0';
+
+        stratum->pool_ip = malloc(strlen(url) + 1);
+        if (!stratum->pool_ip)
+        {
+          fprintf(stderr, "Memory allocation failed\n");
+          free(url);
+          free(stratum_urls_str);
+          exit(1);
+        }
+        strcpy(stratum->pool_ip, url);
+
+        stratum->pool_port = atoi(colon + 1);
+        config->stratum_urls_num++;
+        free(url);
+        token = strtok(NULL, " ");
+      }
+      free(stratum_urls_str);
     }
     else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h"))
     {
-      printf("Usage: %s [--stratum <stratum+tcp://domain:port>] [--user <user>] [--pass <pass>]\n", argv[0]);
+      printf("Usage: %s [--stratum <stratum+tcp://domain:port> [stratum+tcp://domain:port ...]] [--user <user>] [--pass <pass>]\n", argv[0]);
       printf("\nGeneral parameters: \n");
-      printf("--algorithm <algorthm>\t\tThe algorithm to mine, by default 'hoohash'.\n");
-      printf("--stratum <stratum+tcp://domain:port>\t\tThe stratum protocol://address:port to specify connection point (stratum+ssl:// or stratum+tls:// to enable SSL/TLS).\n");
-      printf("--user <user>\t\t\t\t\tStratum username (Usually mining wallet address).\n");
-      printf("--password <password>\t\t\t\tStratum password (Usually not required or used as additional stratum parameters).\n");
-      printf("--disable-cpu\t\t\t\t\tDisable CPU mining completely.\n");
-      printf("--disable-gpu\t\t\t\t\tDisable GPU mining completely.\n");
-      printf("--disable-opencl\t\t\t\tDisable OpenCL mining.\n");
-      printf("--disable-cuda\t\t\t\t\tDisable CUDA mining.\n");
-      printf("--debug\t\t\t\t\t\tMore information displayed.\n");
+      printf("--algorithm <algorithm>\t\tThe algorithm to mine, by default 'hoohash'.\n");
+      printf("--stratum <stratum+tcp://domain:port [stratum+tcp://domain:port ...]>\t\tThe stratum protocol://address:port to specify connection points (stratum+ssl:// or stratum+tls:// to enable SSL/TLS). Multiple URLs separated by spaces.\n");
+      printf("--user <user>\t\t\t\tStratum username (Usually mining wallet address).\n");
+      printf("--password <password>\t\t\tStratum password (Usually not required or used as additional stratum parameters).\n");
+      printf("--disable-cpu\t\t\t\tDisable CPU mining completely.\n");
+      printf("--disable-gpu\t\t\t\tDisable GPU mining completely.\n");
+      printf("--disable-opencl\t\t\tDisable OpenCL mining.\n");
+      printf("--disable-cuda\t\t\t\tDisable CUDA mining.\n");
+      printf("--debug\t\t\t\t\tMore information displayed.\n");
       printf("\nCPU parameters: \n");
-      printf("--cpu-threads <thread-count>\t\t\tSelect how many CPU threads to create.\n");
+      printf("--cpu-threads <thread-count>\t\tSelect how many CPU threads to create.\n");
       printf("\nGPU parameters: \n");
-      printf("--list-gpus\t\t\t\t\tList gpu bus id's.\n");
-      printf("--gpu-ids <bus-id list>\t\t\t\tSelect which GPU's to use, seperate bus id's with comma (if not specified all devices will be used).\n");
-      printf("--opencl-o <level>\t\t\tSelect OpenCL compile time optimization level.");
-      printf("--gpu-work-multiplier <level>\t\t\tSelect multiplier for OpenCL global work size or Nvidia blocks size.");
-
+      printf("--list-gpus\t\t\t\tList gpu bus id's.\n");
+      printf("--gpu-ids <bus-id list>\t\t\tSelect which GPU's to use, separate bus id's with comma (if not specified all devices will be used).\n");
+      printf("--opencl-o <level>\t\t\tSelect OpenCL compile time optimization level.\n");
+      printf("--gpu-work-multiplier <level>\t\tSelect multiplier for OpenCL global work size or Nvidia blocks size.\n");
       exit(0);
     }
   }
@@ -136,5 +167,19 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
       config->selected_gpus[config->selected_gpus_num++] = atoi(token);
       token = strtok(NULL, ",");
     }
+    free(gpu_ids_str);
   }
+}
+
+
+struct StratumConfig *get_next_stratum(struct HoominerConfig *config)
+{
+  if (config->stratum_urls_num == 0)
+  {
+    return NULL;
+  }
+
+  static int current_index = -1;
+  current_index = (current_index + 1) % config->stratum_urls_num;
+  return &config->stratum_urls[current_index];
 }

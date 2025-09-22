@@ -518,12 +518,6 @@ int main(int argc, char **argv)
 
   if (config->list_gpus == false)
   {
-    if (!config->pool_ip)
-    {
-      printf("--stratum required, could not parse ip of the pool from the stratum address.\n");
-      cleanup(1);
-      return 1;
-    }
     if (!config->username)
     {
       printf("--username required.\n");

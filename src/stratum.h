@@ -49,6 +49,7 @@ typedef struct HashrateDisplay HashrateDisplay;
 typedef struct MiningState MiningState;
 typedef struct CudaResources CudaResources;
 typedef struct HoominerConfig HoominerConfig;
+typedef struct StratumConfig StratumConfig;
 
 struct StratumContext
 {

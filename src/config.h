@@ -6,10 +6,19 @@
 #include <string.h>
 #include <stdbool.h>
 
-struct HoominerConfig
+#define MAX_STRATUM_URLS 16
+
+struct StratumConfig
 {
   char *pool_ip;
   int pool_port;
+  bool ssl_enabled;
+};
+
+struct HoominerConfig
+{
+  struct StratumConfig stratum_urls[MAX_STRATUM_URLS];
+  int stratum_urls_num;
   char *username;
   char *password;
   char *algorithm;
@@ -22,7 +31,6 @@ struct HoominerConfig
   int cpu_threads;
   char *selected_gpus_str;
   char *build_options;
-  bool ssl_enabled;
   bool list_gpus;
   bool debug;
   int selected_gpus[256];
@@ -30,5 +38,6 @@ struct HoominerConfig
 };
 
 void parse_args(int argc, char **argv, struct HoominerConfig *config);
+struct StratumConfig *get_next_stratum(struct HoominerConfig *config);
 
 #endif
