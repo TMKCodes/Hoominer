@@ -162,7 +162,7 @@ void *hashrate_display_thread(void *arg)
         printf("%-6.2f H/s  \t\t| ", device->hashrate);
       }
 
-      printf("%I64d \t\t  | %I64d  \t\t    | %I64d\t\t      |\n", device->accepted, device->stales, device->rejected);
+      printf("%ld \t\t  | %ld  \t\t    | %ld\t\t      |\n", device->accepted, device->stales, device->rejected);
     }
 
     pthread_mutex_unlock(&hd->hashrate_mutex);
