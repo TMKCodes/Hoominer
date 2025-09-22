@@ -60,25 +60,12 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
     }
     else if (!strcmp(argv[i], "--stratum") && i + 1 < argc)
     {
-      char *stratum_urls_str = strdup(argv[++i]);
-      if (!stratum_urls_str)
+      i++; // Move to the first URL
+      while (i < argc && strncmp(argv[i], "--", 2) != 0 && config->stratum_urls_num < MAX_STRATUM_URLS)
       {
-        fprintf(stderr, "Memory allocation failed for stratum URLs\n");
-        exit(1);
-      }
-
-      char *token = strtok(stratum_urls_str, " ");
-      while (token && config->stratum_urls_num < MAX_STRATUM_URLS)
-      {
-        // Check if token is a flag (starts with --)
-        if (strncmp(token, "--", 2) == 0)
-        {
-          // Put the flag back into argv and adjust i to process it in the next iteration
-          i--;
-          argv[i] = token;
-          break;
-        }
-
+        char *token = argv[i];
+        if(config->debug == 1)
+          printf("Processing token: %s\n", token); // Debug: Print each token
         struct StratumConfig *stratum = &config->stratum_urls[config->stratum_urls_num];
 
         if (strncmp(token, "stratum+tcp://", 14) == 0)
@@ -92,7 +79,6 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
         else
         {
           fprintf(stderr, "Invalid stratum URL format: must start with stratum+tcp://, stratum+ssl://, or stratum+tls://\n");
-          free(stratum_urls_str);
           exit(1);
         }
 
@@ -101,7 +87,6 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
         if (!url)
         {
           fprintf(stderr, "Memory allocation failed\n");
-          free(stratum_urls_str);
           exit(1);
         }
         strcpy(url, url_part);
@@ -111,7 +96,6 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
         {
           fprintf(stderr, "Stratum URL missing port\n");
           free(url);
-          free(stratum_urls_str);
           exit(1);
         }
         *colon = '\0';
@@ -121,7 +105,6 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
         {
           fprintf(stderr, "Memory allocation failed\n");
           free(url);
-          free(stratum_urls_str);
           exit(1);
         }
         strcpy(stratum->pool_ip, url);
@@ -129,9 +112,18 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
         stratum->pool_port = atoi(colon + 1);
         config->stratum_urls_num++;
         free(url);
-        token = strtok(NULL, " ");
+        i++; // Move to the next argument
       }
-      free(stratum_urls_str);
+      i--; // Step back to process the next flag in the outer loop
+      // Print parsed stratum URLs
+      if (config->debug == 1 && config->stratum_urls_num > 0) {
+          printf("Parsed Stratum URLs:\n");
+          for (int j = 0; j < config->stratum_urls_num; j++) {
+              struct StratumConfig *stratum = &config->stratum_urls[j];
+              const char *protocol = stratum->ssl_enabled ? "stratum+ssl://" : "stratum+tcp://";
+              printf("  %d: %s%s:%d\n", j + 1, protocol, stratum->pool_ip, stratum->pool_port);
+          }
+      }
     }
     else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h"))
     {
@@ -172,14 +164,8 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
 }
 
 
-struct StratumConfig *get_next_stratum(struct HoominerConfig *config)
+struct StratumConfig *get_stratum(struct HoominerConfig *config, int current_index)
 {
-  if (config->stratum_urls_num == 0)
-  {
-    return NULL;
-  }
-
-  static int current_index = -1;
-  current_index = (current_index + 1) % config->stratum_urls_num;
-  return &config->stratum_urls[current_index];
+  struct StratumConfig *stratum = &config->stratum_urls[current_index & (MAX_STRATUM_URLS - 1)];
+  return stratum;
 }

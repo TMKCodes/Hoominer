@@ -59,6 +59,7 @@ struct StratumContext
   SSL *ssl;         // SSL connection object
   SSL_CTX *ssl_ctx; // SSL context
   const char *worker;
+  int current_stratum_index;
   int disable_cpu;
   int disable_gpu;
   unsigned int cpu_device_count;

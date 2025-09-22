@@ -21,6 +21,7 @@ StratumContext *init_stratum_context()
   ctx->ms = NULL;
   ctx->hd = NULL;
   ctx->running = true;
+  ctx->current_stratum_index = 0;
   init_int_fifo(&ctx->mining_submit_fifo);
 
   // Initialize OpenSSL only if needed later
@@ -86,7 +87,7 @@ int init_ssl_connection(StratumContext *ctx)
 int start_stratum_connection(StratumContext *ctx, HoominerConfig *config)
 {
   winsock_init_once();
-  StratumConfig *stratumConfig = get_next_stratum(config);
+  StratumConfig *stratumConfig = get_stratum(config, ctx->current_stratum_index++);
   if(!config) {
     fprintf(stderr, "No valid stratum configuration available.\n");
     return -1;
@@ -94,7 +95,7 @@ int start_stratum_connection(StratumContext *ctx, HoominerConfig *config)
   ctx->sockfd = connect_to_stratum_server(stratumConfig->pool_ip, stratumConfig->pool_port);
   if (ctx->sockfd < 0)
   {
-    printf("Failed to connect to stratum server.\n");
+    printf("Failed to connect to stratum server %s.\n", stratumConfig->pool_ip);
     return -1;
   }
 

@@ -38,6 +38,6 @@ struct HoominerConfig
 };
 
 void parse_args(int argc, char **argv, struct HoominerConfig *config);
-struct StratumConfig *get_next_stratum(struct HoominerConfig *config);
+struct StratumConfig *get_stratum(struct HoominerConfig *config, int current_index);
 
 #endif
