@@ -3,6 +3,7 @@
 #include <signal.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <libgen.h>
 #include <time.h> // Added for time tracking
 #include "config.h"
 #include "opencl-host.h"
@@ -55,8 +56,8 @@ static void self_test_hash_endianness(void)
   // Variant A: current little-endian staging
   smallJobHeader(ids, header_le);
   // Variant B: memcpy without swapping
-  memcpy(header_memcpy + 0,  &ids[0], 8);
-  memcpy(header_memcpy + 8,  &ids[1], 8);
+  memcpy(header_memcpy + 0, &ids[0], 8);
+  memcpy(header_memcpy + 8, &ids[1], 8);
   memcpy(header_memcpy + 16, &ids[2], 8);
   memcpy(header_memcpy + 24, &ids[3], 8);
 
@@ -135,7 +136,6 @@ static void self_test_from_main_vectors(void)
     print_hex("", result, DOMAIN_HASH_SIZE);
   }
 }
-
 
 void cleanup(int sig)
 {
