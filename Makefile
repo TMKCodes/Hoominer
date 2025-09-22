@@ -1,6 +1,6 @@
 ## blake3
 
-# cmake --build c/build --target install
+# cmake -S c -B c/build "-DCMAKE_INSTALL_PREFIX=/usr/local"
 # sudo cmake --build c/build --target install
 
 # .PHONY: json-c json-c-clean
