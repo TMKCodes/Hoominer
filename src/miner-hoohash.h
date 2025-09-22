@@ -116,7 +116,7 @@ struct MiningState
   int num_opencl_threads;
   int num_cuda_threads;
   uint8_t *global_target;
-  char *extranonce;
+  const char *extranonce;
   MiningJob *job;
   pthread_mutex_t job_mutex;
   pthread_t *mining_cpu_threads;

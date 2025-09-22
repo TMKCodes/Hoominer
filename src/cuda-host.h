@@ -62,7 +62,7 @@ extern "C"
   };
 
   // Function declarations
-  CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int selected_gpus[256], int selected_gpus_num);
+  CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, int selected_gpus[256], int selected_gpus_num);
   bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename, const char *kernel_name, int work_multiplier);
   void cleanup_cuda_resources(CudaResources *resource);
   void cleanup_all_cuda_gpus(CudaResources *resources, unsigned int device_count);

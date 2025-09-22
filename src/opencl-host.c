@@ -558,8 +558,7 @@ cl_int load_opencl_kernel_binary(StratumContext *ctx, OpenCLResources *resource,
   return CL_SUCCESS;
 }
 
-cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, int threadindex,
-                                 cl_ulong global_work_size, cl_ulong local_work_size,
+cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work_size, cl_ulong local_work_size,
                                  unsigned char *previous_header, unsigned char *target,
                                  double matrix[64][64], int64_t timestamp,
                                  uint64_t start_nonce, OpenCLResult *result)

@@ -70,13 +70,13 @@ int load_cuda_library()
         !p_cuDeviceGetAttribute || !p_cuModuleLoadData || !p_cuModuleGetFunction ||
         !p_cuLaunchKernel || !p_cuModuleUnload)
     {
-        #ifdef _WIN32
+#ifdef _WIN32
         fprintf(stderr, "Failed to resolve CUDA Driver API functions\n");
         FreeLibrary((HMODULE)cuda_lib_handle);
-        #else
+#else
         fprintf(stderr, "Failed to resolve CUDA Driver API functions: %s\n", dlerror());
         dlclose(cuda_lib_handle);
-        #endif
+#endif
         cuda_lib_handle = NULL;
         return 0; // Indicate failure
     }
@@ -87,11 +87,11 @@ int load_cuda_library()
     {
         // Note: cuGetErrorString is not dynamically loaded here for simplicity
         fprintf(stderr, "cuInit failed: %d\n", cu_err);
-        #ifdef _WIN32
+#ifdef _WIN32
         FreeLibrary((HMODULE)cuda_lib_handle);
-        #else
+#else
         dlclose(cuda_lib_handle);
-        #endif
+#endif
         cuda_lib_handle = NULL;
         return 0;
     }
@@ -154,7 +154,7 @@ int compare_pci_bus_id(const void *a, const void *b)
     return (int)(ra->pci_bus_id - rb->pci_bus_id);
 }
 
-CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int selected_gpus[256], int selected_gpus_num)
+CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, int selected_gpus[256], int selected_gpus_num)
 {
     cudaError_t err = cudaSuccess;
     int num_devices, devices_found;
@@ -175,11 +175,11 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
     if (cu_err != CUDA_SUCCESS || num_devices == 0)
     {
         fprintf(stderr, "No CUDA devices found or cuDeviceGetCount failed: %d\n", cu_err);
-        #ifdef _WIN32
+#ifdef _WIN32
         FreeLibrary((HMODULE)cuda_lib_handle);
-        #else
+#else
         dlclose(cuda_lib_handle);
-        #endif
+#endif
         cuda_lib_handle = NULL;
         return NULL;
     }
@@ -189,11 +189,11 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
     if (!res)
     {
         fprintf(stderr, "Memory allocation failed\n");
-        #ifdef _WIN32
+#ifdef _WIN32
         FreeLibrary((HMODULE)cuda_lib_handle);
-        #else
+#else
         dlclose(cuda_lib_handle);
-        #endif
+#endif
         cuda_lib_handle = NULL;
         return NULL;
     }
@@ -245,7 +245,7 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
             int found = 0;
             for (int x = 0; x < selected_gpus_num; x++)
             {
-                if ((unsigned int)temp_prop.pciBusID == selected_gpus[x])
+                if (temp_prop.pciBusID == selected_gpus[x])
                 {
                     found = 1;
                     break;
@@ -345,11 +345,11 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
     if (devices_found == 0)
     {
         free(res);
-        #ifdef _WIN32
+#ifdef _WIN32
         FreeLibrary((HMODULE)cuda_lib_handle);
-        #else
+#else
         dlclose(cuda_lib_handle);
-        #endif
+#endif
         cuda_lib_handle = NULL;
         return NULL;
     }
@@ -359,11 +359,11 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, unsigned int
     if (!res)
     {
         fprintf(stderr, "Memory reallocation failed\n");
-        #ifdef _WIN32
+#ifdef _WIN32
         FreeLibrary((HMODULE)cuda_lib_handle);
-        #else
+#else
         dlclose(cuda_lib_handle);
-        #endif
+#endif
         cuda_lib_handle = NULL;
         return NULL;
     }
@@ -550,9 +550,12 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
     }
 
     // Check if the matrix is correct
-    for (size_t r = 0; r < 64; ++r) {
-        for (size_t c = 0; c < 64; ++c) {
-            if (matrix_back[r][c] != matrix[r][c]) {
+    for (size_t r = 0; r < 64; ++r)
+    {
+        for (size_t c = 0; c < 64; ++c)
+        {
+            if (matrix_back[r][c] != matrix[r][c])
+            {
                 fprintf(stderr, "Matrix mismatch at [%zu][%zu]: %f vs %f\n", r, c, matrix_back[r][c], matrix[r][c]);
             }
         }
@@ -590,11 +593,11 @@ void cleanup_all_cuda_gpus(CudaResources *resources, unsigned int device_count)
     free(resources);
     if (cuda_lib_handle)
     {
-        #ifdef _WIN32
+#ifdef _WIN32
         FreeLibrary((HMODULE)cuda_lib_handle);
-        #else
+#else
         dlclose(cuda_lib_handle);
-        #endif
+#endif
         cuda_lib_handle = NULL;
     }
 }

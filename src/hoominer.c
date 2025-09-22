@@ -111,7 +111,7 @@ static void self_test_from_main_vectors(void)
     CalculateProofOfWorkValue(&state, result);
     printf("[self-test] Vector1 PrevHeader: ");
     print_hex("", PrevHeader, DOMAIN_HASH_SIZE);
-    printf("[self-test] Vector1 Timestamp: %llu, Nonce: %llu\n", state.Timestamp, state.Nonce);
+    printf("[self-test] Vector1 Timestamp: %lu, Nonce: %lu\n", state.Timestamp, state.Nonce);
     printf("[self-test] Vector1 Output: ");
     print_hex("", result, DOMAIN_HASH_SIZE);
   }
@@ -131,7 +131,7 @@ static void self_test_from_main_vectors(void)
     CalculateProofOfWorkValue(&state, result);
     printf("[self-test] Vector2 PrevHeader: ");
     print_hex("", PrevHeader, DOMAIN_HASH_SIZE);
-    printf("[self-test] Vector2 Timestamp: %llu, Nonce: %llu\n", state.Timestamp, state.Nonce);
+    printf("[self-test] Vector2 Timestamp: %lu, Nonce: %lu\n", state.Timestamp, state.Nonce);
     printf("[self-test] Vector2 Output: ");
     print_hex("", result, DOMAIN_HASH_SIZE);
   }
@@ -433,7 +433,7 @@ int initialize_mining(StratumContext *ctx, const char *username, const char *alg
             bool compile_kernel_error = load_cuda_kernel_binary(&ctx->cuda_resources[i], cubin_filename, "Hoohash_hash", ctx->config->gpu_work_multiplier);
             if (compile_kernel_error != cudaSuccess)
             {
-              printf("Failed to load CUDA kernel binary %s for device %u\n",
+              printf("Failed to load CUDA kernel binary %s for device %u, %d\n",
                      cubin_filename, i, compile_kernel_error);
               continue;
             }

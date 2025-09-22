@@ -25,21 +25,24 @@ static void clock_gettime_monotonic(struct timespec *ts)
 #define clock_gettime(id, ts) clock_gettime_monotonic(ts)
 
 // endian helpers for Windows
-static inline uint64_t __byte_swap_u64(uint64_t x) {
+static inline uint64_t __byte_swap_u64(uint64_t x)
+{
   return ((x & 0x00000000000000FFULL) << 56) |
          ((x & 0x000000000000FF00ULL) << 40) |
          ((x & 0x0000000000FF0000ULL) << 24) |
-         ((x & 0x00000000FF000000ULL) << 8)  |
-         ((x & 0x000000FF00000000ULL) >> 8)  |
+         ((x & 0x00000000FF000000ULL) << 8) |
+         ((x & 0x000000FF00000000ULL) >> 8) |
          ((x & 0x0000FF0000000000ULL) >> 24) |
          ((x & 0x00FF000000000000ULL) >> 40) |
          ((x & 0xFF00000000000000ULL) >> 56);
 }
-static inline uint64_t htole64(uint64_t x) {
+static inline uint64_t htole64(uint64_t x)
+{
   // Windows is little-endian; keep x
   return x;
 }
-static inline uint64_t le64toh(uint64_t x) {
+static inline uint64_t le64toh(uint64_t x)
+{
   return x;
 }
 #endif
@@ -228,11 +231,12 @@ void *mining_cpu_thread(void *arg)
     state.Timestamp = current_job.timestamp;
     memcpy(state.mat, current_job.matrix, sizeof(double) * 64 * 64);
     struct timespec start_time, end_time;
-    if (ctx->config->debug == 1) {
+    if (ctx->config->debug == 1)
+    {
       clock_gettime(CLOCK_MONOTONIC, &start_time);
       printf("Starting job %s\n", current_job.job_id);
     }
-   
+
     int nonces_processed_for_job = 0;
 
     while (ctx->running)
@@ -275,18 +279,19 @@ void *mining_cpu_thread(void *arg)
         // uint64_t current_time_ms = now.tv_sec * 1000ULL + now.tv_nsec / 1000000ULL;
         // if (current_job.timestamp * 1000ULL + JOB_MAX_AGE > current_time_ms)
         // {
-          if (ctx->config->debug == 1)
-            printf("Submitting solution for job %s", current_job_id);
-          submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, state.Nonce, result, ms, ctx, reporting_index);
-          current_job.completed = 1;
-          current_job.running = 0;
-          break;
+        if (ctx->config->debug == 1)
+          printf("Submitting solution for job %s", current_job_id);
+        submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, state.Nonce, result, ms, ctx, reporting_index);
+        current_job.completed = 1;
+        current_job.running = 0;
+        break;
         // }
       }
       nonce += step;
     }
     current_job.running = 0;
-    if (ctx->config->debug == 1) {
+    if (ctx->config->debug == 1)
+    {
       clock_gettime(CLOCK_MONOTONIC, &end_time);
       long elapsed_ns = (end_time.tv_sec - start_time.tv_sec) * 1000000000L +
                         (end_time.tv_nsec - start_time.tv_nsec);
@@ -332,7 +337,8 @@ void *mining_opencl_thread(void *arg)
     state.Timestamp = current_job.timestamp;
     memcpy(state.mat, current_job.matrix, sizeof(double) * 64 * 64);
     struct timespec start_time, end_time;
-    if (ctx->config->debug == 1) {
+    if (ctx->config->debug == 1)
+    {
       clock_gettime(CLOCK_MONOTONIC, &start_time);
       printf("Starting job %s\n", current_job_id);
     }
@@ -359,7 +365,7 @@ void *mining_opencl_thread(void *arg)
         break;
 
       OpenCLResult result = {0};
-      cl_int status = run_opencl_hoohash_kernel(&ctx->opencl_resources[mt->threadIndex], mt->threadIndex, global_work_size,
+      cl_int status = run_opencl_hoohash_kernel(&ctx->opencl_resources[mt->threadIndex], global_work_size,
                                                 local_work_size, state.PrevHeader, ms->global_target, state.mat, state.Timestamp, start_nonce, &result);
 
       pthread_mutex_lock(&ctx->hd->hashrate_mutex);
@@ -395,12 +401,12 @@ void *mining_opencl_thread(void *arg)
           //   uint64_t current_time_ms = now.tv_sec * 1000ULL + now.tv_nsec / 1000000ULL;
           //   if (current_job.timestamp * 1000ULL + JOB_MAX_AGE > current_time_ms)
           //   {
-              if (ctx->config->debug == 1)
-                printf("Submitting solution for job %s", current_job_id);
-              submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, result.nonce, result.hash, ms, ctx, reporting_index);
-              current_job.completed = 1;
-              current_job.running = 0;
-              break;
+          if (ctx->config->debug == 1)
+            printf("Submitting solution for job %s", current_job_id);
+          submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, result.nonce, result.hash, ms, ctx, reporting_index);
+          current_job.completed = 1;
+          current_job.running = 0;
+          break;
           //   }
           // }
         }
@@ -408,12 +414,13 @@ void *mining_opencl_thread(void *arg)
       start_nonce += global_work_size;
     }
     current_job.running = 0;
-    if (ctx->config->debug == 1) {
+    if (ctx->config->debug == 1)
+    {
       clock_gettime(CLOCK_MONOTONIC, &end_time);
       long elapsed_ns = (end_time.tv_sec - start_time.tv_sec) * 1000000000L +
                         (end_time.tv_nsec - start_time.tv_nsec);
       double elapsed_ms = elapsed_ns / 1e6;
-      printf("Job %s: runtime: %.3f ms, and nonces processed %llu\n", current_job_id, elapsed_ms, nonces_processed_for_job);
+      printf("Job %s: runtime: %.3f ms, and nonces processed %lu\n", current_job_id, elapsed_ms, nonces_processed_for_job);
     }
   }
 
@@ -428,17 +435,16 @@ void *mining_cuda_thread(void *arg)
   MiningState *ms = ctx->ms;
   State state = {0};
   char *current_job_id = NULL;
-  uint64_t nonce_mask = 0xFFFFFFFFFFFFFFFFULL;
   uint64_t hashes_per_cuda_call = ctx->cuda_resources[mt->threadIndex].optimal_grid_size * ctx->cuda_resources[mt->threadIndex].optimal_block_size;
   uint64_t start_nonce = (uint64_t)mt->threadIndex * hashes_per_cuda_call;
   if (ms->extranonce != NULL)
   {
     uint64_t extranonce_val = strtoull(ms->extranonce, NULL, 10);
-    uint64_t start_nonce = (extranonce_val << 32) | ((uint64_t)mt->threadIndex * hashes_per_cuda_call);
+    start_nonce = (extranonce_val << 32) | ((uint64_t)mt->threadIndex * hashes_per_cuda_call);
   }
   int reporting_index = ctx->cpu_device_count + ctx->opencl_device_count + mt->threadIndex;
   ReportingDevice *cuda_reporting_device = ctx->hd->devices[reporting_index];
-  uint64_t nonces_processed = 0;
+  cuda_reporting_device->nonces_processed = 0;
 
   while (ctx->running)
   {
@@ -454,7 +460,8 @@ void *mining_cuda_thread(void *arg)
     state.Timestamp = current_job.timestamp;
     memcpy(state.mat, current_job.matrix, sizeof(double) * 64 * 64);
     struct timespec start_time, end_time;
-    if (ctx->config->debug == 1) {
+    if (ctx->config->debug == 1)
+    {
       clock_gettime(CLOCK_MONOTONIC, &start_time);
       printf("Starting job %s\n", current_job_id);
     }
@@ -517,12 +524,12 @@ void *mining_cuda_thread(void *arg)
           //   uint64_t current_time_ms = now.tv_sec * 1000ULL + now.tv_nsec / 1000000ULL;
           //   if (current_job.timestamp * 1000ULL + JOB_MAX_AGE > current_time_ms)
           //   {
-              if (ctx->config->debug == 1)
-                printf("Submitting solution for job %s", current_job_id);
-              submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, result.nonce, result.hash, ms, ctx, reporting_index);
-              current_job.completed = 1;
-              current_job.running = 0;
-              break;
+          if (ctx->config->debug == 1)
+            printf("Submitting solution for job %s", current_job_id);
+          submit_mining_solution(ctx->sockfd, ctx->worker, current_job_id, result.nonce, result.hash, ms, ctx, reporting_index);
+          current_job.completed = 1;
+          current_job.running = 0;
+          break;
           //   }
           // }
         }
@@ -531,8 +538,9 @@ void *mining_cuda_thread(void *arg)
       start_nonce += hashes_per_cuda_call;
     }
     current_job.running = 0;
-    
-    if (ctx->config->debug == 1) {
+
+    if (ctx->config->debug == 1)
+    {
       clock_gettime(CLOCK_MONOTONIC, &end_time);
       long elapsed_ns = (end_time.tv_sec - start_time.tv_sec) * 1000000000L +
                         (end_time.tv_nsec - start_time.tv_nsec);
