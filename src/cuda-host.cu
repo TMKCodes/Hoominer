@@ -524,8 +524,7 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
         &resource->timestamp,
         &resource->matrix,
         &resource->target,
-        &resource->result,
-        &resource->nonces_processed};
+        &resource->result};
 
     CUresult cu_err = p_cuLaunchKernel(resource->kernel,
                                        resource->optimal_grid_size, 1, 1,
