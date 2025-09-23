@@ -1047,11 +1047,11 @@ extern "C" __global__ void Hoohash_hash(
     blake3_hasher_update(&hasher, previous_header, DOMAIN_HASH_SIZE);
 
     long long local_timestamp = *timestamp;
-    blake3_hasher_update(&hasher, &local_timestamp, sizeof(long));
+    blake3_hasher_update(&hasher, &local_timestamp, sizeof(long long));
 
     unsigned char zeroes[DOMAIN_HASH_SIZE] = {0};
     blake3_hasher_update(&hasher, zeroes, DOMAIN_HASH_SIZE);
-    blake3_hasher_update(&hasher, &nonce, sizeof(nonce));
+    blake3_hasher_update(&hasher, &nonce, sizeof(unsigned long long));
 
     unsigned char first_pass[DOMAIN_HASH_SIZE];
     blake3_hasher_finalize(&hasher, first_pass, DOMAIN_HASH_SIZE);
