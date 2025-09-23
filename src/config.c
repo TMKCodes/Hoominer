@@ -64,7 +64,7 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
       while (i < argc && strncmp(argv[i], "--", 2) != 0 && config->stratum_urls_num < MAX_STRATUM_URLS)
       {
         char *token = argv[i];
-        if(config->debug == 1)
+        if (config->debug == 1)
           printf("Processing token: %s\n", token); // Debug: Print each token
         struct StratumConfig *stratum = &config->stratum_urls[config->stratum_urls_num];
 
@@ -116,13 +116,15 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
       }
       i--; // Step back to process the next flag in the outer loop
       // Print parsed stratum URLs
-      if (config->debug == 1 && config->stratum_urls_num > 0) {
-          printf("Parsed Stratum URLs:\n");
-          for (int j = 0; j < config->stratum_urls_num; j++) {
-              struct StratumConfig *stratum = &config->stratum_urls[j];
-              const char *protocol = stratum->ssl_enabled ? "stratum+ssl://" : "stratum+tcp://";
-              printf("  %d: %s%s:%d\n", j + 1, protocol, stratum->pool_ip, stratum->pool_port);
-          }
+      if (config->stratum_urls_num > 0)
+      {
+        printf("Parsed Stratum URLs:\n");
+        for (int j = 0; j < config->stratum_urls_num; j++)
+        {
+          struct StratumConfig *stratum = &config->stratum_urls[j];
+          const char *protocol = stratum->ssl_enabled ? "stratum+ssl://" : "stratum+tcp://";
+          printf("  %d: %s%s:%d\n", j + 1, protocol, stratum->pool_ip, stratum->pool_port);
+        }
       }
     }
     else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h"))
@@ -162,7 +164,6 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
     free(gpu_ids_str);
   }
 }
-
 
 struct StratumConfig *get_stratum(struct HoominerConfig *config, int current_index)
 {
