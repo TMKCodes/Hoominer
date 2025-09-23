@@ -639,6 +639,8 @@ __device__ void blake3_hasher_update_base(blake3_hasher *self, const void *input
         {
             private_buffer[i] = input_bytes[i];
         }
+        if (input_len > BLAKE3_CHUNK_LEN)
+            input_len = BLAKE3_CHUNK_LEN;
         chunk_state_update(&self->chunk, (const char *)private_buffer, input_len);
         hasher_merge_cv_stack(self, self->chunk.chunk_counter);
     }
