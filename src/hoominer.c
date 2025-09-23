@@ -3,7 +3,9 @@
 #include <signal.h>
 #include <pthread.h>
 #include <stdbool.h>
+#ifndef _WIN32
 #include <libgen.h>
+#endif
 #include <time.h> // Added for time tracking
 #include "config.h"
 #include "opencl-host.h"
