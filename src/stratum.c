@@ -87,8 +87,21 @@ int init_ssl_connection(StratumContext *ctx)
 int start_stratum_connection(StratumContext *ctx, HoominerConfig *config)
 {
   winsock_init_once();
+  if (config->stratum_urls_num > 0)
+  {
+    printf("Stratum URLs:\n");
+    for (int j = 0; j < config->stratum_urls_num; j++)
+    {
+      struct StratumConfig *stratum = &config->stratum_urls[j];
+      const char *protocol = stratum->ssl_enabled ? "stratum+ssl://" : "stratum+tcp://";
+      printf("  %d: %s%s:%d\n", j + 1, protocol, stratum->pool_ip, stratum->pool_port);
+    }
+  }
   StratumConfig *stratumConfig = get_stratum(config, ctx->current_stratum_index++);
-  if(!config) {
+  printf("Opening connection to %s, stratum at %d index\n", stratumConfig->pool_ip, ctx->current_stratum_index);
+
+  if (!config)
+  {
     fprintf(stderr, "No valid stratum configuration available.\n");
     return -1;
   }
@@ -143,7 +156,10 @@ int start_stratum_connection(StratumContext *ctx, HoominerConfig *config)
     ctx->sockfd = -1;
     return -1;
   }
-  else { ctx->recv_thread_created = 1; }
+  else
+  {
+    ctx->recv_thread_created = 1;
+  }
   if (pthread_create(&ctx->hd->display_thread, NULL, hashrate_display_thread, ctx) != 0)
   {
     printf("Failed to create display or receive threads.\n");
@@ -159,7 +175,10 @@ int start_stratum_connection(StratumContext *ctx, HoominerConfig *config)
     ctx->sockfd = -1;
     return -1;
   }
-  else { ctx->hd->display_thread_created = 1; }
+  else
+  {
+    ctx->hd->display_thread_created = 1;
+  }
 
   if (start_mining_threads(ctx, ctx->ms) != 0)
   {
