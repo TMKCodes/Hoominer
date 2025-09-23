@@ -824,8 +824,8 @@ __device__ double HighComplexNonLinear(double x) { return 1.0 / sqrt(fabs(x) + 1
 
 __device__ double ComplexNonLinear(double x)
 {
-    double transformFactorOne = fmod(x * COMPLEX_TRANSFORM_MULTIPLIER, 8) / 8;
-    double transformFactorTwo = fmod(x * COMPLEX_TRANSFORM_MULTIPLIER, 4) / 4;
+    double transformFactorOne = (x * COMPLEX_TRANSFORM_MULTIPLIER) / 8.0 - floor((x * COMPLEX_TRANSFORM_MULTIPLIER) / 8.0);
+    double transformFactorTwo = (x * COMPLEX_TRANSFORM_MULTIPLIER) / 4.0 - floor((x * COMPLEX_TRANSFORM_MULTIPLIER) / 4.0);
     if (transformFactorOne < 0.33)
     {
         if (transformFactorTwo < 0.25)
@@ -888,7 +888,7 @@ __device__ double ComplexNonLinear(double x)
 __device__ double TransformFactor(double x)
 {
     const double granularity = 1024.0;
-    return fmod(x, granularity) / granularity;
+    return x / granularity - floor(x / granularity);
 }
 
 __device__ double ForComplex(double forComplex)
@@ -1032,7 +1032,7 @@ struct CudaResult
 
 // CUDA kernel
 extern "C" __global__ void Hoohash_hash(
-    unsigned long start_nonce,
+    unsigned long long start_nonce,
     const unsigned char *previous_header,
     const long long *timestamp,
     const double matrix[64][64],
@@ -1040,7 +1040,7 @@ extern "C" __global__ void Hoohash_hash(
     CudaResult *result)
 {
     int nonceId = threadIdx.x + blockIdx.x * blockDim.x;
-    uint64_t nonce = start_nonce + nonceId;
+    unsigned long long nonce = start_nonce + nonceId;
     // Hash computation
     blake3_hasher hasher;
     blake3_hasher_init(&hasher);
