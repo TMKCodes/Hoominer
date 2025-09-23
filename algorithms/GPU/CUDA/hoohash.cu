@@ -1,6 +1,5 @@
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
-#include <device_atomic_functions.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -21,9 +20,9 @@
 #define COMPLEX_TRANSFORM_MULTIPLIER 0.000001
 #define PI 3.14159265358979323846
 
-__device__ const uint32_t IV[8] = {0x6A09E667UL, 0xBB67AE85UL, 0x3C6EF372UL,
-                                   0xA54FF53AUL, 0x510E527FUL, 0x9B05688CUL,
-                                   0x1F83D9ABUL, 0x5BE0CD19UL};
+__device__ const unsigned int IV[8] = {0x6A09E667UL, 0xBB67AE85UL, 0x3C6EF372UL,
+                                       0xA54FF53AUL, 0x510E527FUL, 0x9B05688CUL,
+                                       0x1F83D9ABUL, 0x5BE0CD19UL};
 
 enum blake3_flags
 {
@@ -38,8 +37,8 @@ enum blake3_flags
 
 typedef struct
 {
-    uint32_t cv[8];
-    unsigned long long chunk_counter;
+    unsigned int cv[8];
+    unsigned long chunk_counter;
     uint8_t buf[BLAKE3_BLOCK_LEN];
     uint8_t buf_len;
     uint8_t blocks_compressed;
@@ -48,7 +47,7 @@ typedef struct
 
 typedef struct
 {
-    uint32_t key[8];
+    unsigned int key[8];
     blake3_chunk_state chunk;
     uint8_t cv_stack_len;
     uint8_t cv_stack[(BLAKE3_MAX_DEPTH + 1) * BLAKE3_OUT_LEN];
@@ -56,8 +55,8 @@ typedef struct
 
 typedef struct
 {
-    uint32_t input_cv[8];
-    unsigned long long counter;
+    unsigned int input_cv[8];
+    unsigned long counter;
     char block[BLAKE3_BLOCK_LEN];
     char block_len;
     char flags;
@@ -73,7 +72,7 @@ __device__ const uint8_t MSG_SCHEDULE[7][16] = {
     {11, 15, 5, 0, 1, 9, 8, 6, 14, 10, 2, 12, 3, 4, 7, 13},
 };
 
-__device__ void chunk_state_init(blake3_chunk_state *self, const uint32_t key[8],
+__device__ void chunk_state_init(blake3_chunk_state *self, const unsigned int key[8],
                                  uint8_t flags)
 {
     self->cv[0] = key[0];
@@ -105,9 +104,9 @@ __device__ uint8_t chunk_state_maybe_start_flag(const blake3_chunk_state *self)
     return (self->blocks_compressed == 0) ? CHUNK_START : 0;
 }
 
-__device__ output_t make_output(const uint32_t input_cv[8],
+__device__ output_t make_output(const unsigned int input_cv[8],
                                 const uint8_t block[BLAKE3_BLOCK_LEN],
-                                uint8_t block_len, unsigned long long counter, uint8_t flags)
+                                uint8_t block_len, unsigned long counter, uint8_t flags)
 {
     output_t ret;
     for (int i = 0; i < 8; i++)
@@ -132,21 +131,21 @@ __device__ output_t chunk_state_output(const blake3_chunk_state *self)
                        block_flags);
 }
 
-__device__ uint32_t load32(const void *src)
+__device__ unsigned int load32(const void *src)
 {
     const uint8_t *p = (const uint8_t *)src;
-    return ((uint32_t)(p[0]) << 0) | ((uint32_t)(p[1]) << 8) | ((uint32_t)(p[2]) << 16) |
-           ((uint32_t)(p[3]) << 24);
+    return ((unsigned int)(p[0]) << 0) | ((unsigned int)(p[1]) << 8) | ((unsigned int)(p[2]) << 16) |
+           ((unsigned int)(p[3]) << 24);
 }
 
-__device__ uint32_t counter_low(unsigned long long counter) { return (uint32_t)counter; }
+__device__ unsigned int counter_low(unsigned long counter) { return (unsigned int)counter; }
 
-__device__ uint32_t counter_high(unsigned long long counter) { return (uint32_t)(counter >> 32); }
+__device__ unsigned int counter_high(unsigned long counter) { return (unsigned int)(counter >> 32); }
 
-__device__ uint32_t rotr32(uint32_t w, uint32_t c) { return (w >> c) | (w << (32 - c)); }
+__device__ unsigned int rotr32(unsigned int w, unsigned int c) { return (w >> c) | (w << (32 - c)); }
 
-__device__ void g(uint32_t *state, size_t a, size_t b, size_t c, size_t d, uint32_t x,
-                  uint32_t y)
+__device__ void g(unsigned int *state, size_t a, size_t b, size_t c, size_t d, unsigned int x,
+                  unsigned int y)
 {
     state[a] = state[a] + state[b] + x;
     state[d] = rotr32(state[d] ^ state[a], 16);
@@ -158,7 +157,7 @@ __device__ void g(uint32_t *state, size_t a, size_t b, size_t c, size_t d, uint3
     state[b] = rotr32(state[b] ^ state[c], 7);
 }
 
-__device__ void round_fn(uint32_t state[16], const uint32_t *msg, size_t round)
+__device__ void round_fn(unsigned int state[16], const unsigned int *msg, size_t round)
 {
     g(state, 0, 4, 8, 12, msg[MSG_SCHEDULE[round][0]],
       msg[MSG_SCHEDULE[round][1]]);
@@ -178,15 +177,15 @@ __device__ void round_fn(uint32_t state[16], const uint32_t *msg, size_t round)
       msg[MSG_SCHEDULE[round][15]]);
 }
 
-__device__ void compress_pre(uint32_t state[16], const uint32_t cv[8],
+__device__ void compress_pre(unsigned int state[16], const unsigned int cv[8],
                              const uint8_t block[BLAKE3_BLOCK_LEN], uint8_t block_len,
-                             unsigned long long counter, uint8_t flags)
+                             unsigned long counter, uint8_t flags)
 {
     if (block_len > BLAKE3_BLOCK_LEN)
     {
         block_len = BLAKE3_BLOCK_LEN;
     }
-    uint32_t block_words[16];
+    unsigned int block_words[16];
     for (int i = 0; i < 16; i++)
     {
         block_words[i] = load32(block + 4 * i);
@@ -198,8 +197,8 @@ __device__ void compress_pre(uint32_t state[16], const uint32_t cv[8],
     }
     state[12] = counter_low(counter);
     state[13] = counter_high(counter);
-    state[14] = (uint32_t)block_len;
-    state[15] = (uint32_t)flags;
+    state[14] = (unsigned int)block_len;
+    state[15] = (unsigned int)flags;
     for (int i = 0; i < 7; i++)
     {
         round_fn(state, block_words, i);
@@ -207,11 +206,11 @@ __device__ void compress_pre(uint32_t state[16], const uint32_t cv[8],
 }
 
 __device__ void
-blake3_compress_in_place_portable(uint32_t cv[8],
+blake3_compress_in_place_portable(unsigned int cv[8],
                                   const uint8_t block[BLAKE3_BLOCK_LEN],
-                                  uint8_t block_len, unsigned long long counter, uint8_t flags)
+                                  uint8_t block_len, unsigned long counter, uint8_t flags)
 {
-    uint32_t state[16];
+    unsigned int state[16];
     compress_pre(state, cv, block, block_len, counter, flags);
     for (int i = 0; i < 8; i++)
     {
@@ -220,20 +219,20 @@ blake3_compress_in_place_portable(uint32_t cv[8],
 }
 
 __device__ output_t parent_output(const uint8_t block[BLAKE3_BLOCK_LEN],
-                                  const uint32_t key[8], uint8_t flags)
+                                  const unsigned int key[8], uint8_t flags)
 {
     return make_output(key, block, BLAKE3_BLOCK_LEN, 0, flags | PARENT);
 }
 
-__device__ void blake3_compress_in_place(uint32_t cv[8],
+__device__ void blake3_compress_in_place(unsigned int cv[8],
                                          const uint8_t block[BLAKE3_BLOCK_LEN],
-                                         uint8_t block_len, unsigned long long counter,
+                                         uint8_t block_len, unsigned long counter,
                                          uint8_t flags)
 {
     blake3_compress_in_place_portable(cv, block, block_len, counter, flags);
 }
 
-__device__ void store32(void *dst, uint32_t w)
+__device__ void store32(void *dst, unsigned int w)
 {
     uint8_t *p = (uint8_t *)dst;
     p[0] = (uint8_t)(w >> 0);
@@ -242,7 +241,7 @@ __device__ void store32(void *dst, uint32_t w)
     p[3] = (uint8_t)(w >> 24);
 }
 
-__device__ void store_cv_words(uint8_t bytes_out[32], uint32_t cv_words[8])
+__device__ void store_cv_words(uint8_t bytes_out[32], unsigned int cv_words[8])
 {
     for (int i = 0; i < 8; i++)
     {
@@ -252,7 +251,7 @@ __device__ void store_cv_words(uint8_t bytes_out[32], uint32_t cv_words[8])
 
 __device__ void output_chaining_value(const output_t *self, uint8_t cv[32])
 {
-    uint32_t cv_words[8];
+    unsigned int cv_words[8];
     for (int i = 0; i < 8; i++)
     {
         cv_words[i] = self->input_cv[i];
@@ -262,12 +261,12 @@ __device__ void output_chaining_value(const output_t *self, uint8_t cv[32])
     store_cv_words(cv, cv_words);
 }
 
-__device__ unsigned int highest_one(unsigned long long x)
+__device__ unsigned int highest_one(unsigned long x)
 {
     return sizeof(x) * 8 - __clzll(x); // Use OpenCL's clz (count leading zeros)
 }
 
-__device__ void hasher_merge_cv_stack(blake3_hasher *self, unsigned long long total_len)
+__device__ void hasher_merge_cv_stack(blake3_hasher *self, unsigned long total_len)
 {
     size_t post_merge_stack_len = (size_t)highest_one(total_len | 1);
     while (self->cv_stack_len > post_merge_stack_len)
@@ -281,7 +280,7 @@ __device__ void hasher_merge_cv_stack(blake3_hasher *self, unsigned long long to
 }
 
 __device__ void hasher_push_cv(blake3_hasher *self, uint8_t new_cv[BLAKE3_OUT_LEN],
-                               unsigned long long chunk_counter)
+                               unsigned long chunk_counter)
 {
     hasher_merge_cv_stack(self, chunk_counter);
     for (int i = 0; i < BLAKE3_OUT_LEN; i++)
@@ -342,8 +341,8 @@ __device__ void chunk_state_update(blake3_chunk_state *self, const char *input,
     chunk_state_fill_buf(self, (const uint8_t *)input, input_len);
 }
 
-__device__ void chunk_state_reset(blake3_chunk_state *self, const uint32_t key[8],
-                                  unsigned long long chunk_counter)
+__device__ void chunk_state_reset(blake3_chunk_state *self, const unsigned int key[8],
+                                  unsigned long chunk_counter)
 {
     self->cv[0] = key[0];
     self->cv[1] = key[1];
@@ -362,7 +361,7 @@ __device__ void chunk_state_reset(blake3_chunk_state *self, const uint32_t key[8
     self->buf_len = 0;
 }
 
-__device__ unsigned long long round_down_to_power_of_2(unsigned long long x)
+__device__ unsigned long round_down_to_power_of_2(unsigned long x)
 {
     x |= x >> 1;
     x |= x >> 2;
@@ -373,11 +372,11 @@ __device__ unsigned long long round_down_to_power_of_2(unsigned long long x)
     return x - (x >> 1);
 }
 
-__device__ void hash_one_portable(const uint8_t *input, size_t blocks, const uint32_t key[8],
-                                  unsigned long long counter, uint8_t flags, uint8_t flags_start,
+__device__ void hash_one_portable(const uint8_t *input, size_t blocks, const unsigned int key[8],
+                                  unsigned long counter, uint8_t flags, uint8_t flags_start,
                                   uint8_t flags_end, uint8_t out[BLAKE3_OUT_LEN])
 {
-    uint32_t cv[8];
+    unsigned int cv[8];
     for (int i = 0; i < 8; i++)
     {
         cv[i] = key[i];
@@ -400,7 +399,7 @@ __device__ void hash_one_portable(const uint8_t *input, size_t blocks, const uin
 
 __device__ void blake3_hash_many_portable(const uint8_t *const *inputs,
                                           size_t num_inputs, size_t blocks,
-                                          const uint32_t key[8], unsigned long long counter,
+                                          const unsigned int key[8], unsigned long counter,
                                           bool increment_counter, uint8_t flags,
                                           uint8_t flags_start, uint8_t flags_end,
                                           uint8_t *out)
@@ -420,7 +419,7 @@ __device__ void blake3_hash_many_portable(const uint8_t *const *inputs,
 }
 
 __device__ void blake3_hash_many(const uint8_t *const *inputs, size_t num_inputs,
-                                 size_t blocks, const uint32_t key[8], unsigned long long counter,
+                                 size_t blocks, const unsigned int key[8], unsigned long counter,
                                  bool increment_counter, uint8_t flags,
                                  uint8_t flags_start, uint8_t flags_end, uint8_t *out)
 {
@@ -431,7 +430,7 @@ __device__ void blake3_hash_many(const uint8_t *const *inputs, size_t num_inputs
 
 __device__ size_t compress_parents_parallel(const uint8_t *child_chaining_values,
                                             size_t num_chaining_values,
-                                            const uint32_t key[8], uint8_t flags,
+                                            const unsigned int key[8], uint8_t flags,
                                             uint8_t *out)
 {
     const uint8_t *parents_array[2];
@@ -459,7 +458,7 @@ __device__ size_t compress_parents_parallel(const uint8_t *child_chaining_values
 __device__ size_t blake3_simd_degree(void) { return 1; }
 
 __device__ size_t compress_chunks_parallel(const uint8_t *input, size_t input_len,
-                                           const uint32_t key[8], unsigned long long chunk_counter,
+                                           const unsigned int key[8], unsigned long chunk_counter,
                                            uint8_t flags, uint8_t *out)
 {
     const uint8_t *chunks_array[1];
@@ -476,7 +475,7 @@ __device__ size_t compress_chunks_parallel(const uint8_t *input, size_t input_le
                      true, flags, CHUNK_START, CHUNK_END, out);
     if (input_len > input_position)
     {
-        unsigned long long counter = chunk_counter + (unsigned long long)chunks_array_len;
+        unsigned long counter = chunk_counter + (unsigned long)chunks_array_len;
         blake3_chunk_state chunk_state;
         chunk_state_init(&chunk_state, key, flags);
         chunk_state.chunk_counter = counter;
@@ -497,7 +496,7 @@ __device__ size_t left_subtree_len(size_t input_len)
 }
 
 __device__ size_t blake3_compress_subtree_wide(const uint8_t *input, size_t input_len,
-                                               const uint32_t key[8], unsigned long long chunk_counter,
+                                               const unsigned int key[8], unsigned long chunk_counter,
                                                uint8_t flags, uint8_t *out, bool use_tbb)
 {
     if (input_len <= blake3_simd_degree() * BLAKE3_CHUNK_LEN)
@@ -508,8 +507,8 @@ __device__ size_t blake3_compress_subtree_wide(const uint8_t *input, size_t inpu
     size_t left_input_len = left_subtree_len(input_len);
     size_t right_input_len = input_len - left_input_len;
     const uint8_t *right_input = &input[left_input_len];
-    unsigned long long right_chunk_counter =
-        chunk_counter + (unsigned long long)(left_input_len / BLAKE3_CHUNK_LEN);
+    unsigned long right_chunk_counter =
+        chunk_counter + (unsigned long)(left_input_len / BLAKE3_CHUNK_LEN);
     uint8_t cv_array[2 * 2 * BLAKE3_OUT_LEN];
     size_t degree = blake3_simd_degree();
     if (left_input_len > BLAKE3_CHUNK_LEN && degree == 1)
@@ -536,8 +535,8 @@ __device__ size_t blake3_compress_subtree_wide(const uint8_t *input, size_t inpu
 }
 
 __device__ void compress_subtree_to_parent_node(const uint8_t *input,
-                                                size_t input_len, const uint32_t key[8],
-                                                unsigned long long chunk_counter, uint8_t flags,
+                                                size_t input_len, const unsigned int key[8],
+                                                unsigned long chunk_counter, uint8_t flags,
                                                 uint8_t out[2 * BLAKE3_OUT_LEN],
                                                 bool use_tbb)
 {
@@ -589,8 +588,8 @@ __device__ void blake3_hasher_update_base(blake3_hasher *self, const void *input
     while (input_len > BLAKE3_CHUNK_LEN)
     {
         size_t subtree_len = round_down_to_power_of_2(input_len);
-        unsigned long long count_so_far = self->chunk.chunk_counter * BLAKE3_CHUNK_LEN;
-        while ((((unsigned long long)(subtree_len - 1)) & count_so_far) != 0)
+        unsigned long count_so_far = self->chunk.chunk_counter * BLAKE3_CHUNK_LEN;
+        while ((((unsigned long)(subtree_len - 1)) & count_so_far) != 0)
         {
             subtree_len /= 2;
         }
@@ -639,14 +638,12 @@ __device__ void blake3_hasher_update_base(blake3_hasher *self, const void *input
         {
             private_buffer[i] = input_bytes[i];
         }
-        if (input_len > BLAKE3_CHUNK_LEN)
-            input_len = BLAKE3_CHUNK_LEN;
         chunk_state_update(&self->chunk, (const char *)private_buffer, input_len);
         hasher_merge_cv_stack(self, self->chunk.chunk_counter);
     }
 }
 
-__device__ void hasher_init_base(blake3_hasher *self, const uint32_t key[8],
+__device__ void hasher_init_base(blake3_hasher *self, const unsigned int key[8],
                                  uint8_t flags)
 {
     for (int i = 0; i < 8; i++)
@@ -659,7 +656,7 @@ __device__ void hasher_init_base(blake3_hasher *self, const uint32_t key[8],
 
 __device__ void blake3_hasher_init(blake3_hasher *self)
 {
-    uint32_t local_IV[8];
+    unsigned int local_IV[8];
     for (int i = 0; i < 8; i++)
     {
         local_IV[i] = IV[i];
@@ -668,18 +665,18 @@ __device__ void blake3_hasher_init(blake3_hasher *self)
 }
 
 __device__ void blake3_hasher_update(blake3_hasher *self,
-                                     const void *input, unsigned long long input_len)
+                                     const void *input, unsigned long input_len)
 {
     bool use_tbb = false;
     blake3_hasher_update_base(self, input, input_len, use_tbb);
 }
 
-__device__ void blake3_compress_xof_portable(const uint32_t cv[8],
+__device__ void blake3_compress_xof_portable(const unsigned int cv[8],
                                              const uint8_t block[BLAKE3_BLOCK_LEN],
-                                             uint8_t block_len, unsigned long long counter,
+                                             uint8_t block_len, unsigned long counter,
                                              uint8_t flags, uint8_t out[64])
 {
-    uint32_t state[16];
+    unsigned int state[16];
     compress_pre(state, cv, block, block_len, counter, flags);
     for (int i = 0; i < 8; i++)
     {
@@ -688,16 +685,16 @@ __device__ void blake3_compress_xof_portable(const uint32_t cv[8],
     }
 }
 
-__device__ void blake3_compress_xof(const uint32_t cv[8],
+__device__ void blake3_compress_xof(const unsigned int cv[8],
                                     const uint8_t block[BLAKE3_BLOCK_LEN],
-                                    uint8_t block_len, unsigned long long counter, uint8_t flags,
+                                    uint8_t block_len, unsigned long counter, uint8_t flags,
                                     uint8_t out[64])
 {
     blake3_compress_xof_portable(cv, block, block_len, counter, flags, out);
 }
 
-__device__ void blake3_xof_many(const uint32_t cv[8], const uint8_t block[BLAKE3_BLOCK_LEN],
-                                uint8_t block_len, unsigned long long counter, uint8_t flags, uint8_t out[64],
+__device__ void blake3_xof_many(const unsigned int cv[8], const uint8_t block[BLAKE3_BLOCK_LEN],
+                                uint8_t block_len, unsigned long counter, uint8_t flags, uint8_t out[64],
                                 size_t outblocks)
 {
     if (outblocks == 0)
@@ -715,14 +712,14 @@ __device__ void blake3_xof_many(const uint32_t cv[8], const uint8_t block[BLAKE3
     }
 }
 
-__device__ void output_root_bytes(const output_t *self, unsigned long long seek, uint8_t *out,
+__device__ void output_root_bytes(const output_t *self, unsigned long seek, uint8_t *out,
                                   size_t out_len)
 {
     if (out_len == 0)
     {
         return;
     }
-    unsigned long long output_block_counter = seek >> 6;
+    unsigned long output_block_counter = seek >> 6;
     size_t offset_within_block = seek & 63;
     uint8_t wide_buf[64];
     if (offset_within_block)
@@ -761,7 +758,7 @@ __device__ void output_root_bytes(const output_t *self, unsigned long long seek,
     }
 }
 
-__device__ void blake3_hasher_finalize_seek(const blake3_hasher *self, unsigned long long seek,
+__device__ void blake3_hasher_finalize_seek(const blake3_hasher *self, unsigned long seek,
                                             uint8_t *out, size_t out_len)
 {
     if (out_len == 0)
@@ -827,8 +824,8 @@ __device__ double HighComplexNonLinear(double x) { return 1.0 / sqrt(fabs(x) + 1
 
 __device__ double ComplexNonLinear(double x)
 {
-    double transformFactorOne = (x * COMPLEX_TRANSFORM_MULTIPLIER) / 8.0 - floor((x * COMPLEX_TRANSFORM_MULTIPLIER) / 8.0);
-    double transformFactorTwo = (x * COMPLEX_TRANSFORM_MULTIPLIER) / 4.0 - floor((x * COMPLEX_TRANSFORM_MULTIPLIER) / 4.0);
+    double transformFactorOne = fmod(x * COMPLEX_TRANSFORM_MULTIPLIER, 8) / 8;
+    double transformFactorTwo = fmod(x * COMPLEX_TRANSFORM_MULTIPLIER, 4) / 4;
     if (transformFactorOne < 0.33)
     {
         if (transformFactorTwo < 0.25)
@@ -891,7 +888,7 @@ __device__ double ComplexNonLinear(double x)
 __device__ double TransformFactor(double x)
 {
     const double granularity = 1024.0;
-    return x / granularity - floor(x / granularity);
+    return fmod(x, granularity) / granularity;
 }
 
 __device__ double ForComplex(double forComplex)
@@ -914,12 +911,12 @@ __device__ double ForComplex(double forComplex)
     return complexValue * rounds;
 }
 
-__device__ inline unsigned long long rotl(const unsigned long long x, int k) { return (x << k) | (x >> (64 - k)); }
+__device__ inline unsigned long rotl(const unsigned long x, int k) { return (x << k) | (x >> (64 - k)); }
 
-__device__ inline unsigned long long xoshiro256_next(ulong4 *s)
+__device__ inline unsigned long xoshiro256_next(ulong4 *s)
 {
-    const unsigned long long result = rotl(s->y * 5, 7) * 9;
-    const unsigned long long t = s->y << 17;
+    const unsigned long result = rotl(s->y * 5, 7) * 9;
+    const unsigned long t = s->y << 17;
     s->z ^= s->x;
     s->w ^= s->y;
     s->y ^= s->z;
@@ -957,18 +954,18 @@ __device__ int compare_target(unsigned char *hash, unsigned char *target)
 
 __device__ int HoohashMatrixMultiplication(const double mat[64][64],
                                            const uint8_t *hashBytes, uint8_t *output,
-                                           unsigned long long nonce)
+                                           uint64_t nonce)
 {
     uint8_t vector[64] = {0};
     double product[64] = {0};
     uint8_t scaledValues[32] = {0};
     uint8_t result[32] = {0};
-    uint32_t H[8] = {0};
+    unsigned int H[8] = {0};
 #pragma unroll
     for (int i = 0; i < 8; i++)
     {
-        H[i] = ((uint32_t)hashBytes[i * 4] << 24) | ((uint32_t)hashBytes[i * 4 + 1] << 16) |
-               ((uint32_t)hashBytes[i * 4 + 2] << 8) | (uint32_t)hashBytes[i * 4 + 3];
+        H[i] = ((unsigned int)hashBytes[i * 4] << 24) | ((unsigned int)hashBytes[i * 4 + 1] << 16) |
+               ((unsigned int)hashBytes[i * 4 + 2] << 8) | (unsigned int)hashBytes[i * 4 + 3];
     }
     double hashMod =
         (double)(H[0] ^ H[1] ^ H[2] ^ H[3] ^ H[4] ^ H[5] ^ H[6] ^ H[7]);
@@ -1009,7 +1006,7 @@ __device__ int HoohashMatrixMultiplication(const double mat[64][64],
 #pragma unroll
     for (int i = 0; i < 64; i += 2)
     {
-        unsigned long long pval = (unsigned long long)product[i] + (unsigned long long)product[i + 1];
+        uint64_t pval = (uint64_t)product[i] + (uint64_t)product[i + 1];
         scaledValues[i / 2] = (uint8_t)(pval & 0xFF);
     }
 #pragma unroll
@@ -1035,7 +1032,7 @@ struct CudaResult
 
 // CUDA kernel
 extern "C" __global__ void Hoohash_hash(
-    unsigned long long start_nonce,
+    unsigned long start_nonce,
     const unsigned char *previous_header,
     const long long *timestamp,
     const double matrix[64][64],
@@ -1043,14 +1040,14 @@ extern "C" __global__ void Hoohash_hash(
     CudaResult *result)
 {
     int nonceId = threadIdx.x + blockIdx.x * blockDim.x;
-    unsigned long long nonce = start_nonce + nonceId;
+    uint64_t nonce = start_nonce + nonceId;
     // Hash computation
     blake3_hasher hasher;
     blake3_hasher_init(&hasher);
     blake3_hasher_update(&hasher, previous_header, DOMAIN_HASH_SIZE);
 
     long long local_timestamp = *timestamp;
-    blake3_hasher_update(&hasher, &local_timestamp, sizeof(long long));
+    blake3_hasher_update(&hasher, &local_timestamp, sizeof(long));
 
     unsigned char zeroes[DOMAIN_HASH_SIZE] = {0};
     blake3_hasher_update(&hasher, zeroes, DOMAIN_HASH_SIZE);
