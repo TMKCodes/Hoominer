@@ -374,9 +374,9 @@ int initialize_mining(StratumContext *ctx, const char *username, const char *alg
     if (ctx->config->disable_opencl == false)
     {
       ctx->opencl_resources = initalize_all_opencl_gpus(ctx, &ctx->opencl_device_count);
-      printf("OpenCL devices found: %d\n", ctx->opencl_device_count);
       if (ctx->config->list_gpus == false)
       {
+        printf("OpenCL devices found: %d\n", ctx->opencl_device_count);
         if (strcmp(algorithm, "hoohash") == 0)
         {
           for (cl_uint i = 0; i < ctx->opencl_device_count; i++)
@@ -397,14 +397,9 @@ int initialize_mining(StratumContext *ctx, const char *username, const char *alg
     if (ctx->config->disable_cuda == false)
     {
       ctx->cuda_resources = initialize_all_cuda_gpus(&ctx->cuda_device_count, ctx->config->selected_gpus, ctx->config->selected_gpus_num);
-      if (ctx->cuda_resources == NULL)
+      if (ctx->cuda_resources != NULL && ctx->config->list_gpus == false)
       {
-        printf("Failed to initialize CUDA devices\n");
-        return -1;
-      }
-      printf("CUDA devices found: %d\n", ctx->cuda_device_count);
-      if (ctx->config->list_gpus == false)
-      {
+        printf("CUDA devices found: %d\n", ctx->cuda_device_count);
         if (strcmp(algorithm, "hoohash") == 0)
         {
           for (cl_uint i = 0; i < ctx->cuda_device_count; i++)

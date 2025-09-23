@@ -864,7 +864,7 @@ typedef struct {
 
 __kernel void Hoohash_hash(const ulong local_size, const ulong start_nonce,
                            __global uchar *previous_header,
-                           __global long long *timestamp, __global double *matrix,
+                           __global long *timestamp, __global double *matrix,
                            __global uchar *target,
                            volatile __global Result *result) {
 #if defined(PAL)
@@ -885,14 +885,14 @@ __kernel void Hoohash_hash(const ulong local_size, const ulong start_nonce,
     private_previous_header[i] = previous_header[i];
   }
   blake3_hasher_update(&hasher, private_previous_header, DOMAIN_HASH_SIZE);
-  __private long long private_timestamp[8];
+  __private long private_timestamp[8];
   for (int i = 0; i < 8; i++) {
     private_timestamp[i] = timestamp[i];
   }
-  blake3_hasher_update(&hasher, private_timestamp, 8);
+  blake3_hasher_update(&hasher, private_timestamp, sizeof(long));
   uchar zeroes[DOMAIN_HASH_SIZE] = {0};
   blake3_hasher_update(&hasher, zeroes, DOMAIN_HASH_SIZE);
-  blake3_hasher_update(&hasher, &nonce, sizeof(nonce));
+  blake3_hasher_update(&hasher, &nonce, sizeof(ulong));
   uchar first_pass[DOMAIN_HASH_SIZE];
   blake3_hasher_finalize(&hasher, first_pass, DOMAIN_HASH_SIZE);
 
