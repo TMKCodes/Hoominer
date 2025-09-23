@@ -1032,7 +1032,7 @@ struct CudaResult
 
 // CUDA kernel
 extern "C" __global__ void Hoohash_hash(
-    unsigned long long start_nonce,
+    const unsigned long long *start_nonce,
     const unsigned char *previous_header,
     const long long *timestamp,
     const double matrix[64][64],
@@ -1040,7 +1040,7 @@ extern "C" __global__ void Hoohash_hash(
     CudaResult *result)
 {
     int nonceId = threadIdx.x + blockIdx.x * blockDim.x;
-    unsigned long long nonce = start_nonce + nonceId;
+    unsigned long long nonce = *start_nonce + nonceId;
     // Hash computation
     blake3_hasher hasher;
     blake3_hasher_init(&hasher);

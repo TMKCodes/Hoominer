@@ -35,7 +35,7 @@ extern "C"
   // Struct holding results from CUDA kernel
   struct CudaResult
   {
-    uint64_t nonce;
+    unsigned long long nonce;
     unsigned char hash[32];
   };
 
@@ -47,6 +47,7 @@ extern "C"
     CUmodule module;
     CUfunction kernel;
     unsigned char *previous_header;
+    unsigned long long *start_nonce;
     long long *timestamp;
     double *matrix;
     unsigned char *target;
