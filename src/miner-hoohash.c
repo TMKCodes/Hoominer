@@ -314,7 +314,7 @@ void *mining_opencl_thread(void *arg)
   cl_ulong local_work_size = ctx->opencl_resources[mt->threadIndex].max_work_group_size;
   cl_ulong global_work_size = ctx->opencl_resources[mt->threadIndex].max_global_work_size;
   uint64_t random_base = rand() & 0x3FFFF;
-  cl_ulong start_nonce = random_base * ((cl_ulong)mt->threadIndex * global_work_size);
+  unsigned long long start_nonce = random_base * ((cl_ulong)mt->threadIndex * global_work_size);
   if (ms->extranonce != NULL)
   {
     cl_ulong extranonce_val = strtoull(ms->extranonce, NULL, 10);
@@ -435,8 +435,8 @@ void *mining_cuda_thread(void *arg)
   MiningState *ms = ctx->ms;
   State state = {0};
   char *current_job_id = NULL;
-  uint64_t hashes_per_cuda_call = ctx->cuda_resources[mt->threadIndex].optimal_grid_size * ctx->cuda_resources[mt->threadIndex].optimal_block_size;
-  uint64_t start_nonce = (uint64_t)mt->threadIndex * hashes_per_cuda_call;
+  unsigned long long hashes_per_cuda_call = ctx->cuda_resources[mt->threadIndex].optimal_grid_size * ctx->cuda_resources[mt->threadIndex].optimal_block_size;
+  unsigned long long start_nonce = (uint64_t)mt->threadIndex * hashes_per_cuda_call;
   if (ms->extranonce != NULL)
   {
     uint64_t extranonce_val = strtoull(ms->extranonce, NULL, 10);

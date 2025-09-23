@@ -560,8 +560,8 @@ cl_int load_opencl_kernel_binary(StratumContext *ctx, OpenCLResources *resource,
 
 cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work_size, cl_ulong local_work_size,
                                  unsigned char *previous_header, unsigned char *target,
-                                 double matrix[64][64], int64_t timestamp,
-                                 uint64_t start_nonce, OpenCLResult *result)
+                                 double matrix[64][64], cl_long timestamp,
+                                 cl_ulong start_nonce, OpenCLResult *result)
 {
   cl_int err = CL_SUCCESS;
   cl_event write_events[5] = {NULL, NULL, NULL, NULL, NULL};
@@ -599,7 +599,7 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
                              CL_FALSE, 0, DOMAIN_HASH_SIZE, previous_header,
                              0, NULL, &write_events[0]);
   err |= clEnqueueWriteBuffer(resource->queue, resource->timestamp_buf,
-                              CL_FALSE, 0, sizeof(int64_t), &timestamp,
+                              CL_FALSE, 0, sizeof(cl_long), &timestamp,
                               0, NULL, &write_events[1]);
   err |= clEnqueueWriteBuffer(resource->queue, resource->matrix_buf,
                               CL_FALSE, 0, MAT_BYTES, flat_matrix,
@@ -626,7 +626,7 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
 
   // Set kernel arguments (assumes kernel signature expects matrix as __global const double *matrix)
   err = clSetKernelArg(resource->kernel, 0, sizeof(cl_ulong), &local_work_size);
-  err |= clSetKernelArg(resource->kernel, 1, sizeof(uint64_t), &start_nonce);
+  err |= clSetKernelArg(resource->kernel, 1, sizeof(cl_ulong), &start_nonce);
   err |= clSetKernelArg(resource->kernel, 2, sizeof(cl_mem), &resource->previous_header_buf);
   err |= clSetKernelArg(resource->kernel, 3, sizeof(cl_mem), &resource->timestamp_buf);
   err |= clSetKernelArg(resource->kernel, 4, sizeof(cl_mem), &resource->matrix_buf);

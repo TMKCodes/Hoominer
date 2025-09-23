@@ -283,7 +283,7 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, int selected
             cudaStreamDestroy(res[devices_found].stream);
             continue;
         }
-        err = cudaMalloc(&res[devices_found].timestamp, sizeof(int64_t));
+        err = cudaMalloc(&res[devices_found].timestamp, sizeof(long long));
         if (err != cudaSuccess)
         {
             fprintf(stderr, "Device %u (PCI-BUS-ID: %u) timestamp allocation failed: %s\n",
@@ -438,7 +438,7 @@ bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename
 }
 
 cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *previous_header, unsigned char *target, double matrix[64][64],
-                                    int64_t timestamp, uint64_t start_nonce, CudaResult *result)
+                                    long long timestamp, unsigned long long start_nonce, CudaResult *result)
 {
     cudaError_t err;
 
@@ -468,7 +468,7 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
         return err;
     }
 
-    err = cudaMemcpyAsync(resource->timestamp, &timestamp, sizeof(int64_t), cudaMemcpyHostToDevice, resource->stream);
+    err = cudaMemcpyAsync(resource->timestamp, &timestamp, sizeof(long long), cudaMemcpyHostToDevice, resource->stream);
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Memory copy to timestamp failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));

@@ -56,7 +56,7 @@ struct QueuedJob
 {
   char *job_id;
   uint8_t header[DOMAIN_HASH_SIZE];
-  uint64_t timestamp;
+  long long timestamp;
   double matrix[64][64];
   volatile int running;
   volatile int completed;
@@ -104,7 +104,7 @@ struct MiningJob
 {
   char *job_id;
   uint8_t header[DOMAIN_HASH_SIZE];
-  uint64_t timestamp;
+  long long timestamp;
   double matrix[64][64];
   volatile int running;
   int thread_index;

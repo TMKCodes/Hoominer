@@ -65,5 +65,5 @@ void cleanup_all_opencl_gpus(OpenCLResources *resources, cl_uint device_count);
 // Move to hoohash-miner?
 cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work_size, cl_ulong local_work_size,
                                  unsigned char *previous_header, unsigned char *target, double matrix[64][64],
-                                 int64_t timestamp, uint64_t start_nonce, OpenCLResult *result);
+                                 cl_long timestamp, cl_ulong start_nonce, OpenCLResult *result);
 #endif
