@@ -488,7 +488,7 @@ void *mining_cuda_thread(void *arg)
 
       CudaResult result = {0};
       int error = run_cuda_hoohash_kernel(&ctx->cuda_resources[mt->threadIndex],
-                                          state.PrevHeader, ms->global_target, state.mat, state.Timestamp,
+                                          state.PrevHeader, ms->global_target, state.mat, (long long)state.Timestamp,
                                           start_nonce, &result);
 
       pthread_mutex_lock(&ctx->hd->hashrate_mutex);

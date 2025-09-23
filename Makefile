@@ -29,7 +29,7 @@
 NVCC = nvcc
 
 # Flags
-CFLAGS = -Xcompiler "-fPIC -g -O2 -Wall -Wextra -static-libgcc -static-libstdc++"
+CFLAGS = -Xcompiler "-fPIC -g -O0 -Wall -Wextra -static-libgcc -static-libstdc++"
 INCLUDES = -Ialgorithms/blake3/c -I/opt/cuda/include -I/usr/local/include -I/usr/include
 NVCCFLAGS = $(CFLAGS) $(INCLUDES) --linker-options "-static"
 LDFLAGS = -lcudart_static -lm -lOpenCL

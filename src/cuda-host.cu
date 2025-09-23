@@ -275,12 +275,21 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, int selected
             continue;
         }
 
+        err = cudaMalloc(&res[devices_found].start_nonce, sizeof(unsigned long long));
+        if (err != cudaSuccess)
+        {
+            fprintf(stderr, "Device %u (PCI-BUS-ID: %u) start_nonce allocation failed: %s\n",
+                    i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
+            cudaStreamDestroy(res[devices_found].stream);
+            continue;
+        }
         err = cudaMalloc(&res[devices_found].previous_header, DOMAIN_HASH_SIZE);
         if (err != cudaSuccess)
         {
             fprintf(stderr, "Device %u (PCI-BUS-ID: %u) previous_header allocation failed: %s\n",
                     i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
             cudaStreamDestroy(res[devices_found].stream);
+            cudaFree(res[devices_found].start_nonce);
             continue;
         }
         err = cudaMalloc(&res[devices_found].timestamp, sizeof(long long));
@@ -289,6 +298,7 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, int selected
             fprintf(stderr, "Device %u (PCI-BUS-ID: %u) timestamp allocation failed: %s\n",
                     i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
             cudaStreamDestroy(res[devices_found].stream);
+            cudaFree(res[devices_found].start_nonce);
             cudaFree(res[devices_found].previous_header);
             continue;
         }
@@ -298,6 +308,7 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, int selected
             fprintf(stderr, "Device %u (PCI-BUS-ID: %u) matrix allocation failed: %s\n",
                     i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
             cudaStreamDestroy(res[devices_found].stream);
+            cudaFree(res[devices_found].start_nonce);
             cudaFree(res[devices_found].previous_header);
             cudaFree(res[devices_found].timestamp);
             continue;
@@ -308,6 +319,7 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, int selected
             fprintf(stderr, "Device %u (PCI-BUS-ID: %u) target allocation failed: %s\n",
                     i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
             cudaStreamDestroy(res[devices_found].stream);
+            cudaFree(res[devices_found].start_nonce);
             cudaFree(res[devices_found].previous_header);
             cudaFree(res[devices_found].timestamp);
             cudaFree(res[devices_found].matrix);
@@ -319,6 +331,7 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, int selected
             fprintf(stderr, "Device %u (PCI-BUS-ID: %u) result allocation failed: %s\n",
                     i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
             cudaStreamDestroy(res[devices_found].stream);
+            cudaFree(res[devices_found].start_nonce);
             cudaFree(res[devices_found].previous_header);
             cudaFree(res[devices_found].timestamp);
             cudaFree(res[devices_found].matrix);
@@ -331,6 +344,7 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, int selected
             fprintf(stderr, "Device %u (PCI-BUS-ID: %u) nonces_processed allocation failed: %s\n",
                     i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
             cudaStreamDestroy(res[devices_found].stream);
+            cudaFree(res[devices_found].start_nonce);
             cudaFree(res[devices_found].previous_header);
             cudaFree(res[devices_found].timestamp);
             cudaFree(res[devices_found].matrix);
@@ -464,7 +478,7 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
     err = cudaMemcpyAsync(resource->start_nonce, &start_nonce, sizeof(unsigned long long), cudaMemcpyHostToDevice, resource->stream);
     if (err != cudaSuccess)
     {
-        fprintf(stderr, "Memory copy to timestamp failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
+        fprintf(stderr, "Memory copy to start_nonce failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
         return err;
     }
 
