@@ -397,6 +397,11 @@ int initialize_mining(StratumContext *ctx, const char *username, const char *alg
     if (ctx->config->disable_cuda == false)
     {
       ctx->cuda_resources = initialize_all_cuda_gpus(&ctx->cuda_device_count, ctx->config->selected_gpus, ctx->config->selected_gpus_num);
+      if (ctx->cuda_resources == NULL)
+      {
+        printf("Failed to initialize CUDA devices\n");
+        return -1;
+      }
       printf("CUDA devices found: %d\n", ctx->cuda_device_count);
       if (ctx->config->list_gpus == false)
       {
@@ -410,11 +415,12 @@ int initialize_mining(StratumContext *ctx, const char *username, const char *alg
             printf("Device %u: %s, Compute capability %d.%d\n", i, ctx->cuda_resources[i].device_name, major, minor);
             int arch_code = major * 10 + minor;
             snprintf(cubin_filename, sizeof(cubin_filename), "%s/cubins/hoohash_sm_%d%d.cubin", exe_dir, major, minor);
+            printf("Looking for cubin file: %s\n", cubin_filename);
             FILE *file_check = fopen(cubin_filename, "rb");
             if (!file_check)
             {
               printf("Error: Cannot open %s: %s\n", cubin_filename, strerror(errno));
-              continue;
+              return -1;
             }
             fclose(file_check);
             int supported_archs[] = {50, 52, 60, 61, 70, 75, 80, 86, 89, 90, 100, 110, 120};
@@ -430,14 +436,13 @@ int initialize_mining(StratumContext *ctx, const char *username, const char *alg
             if (!supported)
             {
               printf("Unsupported compute capability %d.%d for device %u\n", major, minor, i);
-              continue;
+              return -1;
             }
             bool compile_kernel_error = load_cuda_kernel_binary(&ctx->cuda_resources[i], cubin_filename, "Hoohash_hash", ctx->config->gpu_work_multiplier);
-            if (compile_kernel_error != cudaSuccess)
+            if (!compile_kernel_error)
             {
-              printf("Failed to load CUDA kernel binary %s for device %u, %d\n",
-                     cubin_filename, i, compile_kernel_error);
-              continue;
+              printf("Failed to load CUDA kernel binary %s for device %u\n", cubin_filename, i);
+              return -1;
             }
             printf("Loaded CUDA Hoohash kernel %s for device %u\n", cubin_filename, i);
           }
@@ -565,6 +570,7 @@ int main(int argc, char **argv)
   }
   char *exe_dir = dirname(exe_path);
 #endif
+  printf("Executable directory: %s\n", exe_dir);
 
   // Initialize mining resources
   if (initialize_mining(ctx, config->username, config->algorithm, exe_dir) != 0)

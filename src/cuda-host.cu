@@ -1,4 +1,5 @@
 #include "cuda-host.h"
+#include <limits.h>
 
 // Function pointers for CUDA Driver API
 typedef CUresult (*CUInit_t)(unsigned int);
@@ -140,11 +141,20 @@ static void calculate_optimal_dimensions(CudaResources *resource, int work_multi
     if (grid_size > resource->device_prop.maxGridSize[0])
         grid_size = resource->device_prop.maxGridSize[0];
 
-    resource->optimal_block_size = threads_per_block * work_multiplier;
+    // Apply work multiplier but ensure we don't exceed device limits
+    int final_block_size = threads_per_block * work_multiplier;
+    if (final_block_size > max_threads_per_block)
+    {
+        printf("Warning: Work multiplier %d would exceed max threads per block (%d) for %s. Using %d instead.\n",
+               work_multiplier, max_threads_per_block, resource->device_name, max_threads_per_block);
+        final_block_size = max_threads_per_block - (max_threads_per_block % warp_size);
+    }
+
+    resource->optimal_block_size = final_block_size;
     resource->optimal_grid_size = grid_size;
 
-    printf("Calculated for %s: block_size=%d, grid_size=%d\n",
-           resource->device_name, threads_per_block, grid_size);
+    printf("Calculated for %s: base_block_size=%d, final_block_size=%zu, grid_size=%zu, work_multiplier=%d\n",
+           resource->device_name, threads_per_block, resource->optimal_block_size, resource->optimal_grid_size, work_multiplier);
 }
 
 int compare_pci_bus_id(const void *a, const void *b)
@@ -448,7 +458,7 @@ bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename
 
     printf("Kernel %s loaded for %s\n", kernel_name, resource->device_name);
 
-    return cudaSuccess;
+    return true;
 }
 
 cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *previous_header, unsigned char *target, double matrix[64][64],
@@ -518,6 +528,14 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
         return err;
     }
 
+    // Basic validation
+    if (resource->optimal_block_size > resource->device_prop.maxThreadsPerBlock)
+    {
+        fprintf(stderr, "Block size %zu exceeds max threads per block %d for %s\n",
+                resource->optimal_block_size, resource->device_prop.maxThreadsPerBlock, resource->device_name);
+        return cudaErrorInvalidConfiguration;
+    }
+
     void *args[] = {
         &resource->start_nonce,
         &resource->previous_header,
@@ -527,15 +545,16 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
         &resource->result};
 
     CUresult cu_err = p_cuLaunchKernel(resource->kernel,
-                                       resource->optimal_grid_size, 1, 1,
-                                       resource->optimal_block_size, 1, 1,
+                                       (unsigned int)resource->optimal_grid_size, 1, 1,
+                                       (unsigned int)resource->optimal_block_size, 1, 1,
                                        0,
                                        resource->stream,
                                        args,
                                        NULL);
     if (cu_err != CUDA_SUCCESS)
     {
-        fprintf(stderr, "Kernel launch failed for %s: %d\n", resource->device_name, cu_err);
+        fprintf(stderr, "Kernel launch failed for %s: %d (grid=%zu, block=%zu)\n",
+                resource->device_name, cu_err, resource->optimal_grid_size, resource->optimal_block_size);
         return cudaErrorLaunchFailure;
     }
 
