@@ -97,14 +97,14 @@ int start_stratum_connection(StratumContext *ctx, HoominerConfig *config)
       printf("  %d: %s%s:%d\n", j + 1, protocol, stratum->pool_ip, stratum->pool_port);
     }
   }
-  StratumConfig *stratumConfig = get_stratum(config, ctx->current_stratum_index++);
-  printf("Opening connection to %s, stratum at %d index\n", stratumConfig->pool_ip, ctx->current_stratum_index);
-
-  if (!config)
+  StratumConfig *stratumConfig = get_stratum(config, ctx->current_stratum_index);
+  if (!stratumConfig)
   {
     fprintf(stderr, "No valid stratum configuration available.\n");
     return -1;
   }
+  printf("Opening connection to %s, stratum at %d index\n", stratumConfig->pool_ip, ctx->current_stratum_index + 1);
+  ctx->current_stratum_index++;
   ctx->sockfd = connect_to_stratum_server(stratumConfig->pool_ip, stratumConfig->pool_port);
   if (ctx->sockfd < 0)
   {
@@ -680,13 +680,35 @@ int connect_to_stratum_server(const char *hostname, int port)
   char port_str[6];
   snprintf(port_str, sizeof(port_str), "%d", port);
 
-  hints.ai_family = AF_INET;
+  // Try both IPv4 and IPv6
+  hints.ai_family = AF_UNSPEC;
   hints.ai_socktype = SOCK_STREAM;
+  hints.ai_flags = AI_ADDRCONFIG;
 
+  printf("Attempting to resolve %s:%d...\n", hostname, port);
   int gai_result = getaddrinfo(hostname, port_str, &hints, &res);
   if (gai_result != 0)
   {
     fprintf(stderr, "getaddrinfo error for %s: %s\n", hostname, gai_strerror(gai_result));
+    
+    // Provide more specific error messages
+    switch (gai_result) {
+      case EAI_NONAME:
+        fprintf(stderr, "Hostname '%s' could not be resolved. Check if the hostname is correct and DNS is working.\n", hostname);
+        break;
+      case EAI_AGAIN:
+        fprintf(stderr, "Temporary failure in name resolution. Try again later.\n");
+        break;
+      case EAI_FAIL:
+        fprintf(stderr, "Non-recoverable failure in name resolution.\n");
+        break;
+      case EAI_NONAME:
+        fprintf(stderr, "No address associated with hostname '%s'.\n", hostname);
+        break;
+      default:
+        fprintf(stderr, "Unknown getaddrinfo error: %d\n", gai_result);
+        break;
+    }
     return -1;
   }
 
@@ -694,18 +716,36 @@ int connect_to_stratum_server(const char *hostname, int port)
   {
     sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
     if (sockfd < 0)
+    {
+      perror("socket creation failed");
       continue;
+    }
 
     int flag = 1;
     setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(int));
 
+    printf("Attempting to connect to %s:%d (family: %s)...\n", 
+           hostname, port, (p->ai_family == AF_INET) ? "IPv4" : "IPv6");
+    
     if (connect(sockfd, p->ai_addr, p->ai_addrlen) == 0)
     {
-      char ip_str[INET_ADDRSTRLEN];
-      struct sockaddr_in *ipv4 = (struct sockaddr_in *)p->ai_addr;
-      inet_ntop(AF_INET, &(ipv4->sin_addr), ip_str, INET_ADDRSTRLEN);
+      char ip_str[INET6_ADDRSTRLEN];
+      if (p->ai_family == AF_INET)
+      {
+        struct sockaddr_in *ipv4 = (struct sockaddr_in *)p->ai_addr;
+        inet_ntop(AF_INET, &(ipv4->sin_addr), ip_str, INET_ADDRSTRLEN);
+      }
+      else
+      {
+        struct sockaddr_in6 *ipv6 = (struct sockaddr_in6 *)p->ai_addr;
+        inet_ntop(AF_INET6, &(ipv6->sin6_addr), ip_str, INET6_ADDRSTRLEN);
+      }
       printf("Connected to %s (resolved IP: %s)\n", hostname, ip_str);
       break;
+    }
+    else
+    {
+      perror("connect failed");
     }
     socket_close_portable(sockfd);
   }
@@ -713,7 +753,12 @@ int connect_to_stratum_server(const char *hostname, int port)
   freeaddrinfo(res);
   if (p == NULL)
   {
-    perror("Failed to connect");
+    fprintf(stderr, "Failed to connect to %s:%d - all connection attempts failed\n", hostname, port);
+    fprintf(stderr, "Possible causes:\n");
+    fprintf(stderr, "  - Host is unreachable or down\n");
+    fprintf(stderr, "  - Port is not open or blocked by firewall\n");
+    fprintf(stderr, "  - Network connectivity issues\n");
+    fprintf(stderr, "  - DNS resolution problems (if using hostname)\n");
     return -1;
   }
   return sockfd;
