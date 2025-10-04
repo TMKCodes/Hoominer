@@ -33,9 +33,9 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
     else if (!strcmp(argv[i], "--disable-gpu"))
       config->disable_gpu = true;
     else if (!strcmp(argv[i], "--disable-opencl"))
-      config->disable_gpu = true;
+      config->disable_opencl = true;
     else if (!strcmp(argv[i], "--disable-cuda"))
-      config->disable_gpu = true;
+      config->disable_cuda = true;
     else if (!strcmp(argv[i], "--list-gpus"))
       config->list_gpus = true;
     else if (!strcmp(argv[i], "--debug"))
@@ -90,6 +90,10 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
           exit(1);
         }
         strncpy(url, url_part, strlen(url_part));
+        url[strlen(url_part)] = '\0';
+        
+        if (config->debug == 1)
+          printf("Parsed URL part: '%s'\n", url);
 
         char *colon = strchr(url, ':');
         if (!colon)
@@ -108,6 +112,7 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
           exit(1);
         }
         strncpy(stratum->pool_ip, url, strlen(url));
+        stratum->pool_ip[strlen(url)] = '\0';
 
         stratum->pool_port = atoi(colon + 1);
         config->stratum_urls_num++;
