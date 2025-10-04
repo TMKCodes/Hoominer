@@ -160,12 +160,23 @@ static void calculate_optimal_dimensions(CudaResources *resource, int work_multi
         grid_size = resource->device_prop.maxGridSize[0];
 
     // Apply work multiplier but ensure we don't exceed device limits
-    int final_block_size = threads_per_block * work_multiplier;
-    if (final_block_size > max_threads_per_block)
+    int final_block_size;
+    // Check for potential overflow before multiplication
+    if (work_multiplier > 0 && threads_per_block > max_threads_per_block / work_multiplier)
     {
-        printf("Warning: Work multiplier %d would exceed max threads per block (%d) for %s. Using %d instead.\n",
-               work_multiplier, max_threads_per_block, resource->device_name, max_threads_per_block);
+        printf("Warning: Work multiplier %d would cause overflow for %s. Using safe value.\n",
+               work_multiplier, resource->device_name);
         final_block_size = max_threads_per_block - (max_threads_per_block % warp_size);
+    }
+    else
+    {
+        final_block_size = threads_per_block * work_multiplier;
+        if (final_block_size > max_threads_per_block)
+        {
+            printf("Warning: Work multiplier %d would exceed max threads per block (%d) for %s. Using %d instead.\n",
+                   work_multiplier, max_threads_per_block, resource->device_name, max_threads_per_block);
+            final_block_size = max_threads_per_block - (max_threads_per_block % warp_size);
+        }
     }
 
     resource->optimal_block_size = final_block_size;
@@ -552,12 +563,45 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
         return err;
     }
 
-    // Basic validation
+    // Comprehensive validation
     if (resource->optimal_block_size > resource->device_prop.maxThreadsPerBlock)
     {
         fprintf(stderr, "Block size %zu exceeds max threads per block %d for %s\n",
                 resource->optimal_block_size, resource->device_prop.maxThreadsPerBlock, resource->device_name);
         return cudaErrorInvalidConfiguration;
+    }
+    
+    // Validate grid size against device limits
+    if (resource->optimal_grid_size > resource->device_prop.maxGridSize[0])
+    {
+        fprintf(stderr, "Grid size %zu exceeds max grid size %d for %s\n",
+                resource->optimal_grid_size, resource->device_prop.maxGridSize[0], resource->device_name);
+        return cudaErrorInvalidConfiguration;
+    }
+    
+    // Validate that grid_size * block_size doesn't exceed device limits
+    size_t total_threads = resource->optimal_grid_size * resource->optimal_block_size;
+    if (total_threads > (size_t)resource->device_prop.maxThreadsPerBlock * resource->device_prop.maxGridSize[0])
+    {
+        fprintf(stderr, "Total threads %zu exceeds device capacity for %s\n",
+                total_threads, resource->device_name);
+        return cudaErrorInvalidConfiguration;
+    }
+    
+    // Ensure block size is a multiple of warp size
+    if (resource->optimal_block_size % 32 != 0)
+    {
+        fprintf(stderr, "Block size %zu is not a multiple of warp size (32) for %s\n",
+                resource->optimal_block_size, resource->device_name);
+        return cudaErrorInvalidConfiguration;
+    }
+
+    // Validate all pointers before kernel launch
+    if (!resource->start_nonce || !resource->previous_header || !resource->timestamp || 
+        !resource->matrix || !resource->target || !resource->result)
+    {
+        fprintf(stderr, "Invalid device pointers for %s\n", resource->device_name);
+        return cudaErrorInvalidValue;
     }
 
     void *args[] = {
@@ -567,6 +611,14 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
         &resource->matrix,
         &resource->target,
         &resource->result};
+
+    // Additional validation for kernel launch parameters
+    if (resource->optimal_grid_size == 0 || resource->optimal_block_size == 0)
+    {
+        fprintf(stderr, "Invalid kernel launch parameters for %s: grid=%zu, block=%zu\n",
+                resource->device_name, resource->optimal_grid_size, resource->optimal_block_size);
+        return cudaErrorInvalidConfiguration;
+    }
 
     CUresult cu_err = p_cuLaunchKernel(resource->kernel,
                                        (unsigned int)resource->optimal_grid_size, 1, 1,
@@ -612,16 +664,51 @@ void cleanup_cuda_resources(CudaResources *resource)
         return;
 
     cudaSetDevice(resource->device_id);
-    cudaFree(resource->previous_header);
-    cudaFree(resource->timestamp);
-    cudaFree(resource->matrix);
-    cudaFree(resource->target);
-    cudaFree(resource->result);
+    
+    // Free all allocated device memory with error checking
+    if (resource->previous_header) {
+        cudaFree(resource->previous_header);
+        resource->previous_header = NULL;
+    }
+    if (resource->start_nonce) {
+        cudaFree(resource->start_nonce);
+        resource->start_nonce = NULL;
+    }
+    if (resource->timestamp) {
+        cudaFree(resource->timestamp);
+        resource->timestamp = NULL;
+    }
+    if (resource->matrix) {
+        cudaFree(resource->matrix);
+        resource->matrix = NULL;
+    }
+    if (resource->target) {
+        cudaFree(resource->target);
+        resource->target = NULL;
+    }
+    if (resource->result) {
+        cudaFree(resource->result);
+        resource->result = NULL;
+    }
+    if (resource->nonces_processed) {
+        cudaFree(resource->nonces_processed);
+        resource->nonces_processed = NULL;
+    }
+    if (resource->printf_buffer) {
+        cudaFree(resource->printf_buffer);
+        resource->printf_buffer = NULL;
+    }
+    
     if (resource->module && p_cuModuleUnload)
     {
         p_cuModuleUnload(resource->module);
+        resource->module = NULL;
     }
-    cudaStreamDestroy(resource->stream);
+    
+    if (resource->stream) {
+        cudaStreamDestroy(resource->stream);
+        resource->stream = NULL;
+    }
 }
 
 void cleanup_all_cuda_gpus(CudaResources *resources, unsigned int device_count)

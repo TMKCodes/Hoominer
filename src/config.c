@@ -2,6 +2,13 @@
 
 void parse_args(int argc, char **argv, struct HoominerConfig *config)
 {
+  // Validate input parameters
+  if (!config || !argv)
+  {
+    fprintf(stderr, "Invalid parameters passed to parse_args\n");
+    exit(1);
+  }
+  
   config->disable_cpu = false;
   config->disable_gpu = false;
   config->disable_opencl = false;
@@ -20,6 +27,13 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
 
   for (int i = 1; i < argc; i++)
   {
+    // Safety check for null arguments
+    if (!argv[i])
+    {
+      fprintf(stderr, "Null argument at position %d\n", i);
+      continue;
+    }
+    
     if (!strcmp(argv[i], "--user") && i + 1 < argc)
       config->username = argv[++i];
     else if (!strcmp(argv[i], "--pass") && i + 1 < argc)
@@ -156,12 +170,13 @@ struct StratumConfig *get_stratum(struct HoominerConfig *config, int current_ind
   return stratum;
 }
 
-void show_config(char *argv)
+void show_config(char **argv)
 {
-  printf("Usage: %s [--stratum <stratum+tcp://domain:port> [stratum+tcp://domain:port ...]] [--user <user>] [--pass <pass>]\n", argv[0]);
+  const char *program_name = (argv && argv[0]) ? argv[0] : "hoominer";
+  printf("Usage: %s [--stratum <stratum+tcp://domain:port> [stratum+tcp://domain:port ...]] [--user <user>] [--pass <pass>]\n", program_name);
   printf("\nGeneral parameters: \n");
   printf("--algorithm <algorithm>\t\tThe algorithm to mine, by default 'hoohash'.\n");
-  printf("--stratum <stratum+tcp://domain:port [stratum+tcp://domain:port ...]>\t\tThe stratum protocol://address:port to specify connection points (stratum+ssl:// or stratum+tls:// to enable SSL/TLS). Multiple URLs separated by spaces.\n");
+  printf("--stratum stratum+tcp://domain:port, stratum+tcp://domain:port \t\tThe stratum protocol://address:port to specify connection points (stratum+ssl:// or stratum+tls:// to enable SSL/TLS). Multiple URLs separated by spaces.\n");
   printf("--user <user>\t\t\t\tStratum username (Usually mining wallet address).\n");
   printf("--password <password>\t\t\tStratum password (Usually not required or used as additional stratum parameters).\n");
   printf("--disable-cpu\t\t\t\tDisable CPU mining completely.\n");

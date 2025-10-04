@@ -459,6 +459,15 @@ void *mining_cuda_thread(void *arg)
   MiningState *ms = ctx->ms;
   State state = {0};
   char *current_job_id = NULL;
+  
+  // Validate thread index and CUDA resources
+  if (!mt || !ctx || !ctx->cuda_resources || mt->threadIndex >= ctx->cuda_device_count)
+  {
+    fprintf(stderr, "Invalid CUDA thread parameters: mt=%p, ctx=%p, threadIndex=%d, device_count=%u\n",
+            mt, ctx, mt ? mt->threadIndex : -1, ctx ? ctx->cuda_device_count : 0);
+    return NULL;
+  }
+  
   // Prevent integer overflow in multiplication
   size_t grid_size = ctx->cuda_resources[mt->threadIndex].optimal_grid_size;
   size_t block_size = ctx->cuda_resources[mt->threadIndex].optimal_block_size;
@@ -478,11 +487,19 @@ void *mining_cuda_thread(void *arg)
     start_nonce = (extranonce_val << 32) | ((uint64_t)mt->threadIndex * hashes_per_cuda_call);
   }
   int reporting_index = ctx->cpu_device_count + ctx->opencl_device_count + mt->threadIndex;
-  if (reporting_index >= ctx->hd->device_count)
+  if (reporting_index >= ctx->hd->device_count || reporting_index < 0)
   {
-    fprintf(stderr, "CUDA reporting index %d exceeds device count %d\n", reporting_index, ctx->hd->device_count);
+    fprintf(stderr, "CUDA reporting index %d exceeds device count %d or is negative\n", reporting_index, ctx->hd->device_count);
     return NULL;
   }
+  
+  // Additional validation for reporting device
+  if (!ctx->hd->devices || !ctx->hd->devices[reporting_index])
+  {
+    fprintf(stderr, "Invalid reporting device at index %d\n", reporting_index);
+    return NULL;
+  }
+  
   ReportingDevice *cuda_reporting_device = ctx->hd->devices[reporting_index];
   cuda_reporting_device->nonces_processed = 0;
 

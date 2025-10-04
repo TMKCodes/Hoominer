@@ -41,6 +41,6 @@ struct HoominerConfig
 
 void parse_args(int argc, char **argv, struct HoominerConfig *config);
 struct StratumConfig *get_stratum(struct HoominerConfig *config, int current_index);
-void show_config(char *argv);
+void show_config(char **argv);
 
 #endif
