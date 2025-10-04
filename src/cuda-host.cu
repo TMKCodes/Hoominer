@@ -112,14 +112,23 @@ static void calculate_optimal_dimensions(CudaResources *resource, int work_multi
     int threads_per_block = 256;
     int max_active_blocks_per_sm = 0;
 
-    // Estimate optimal blocks per SM
-    cudaError_t err = cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-        &max_active_blocks_per_sm, resource->kernel, threads_per_block, 0);
-
-    if (err != cudaSuccess)
+    // Validate that kernel is properly initialized
+    if (!resource->kernel)
     {
-        fprintf(stderr, "Occupancy calc failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
+        fprintf(stderr, "Warning: Kernel not initialized for %s, using default values\n", resource->device_name);
         max_active_blocks_per_sm = 2;
+    }
+    else
+    {
+        // Estimate optimal blocks per SM
+        cudaError_t err = cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &max_active_blocks_per_sm, resource->kernel, threads_per_block, 0);
+
+        if (err != cudaSuccess)
+        {
+            fprintf(stderr, "Occupancy calc failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
+            max_active_blocks_per_sm = 2;
+        }
     }
 
     // Choose target blocks per SM
@@ -424,7 +433,7 @@ bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename
         fprintf(stderr, "Failed to read %s\n", cubin_filename);
         free(binary);
         fclose(file);
-        return cudaErrorInvalidValue;
+        return false;
     }
     fclose(file);
 
@@ -433,7 +442,7 @@ bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename
     {
         fprintf(stderr, "Set device failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
         free(binary);
-        return err;
+        return false;
     }
 
     cu_err = p_cuModuleLoadData(&resource->module, binary);
@@ -475,6 +484,12 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
     if (!cuda_lib_handle)
     {
         fprintf(stderr, "CUDA library not loaded for %s\n", resource->device_name);
+        return cudaErrorInitializationError;
+    }
+
+    if (!resource->kernel)
+    {
+        fprintf(stderr, "Kernel not initialized for %s\n", resource->device_name);
         return cudaErrorInitializationError;
     }
 
