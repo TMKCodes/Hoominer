@@ -390,7 +390,7 @@ void *mining_opencl_thread(void *arg)
 
       if (status != CL_SUCCESS)
       {
-        if (status == -51)
+        if (status == -54)
         {
           fprintf(stderr, "Device %d: Kernel execution failed: CL_INVALID_WORK_GROUP_SIZE. Reducing local work size by half.\n", mt->threadIndex);
           local_work_size /= 2;
