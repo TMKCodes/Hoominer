@@ -468,7 +468,7 @@ void *mining_cuda_thread(void *arg)
   unsigned long long hashes_per_cuda_call = grid_size * block_size;
   
   // Prevent overflow in thread multiplication
-  if (hashes_per_cuda_call > UINT64_MAX / (uint64_t)mt->threadIndex) {
+  if (mt->threadIndex > 0 && hashes_per_cuda_call > UINT64_MAX / (uint64_t)mt->threadIndex) {
     hashes_per_cuda_call = UINT64_MAX / ((uint64_t)mt->threadIndex + 1);
   }
   unsigned long long start_nonce = (uint64_t)mt->threadIndex * hashes_per_cuda_call;

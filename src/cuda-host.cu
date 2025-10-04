@@ -112,7 +112,8 @@ static void calculate_optimal_dimensions(CudaResources *resource, int work_multi
     int threads_per_block = 256;
     int max_active_blocks_per_sm = 0;
 
-    // Validate that kernel is properly initialized
+    // Use heuristic-based occupancy calculation since Driver API doesn't support
+    // cudaOccupancyMaxActiveBlocksPerMultiprocessor with CUfunction
     if (!resource->kernel)
     {
         fprintf(stderr, "Warning: Kernel not initialized for %s, using default values\n", resource->device_name);
@@ -120,15 +121,19 @@ static void calculate_optimal_dimensions(CudaResources *resource, int work_multi
     }
     else
     {
-        // Estimate optimal blocks per SM
-        cudaError_t err = cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-            &max_active_blocks_per_sm, resource->kernel, threads_per_block, 0);
-
-        if (err != cudaSuccess)
-        {
-            fprintf(stderr, "Occupancy calc failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
+        // Use heuristic: assume 2-4 blocks per SM depending on block size
+        // This is a reasonable estimate for most mining kernels
+        if (threads_per_block <= 128)
+            max_active_blocks_per_sm = 4;
+        else if (threads_per_block <= 256)
+            max_active_blocks_per_sm = 3;
+        else
             max_active_blocks_per_sm = 2;
-        }
+        
+        // Ensure we don't exceed theoretical limits
+        int max_theoretical_blocks = max_threads_per_sm / threads_per_block;
+        if (max_active_blocks_per_sm > max_theoretical_blocks)
+            max_active_blocks_per_sm = max_theoretical_blocks;
     }
 
     // Choose target blocks per SM
