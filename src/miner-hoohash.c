@@ -212,6 +212,11 @@ void *mining_cpu_thread(void *arg)
   State state = {0};
   char *current_job_id = NULL;
   int reporting_index = 0;
+  if (reporting_index >= ctx->hd->device_count)
+  {
+    fprintf(stderr, "CPU reporting index %d exceeds device count %d\n", reporting_index, ctx->hd->device_count);
+    return NULL;
+  }
   ReportingDevice *cpu_reporting_device = ctx->hd->devices[reporting_index];
 
   uint64_t nonce = mt->threadIndex;
@@ -321,6 +326,11 @@ void *mining_opencl_thread(void *arg)
     start_nonce = (extranonce_val << 32) | start_nonce;
   }
   int reporting_index = ctx->cpu_device_count + mt->threadIndex;
+  if (reporting_index >= ctx->hd->device_count)
+  {
+    fprintf(stderr, "OpenCL reporting index %d exceeds device count %d\n", reporting_index, ctx->hd->device_count);
+    return NULL;
+  }
   ReportingDevice *opencl_reporting_device = ctx->hd->devices[reporting_index];
 
   while (ctx->running)
@@ -452,6 +462,11 @@ void *mining_cuda_thread(void *arg)
     start_nonce = (extranonce_val << 32) | ((uint64_t)mt->threadIndex * hashes_per_cuda_call);
   }
   int reporting_index = ctx->cpu_device_count + ctx->opencl_device_count + mt->threadIndex;
+  if (reporting_index >= ctx->hd->device_count)
+  {
+    fprintf(stderr, "CUDA reporting index %d exceeds device count %d\n", reporting_index, ctx->hd->device_count);
+    return NULL;
+  }
   ReportingDevice *cuda_reporting_device = ctx->hd->devices[reporting_index];
   cuda_reporting_device->nonces_processed = 0;
 

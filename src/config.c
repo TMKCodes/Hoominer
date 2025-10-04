@@ -89,7 +89,7 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
           fprintf(stderr, "Memory allocation failed\n");
           exit(1);
         }
-        strcpy(url, url_part);
+        strncpy(url, url_part, strlen(url_part));
 
         char *colon = strchr(url, ':');
         if (!colon)
@@ -107,7 +107,7 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
           free(url);
           exit(1);
         }
-        strcpy(stratum->pool_ip, url);
+        strncpy(stratum->pool_ip, url, strlen(url));
 
         stratum->pool_port = atoi(colon + 1);
         config->stratum_urls_num++;

@@ -424,7 +424,7 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
           printf("device index %d\n", device_index);
           printf("deivces %d\n", devices);
         }
-        if (devices >= device_index)
+        if (devices > device_index && device_index >= 0)
         {
           ReportingDevice *device = ctx->hd->devices[device_index];
           if (json_object_object_get_ex(message, "error", &error))
@@ -605,7 +605,7 @@ int stratum_subscribe(int sockfd, StratumContext *ctx, SSL *ssl)
     return -1;
   }
 
-  strcpy(msg_with_newline, msg);
+  strncpy(msg_with_newline, msg, len);
   msg_with_newline[len] = '\n';
   msg_with_newline[len + 1] = '\0';
 
@@ -651,7 +651,7 @@ int stratum_authenticate(int sockfd, const char *username, const char *password,
     return -1;
   }
 
-  strcpy(msg_with_newline, msg);
+  strncpy(msg_with_newline, msg, len);
   msg_with_newline[len] = '\n';
   msg_with_newline[len + 1] = '\0';
 
