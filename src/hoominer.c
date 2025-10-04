@@ -583,7 +583,11 @@ int main(int argc, char **argv)
 
   initialize_reporting_devices(ctx);
 
-  struct MHD_Daemon *daemon = start_api(ctx);
+  struct MHD_Daemon *daemon = NULL;
+  if (config->api_enabled)
+  {
+    daemon = start_api(ctx, config);
+  }
 
   // Main loop with reconnection logic and timeout
   time_t reconnect_start_time = 0;
@@ -634,7 +638,10 @@ int main(int argc, char **argv)
     printf("Reconnecting in 0.1 second...\n");
     sleep_ms(100);
   }
-  stop_api(daemon);
+  if(daemon)
+  {
+    stop_api(daemon);
+  }
   cleanup(0); // Unreachable due to infinite loop, kept for completeness
   return 0;
 }

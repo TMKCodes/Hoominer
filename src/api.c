@@ -145,11 +145,11 @@ static enum MHD_Result request_handler(void *cls, struct MHD_Connection *connect
   return ret;
 }
 
-struct MHD_Daemon *start_api(struct StratumContext *ctx)
+struct MHD_Daemon *start_api(struct StratumContext *ctx, struct HoominerConfig *config)
 {
   struct MHD_Daemon *daemon;
   // Pass the ctx structure to MHD_start_daemon via cls
-  daemon = MHD_start_daemon(MHD_USE_INTERNAL_POLLING_THREAD, 8042, NULL, NULL,
+  daemon = MHD_start_daemon(MHD_USE_INTERNAL_POLLING_THREAD, config->api_port, NULL, NULL,
                             &request_handler, ctx, MHD_OPTION_END);
   if (NULL == daemon)
   {
@@ -157,7 +157,7 @@ struct MHD_Daemon *start_api(struct StratumContext *ctx)
     return NULL;
   }
 
-  printf("API running on port 8042.\n");
+  printf("API running on port %d.\n", config->api_port);
   return daemon;
 }
 

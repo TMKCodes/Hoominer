@@ -14,6 +14,8 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
   config->selected_gpus_num = 0;
   config->build_options = NULL;
   config->stratum_urls_num = 0;
+  config->api_port = 8042;
+  config->api_enabled = true;
   bool gpus_selected = false;
 
   for (int i = 1; i < argc; i++)
@@ -40,6 +42,10 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
       config->list_gpus = true;
     else if (!strcmp(argv[i], "--debug"))
       config->debug = true;
+    else if (!strcmp(argv[i], "--api-port") && i + 1 < argc)
+      config->api_port = atoi(argv[++i]);
+    else if (!strcmp(argv[i], "--api-disabled"))
+      config->api_enabled = false;
     else if (!strcmp(argv[i], "--opencl-build-options") && i + 1 < argc)
     {
       config->build_options = strdup(argv[++i]);
@@ -121,24 +127,7 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
     }
     else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h"))
     {
-      printf("Usage: %s [--stratum <stratum+tcp://domain:port> [stratum+tcp://domain:port ...]] [--user <user>] [--pass <pass>]\n", argv[0]);
-      printf("\nGeneral parameters: \n");
-      printf("--algorithm <algorithm>\t\tThe algorithm to mine, by default 'hoohash'.\n");
-      printf("--stratum <stratum+tcp://domain:port [stratum+tcp://domain:port ...]>\t\tThe stratum protocol://address:port to specify connection points (stratum+ssl:// or stratum+tls:// to enable SSL/TLS). Multiple URLs separated by spaces.\n");
-      printf("--user <user>\t\t\t\tStratum username (Usually mining wallet address).\n");
-      printf("--password <password>\t\t\tStratum password (Usually not required or used as additional stratum parameters).\n");
-      printf("--disable-cpu\t\t\t\tDisable CPU mining completely.\n");
-      printf("--disable-gpu\t\t\t\tDisable GPU mining completely.\n");
-      printf("--disable-opencl\t\t\tDisable OpenCL mining.\n");
-      printf("--disable-cuda\t\t\t\tDisable CUDA mining.\n");
-      printf("--debug\t\t\t\t\tMore information displayed.\n");
-      printf("\nCPU parameters: \n");
-      printf("--cpu-threads <thread-count>\t\tSelect how many CPU threads to create.\n");
-      printf("\nGPU parameters: \n");
-      printf("--list-gpus\t\t\t\tList gpu bus id's.\n");
-      printf("--gpu-ids <bus-id list>\t\t\tSelect which GPU's to use, separate bus id's with comma (if not specified all devices will be used).\n");
-      printf("--opencl-o <level>\t\t\tSelect OpenCL compile time optimization level.\n");
-      printf("--gpu-work-multiplier <level>\t\tSelect multiplier for OpenCL global work size or Nvidia blocks size.\n");
+      show_config(argv);
       exit(0);
     }
   }
@@ -165,4 +154,29 @@ struct StratumConfig *get_stratum(struct HoominerConfig *config, int current_ind
   }
   struct StratumConfig *stratum = &config->stratum_urls[current_index % config->stratum_urls_num];
   return stratum;
+}
+
+void show_config(char *argv)
+{
+  printf("Usage: %s [--stratum <stratum+tcp://domain:port> [stratum+tcp://domain:port ...]] [--user <user>] [--pass <pass>]\n", argv[0]);
+  printf("\nGeneral parameters: \n");
+  printf("--algorithm <algorithm>\t\tThe algorithm to mine, by default 'hoohash'.\n");
+  printf("--stratum <stratum+tcp://domain:port [stratum+tcp://domain:port ...]>\t\tThe stratum protocol://address:port to specify connection points (stratum+ssl:// or stratum+tls:// to enable SSL/TLS). Multiple URLs separated by spaces.\n");
+  printf("--user <user>\t\t\t\tStratum username (Usually mining wallet address).\n");
+  printf("--password <password>\t\t\tStratum password (Usually not required or used as additional stratum parameters).\n");
+  printf("--disable-cpu\t\t\t\tDisable CPU mining completely.\n");
+  printf("--disable-gpu\t\t\t\tDisable GPU mining completely.\n");
+  printf("--disable-opencl\t\t\tDisable OpenCL mining.\n");
+  printf("--disable-cuda\t\t\t\tDisable CUDA mining.\n");
+  printf("--debug\t\t\t\t\tMore information displayed.\n");
+  printf("\nCPU parameters: \n");
+  printf("--cpu-threads <thread-count>\t\tSelect how many CPU threads to create.\n");
+  printf("\nGPU parameters: \n");
+  printf("--list-gpus\t\t\t\tList gpu bus id's.\n");
+  printf("--gpu-ids <bus-id list>\t\t\tSelect which GPU's to use, separate bus id's with comma (if not specified all devices will be used).\n");
+  printf("--opencl-o <level>\t\t\tSelect OpenCL compile time optimization level.\n");
+  printf("--gpu-work-multiplier <level>\t\tSelect multiplier for OpenCL global work size or Nvidia blocks size.\n");
+  printf("\nAPI parameters: \n");
+  printf("--api-port <port>\t\t\tSelect port for API.\n");
+  printf("--api-disabled\t\t\t\tDisable API.\n");
 }

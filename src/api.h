@@ -14,7 +14,7 @@ struct PostData
   size_t size;
 };
 
-struct MHD_Daemon *start_api(struct StratumContext *ctx);
+struct MHD_Daemon *start_api(struct StratumContext *ctx, struct HoominerConfig *config);
 int stop_api(struct MHD_Daemon *daemon);
 static enum MHD_Result request_handler(void *cls, struct MHD_Connection *connection,
   const char *url, const char *method,
