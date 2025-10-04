@@ -690,24 +690,22 @@ int connect_to_stratum_server(const char *hostname, int port)
   if (gai_result != 0)
   {
     fprintf(stderr, "getaddrinfo error for %s: %s\n", hostname, gai_strerror(gai_result));
-    
+
     // Provide more specific error messages
-    switch (gai_result) {
-      case EAI_NONAME:
-        fprintf(stderr, "Hostname '%s' could not be resolved. Check if the hostname is correct and DNS is working.\n", hostname);
-        break;
-      case EAI_AGAIN:
-        fprintf(stderr, "Temporary failure in name resolution. Try again later.\n");
-        break;
-      case EAI_FAIL:
-        fprintf(stderr, "Non-recoverable failure in name resolution.\n");
-        break;
-      case EAI_NONAME:
-        fprintf(stderr, "No address associated with hostname '%s'.\n", hostname);
-        break;
-      default:
-        fprintf(stderr, "Unknown getaddrinfo error: %d\n", gai_result);
-        break;
+    switch (gai_result)
+    {
+    case EAI_NONAME:
+      fprintf(stderr, "Hostname '%s' could not be resolved. Check if the hostname is correct and DNS is working.\n", hostname);
+      break;
+    case EAI_AGAIN:
+      fprintf(stderr, "Temporary failure in name resolution. Try again later.\n");
+      break;
+    case EAI_FAIL:
+      fprintf(stderr, "Non-recoverable failure in name resolution.\n");
+      break;
+    default:
+      fprintf(stderr, "Unknown getaddrinfo error: %d\n", gai_result);
+      break;
     }
     return -1;
   }
@@ -724,9 +722,9 @@ int connect_to_stratum_server(const char *hostname, int port)
     int flag = 1;
     setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(int));
 
-    printf("Attempting to connect to %s:%d (family: %s)...\n", 
+    printf("Attempting to connect to %s:%d (family: %s)...\n",
            hostname, port, (p->ai_family == AF_INET) ? "IPv4" : "IPv6");
-    
+
     if (connect(sockfd, p->ai_addr, p->ai_addrlen) == 0)
     {
       char ip_str[INET6_ADDRSTRLEN];
