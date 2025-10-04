@@ -133,6 +133,10 @@ static void calculate_optimal_dimensions(CudaResources *resource, int work_multi
 
     // Choose target blocks per SM
     int target_blocks_per_sm = max_active_blocks_per_sm >= 2 ? max_active_blocks_per_sm : 2;
+    
+    // Ensure target_blocks_per_sm is never zero to prevent division by zero
+    if (target_blocks_per_sm <= 0)
+        target_blocks_per_sm = 1;
 
     // Adjust threads per block to stay within per-SM thread limit
     int max_possible_threads = max_threads_per_sm / target_blocks_per_sm;

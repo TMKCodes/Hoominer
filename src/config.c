@@ -156,6 +156,10 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
 
 struct StratumConfig *get_stratum(struct HoominerConfig *config, int current_index)
 {
+  // Prevent division by zero
+  if (config->stratum_urls_num == 0) {
+    return NULL;
+  }
   struct StratumConfig *stratum = &config->stratum_urls[current_index % config->stratum_urls_num];
   return stratum;
 }

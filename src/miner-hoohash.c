@@ -319,7 +319,12 @@ void *mining_opencl_thread(void *arg)
   cl_ulong local_work_size = ctx->opencl_resources[mt->threadIndex].max_work_group_size;
   cl_ulong global_work_size = ctx->opencl_resources[mt->threadIndex].max_global_work_size;
   uint64_t random_base = rand() & 0x3FFFF;
-  unsigned long long start_nonce = random_base * ((cl_ulong)mt->threadIndex * global_work_size);
+  // Prevent integer overflow in multiplication
+  cl_ulong thread_work_size = (cl_ulong)mt->threadIndex * global_work_size;
+  if (thread_work_size > UINT64_MAX / random_base) {
+    thread_work_size = UINT64_MAX / (random_base + 1);
+  }
+  unsigned long long start_nonce = random_base * thread_work_size;
   if (ms->extranonce != NULL)
   {
     cl_ulong extranonce_val = strtoull(ms->extranonce, NULL, 10);
@@ -454,7 +459,18 @@ void *mining_cuda_thread(void *arg)
   MiningState *ms = ctx->ms;
   State state = {0};
   char *current_job_id = NULL;
-  unsigned long long hashes_per_cuda_call = ctx->cuda_resources[mt->threadIndex].optimal_grid_size * ctx->cuda_resources[mt->threadIndex].optimal_block_size;
+  // Prevent integer overflow in multiplication
+  size_t grid_size = ctx->cuda_resources[mt->threadIndex].optimal_grid_size;
+  size_t block_size = ctx->cuda_resources[mt->threadIndex].optimal_block_size;
+  if (grid_size > UINT64_MAX / block_size) {
+    grid_size = UINT64_MAX / (block_size + 1);
+  }
+  unsigned long long hashes_per_cuda_call = grid_size * block_size;
+  
+  // Prevent overflow in thread multiplication
+  if (hashes_per_cuda_call > UINT64_MAX / (uint64_t)mt->threadIndex) {
+    hashes_per_cuda_call = UINT64_MAX / ((uint64_t)mt->threadIndex + 1);
+  }
   unsigned long long start_nonce = (uint64_t)mt->threadIndex * hashes_per_cuda_call;
   if (ms->extranonce != NULL)
   {

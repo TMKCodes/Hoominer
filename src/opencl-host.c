@@ -23,6 +23,12 @@ cl_int calculate_work_sizes(StratumContext *ctx, OpenCLResources *resource)
   }
   cl_uint compute_units;
   clGetDeviceInfo(resource->device, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cl_uint), &compute_units, NULL);
+  
+  // Validate values to prevent zero multiplication
+  if (compute_units == 0) compute_units = 1;
+  if (resource->max_work_group_size == 0) resource->max_work_group_size = 64;
+  if (ctx->config->gpu_work_multiplier <= 0) ctx->config->gpu_work_multiplier = 1;
+  
   resource->max_global_work_size = compute_units * resource->max_work_group_size * ctx->config->gpu_work_multiplier;
 
   printf("Max local work size: %zd\n", resource->max_work_group_size);
