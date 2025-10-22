@@ -23,12 +23,15 @@ cl_int calculate_work_sizes(StratumContext *ctx, OpenCLResources *resource)
   }
   cl_uint compute_units;
   clGetDeviceInfo(resource->device, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cl_uint), &compute_units, NULL);
-  
+
   // Validate values to prevent zero multiplication
-  if (compute_units == 0) compute_units = 1;
-  if (resource->max_work_group_size == 0) resource->max_work_group_size = 64;
-  if (ctx->config->gpu_work_multiplier <= 0) ctx->config->gpu_work_multiplier = 1;
-  
+  if (compute_units == 0)
+    compute_units = 1;
+  if (resource->max_work_group_size == 0)
+    resource->max_work_group_size = 64;
+  if (ctx->config->gpu_work_multiplier <= 0)
+    ctx->config->gpu_work_multiplier = 1;
+
   resource->max_global_work_size = compute_units * resource->max_work_group_size * ctx->config->gpu_work_multiplier;
 
   printf("Max local work size: %zd\n", resource->max_work_group_size);
@@ -162,9 +165,19 @@ OpenCLResources *initalize_all_opencl_gpus(StratumContext *ctx, cl_uint *device_
       free(devices);
       return NULL;
     }
-    if (strstr(vendor, "NVIDIA") == NULL)
+
+    if (ctx->config->disable_cuda == true)
     {
+      // if CUDA is disabled don't skip CUDA devices for OpenCL
       non_nvidia_indices[non_nvidia_count++] = i;
+    }
+    else if (ctx->config->disable_cuda == false)
+    {
+      // if CUDA is enabled skip NVIDIA devices for OpenCL
+      if (strstr(vendor, "NVIDIA") == NULL)
+      {
+        non_nvidia_indices[non_nvidia_count++] = i;
+      }
     }
   }
 

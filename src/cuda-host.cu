@@ -13,6 +13,8 @@ typedef CUresult (*CULaunchKernel_t)(CUfunction, unsigned int, unsigned int, uns
                                      unsigned int, unsigned int, unsigned int,
                                      unsigned int, cudaStream_t, void **, void **);
 typedef CUresult (*CUModuleUnload_t)(CUmodule);
+typedef CUresult (*CUGetErrorName_t)(CUresult, const char **);
+typedef CUresult (*CUGetErrorString_t)(CUresult, const char **);
 
 // Global handles for dynamic loading
 void *cuda_lib_handle = NULL;
@@ -25,6 +27,29 @@ CUModuleLoadData_t p_cuModuleLoadData = NULL;
 CUModuleGetFunction_t p_cuModuleGetFunction = NULL;
 CULaunchKernel_t p_cuLaunchKernel = NULL;
 CUModuleUnload_t p_cuModuleUnload = NULL;
+CUGetErrorName_t p_cuGetErrorName = NULL;
+CUGetErrorString_t p_cuGetErrorString = NULL;
+
+// Helpers to pretty-print CUDA Driver errors even when the symbol isn't available
+static const char *cu_error_name_fallback(CUresult code)
+{
+    const char *name = NULL;
+    if (p_cuGetErrorName && p_cuGetErrorName(code, &name) == CUDA_SUCCESS && name)
+        return name;
+    return "CUDA_ERROR_UNKNOWN_NAME";
+}
+
+static const char *cu_error_string_fallback(CUresult code)
+{
+    const char *msg = NULL;
+    if (p_cuGetErrorString && p_cuGetErrorString(code, &msg) == CUDA_SUCCESS && msg)
+        return msg;
+    return "No error string available (cuGetErrorString not loaded)";
+}
+
+// Standardized error log prefix for this module
+#define LOG_CUDA_DRV_ERR(prefix, devname, code) \
+    fprintf(stderr, "%s for %s: %s (%s) [%d]\n", (prefix), (devname), cu_error_name_fallback((code)), cu_error_string_fallback((code)), (int)(code))
 
 // Load CUDA driver library dynamically
 int load_cuda_library()
@@ -47,6 +72,8 @@ int load_cuda_library()
     p_cuModuleGetFunction = (CUModuleGetFunction_t)GetProcAddress(lib, "cuModuleGetFunction");
     p_cuLaunchKernel = (CULaunchKernel_t)GetProcAddress(lib, "cuLaunchKernel");
     p_cuModuleUnload = (CUModuleUnload_t)GetProcAddress(lib, "cuModuleUnload");
+    p_cuGetErrorName = (CUGetErrorName_t)GetProcAddress(lib, "cuGetErrorName");
+    p_cuGetErrorString = (CUGetErrorString_t)GetProcAddress(lib, "cuGetErrorString");
 #else
     cuda_lib_handle = dlopen("libcuda.so.1", RTLD_LAZY);
     if (!cuda_lib_handle)
@@ -65,6 +92,8 @@ int load_cuda_library()
     p_cuModuleGetFunction = (CUModuleGetFunction_t)dlsym(cuda_lib_handle, "cuModuleGetFunction");
     p_cuLaunchKernel = (CULaunchKernel_t)dlsym(cuda_lib_handle, "cuLaunchKernel");
     p_cuModuleUnload = (CUModuleUnload_t)dlsym(cuda_lib_handle, "cuModuleUnload");
+    p_cuGetErrorName = (CUGetErrorName_t)dlsym(cuda_lib_handle, "cuGetErrorName");
+    p_cuGetErrorString = (CUGetErrorString_t)dlsym(cuda_lib_handle, "cuGetErrorString");
 #endif
 
     if (!p_cuInit || !p_cuDeviceGetCount || !p_cuDeviceGet || !p_cuDeviceGetName ||
@@ -86,8 +115,7 @@ int load_cuda_library()
     CUresult cu_err = p_cuInit(0);
     if (cu_err != CUDA_SUCCESS)
     {
-        // Note: cuGetErrorString is not dynamically loaded here for simplicity
-        fprintf(stderr, "cuInit failed: %d\n", cu_err);
+        LOG_CUDA_DRV_ERR("cuInit failed", "driver", cu_err);
 #ifdef _WIN32
         FreeLibrary((HMODULE)cuda_lib_handle);
 #else
@@ -213,7 +241,10 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, int selected
     CUresult cu_err = p_cuDeviceGetCount(&num_devices);
     if (cu_err != CUDA_SUCCESS || num_devices == 0)
     {
-        fprintf(stderr, "No CUDA devices found or cuDeviceGetCount failed: %d\n", cu_err);
+        if (cu_err != CUDA_SUCCESS)
+            LOG_CUDA_DRV_ERR("cuDeviceGetCount failed", "driver", cu_err);
+        else
+            fprintf(stderr, "No CUDA devices found.\n");
 #ifdef _WIN32
         FreeLibrary((HMODULE)cuda_lib_handle);
 #else
@@ -243,7 +274,7 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, int selected
         cu_err = p_cuDeviceGet(&device, i);
         if (cu_err != CUDA_SUCCESS)
         {
-            fprintf(stderr, "cuDeviceGet failed for device %u: %d\n", i, cu_err);
+            LOG_CUDA_DRV_ERR("cuDeviceGet failed", "driver", cu_err);
             continue;
         }
 
@@ -268,7 +299,7 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, int selected
         cu_err = p_cuDeviceGetAttribute(&compute_mode, CU_DEVICE_ATTRIBUTE_COMPUTE_MODE, device);
         if (cu_err != CUDA_SUCCESS)
         {
-            fprintf(stderr, "Device %u compute mode query failed: %d\n", i, cu_err);
+            LOG_CUDA_DRV_ERR("cuDeviceGetAttribute(CU_DEVICE_ATTRIBUTE_COMPUTE_MODE) failed", res[devices_found].device_name, cu_err);
             compute_mode = 0; // assume default
         }
         if (compute_mode == CU_COMPUTEMODE_PROHIBITED || temp_prop.major < 2)
@@ -469,15 +500,16 @@ bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename
     free(binary);
     if (cu_err != CUDA_SUCCESS)
     {
-        // Note: cuGetErrorString is not dynamically loaded for simplicity
-        fprintf(stderr, "Module load failed for %s: %d\n", resource->device_name, cu_err);
+        LOG_CUDA_DRV_ERR("cuModuleLoadData failed", resource->device_name, cu_err);
         return false;
     }
 
     cu_err = p_cuModuleGetFunction(&resource->kernel, resource->module, kernel_name);
     if (cu_err != CUDA_SUCCESS)
     {
-        fprintf(stderr, "Kernel %s creation failed for %s: %d\n", kernel_name, resource->device_name, cu_err);
+        fprintf(stderr, "Kernel %s creation failed for %s: %s (%s) [%d]\n",
+                kernel_name, resource->device_name,
+                cu_error_name_fallback(cu_err), cu_error_string_fallback(cu_err), (int)cu_err);
         p_cuModuleUnload(resource->module);
         return false;
     }
@@ -605,12 +637,12 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
     }
 
     void *args[] = {
-        &resource->start_nonce,
-        &resource->previous_header,
-        &resource->timestamp,
-        &resource->matrix,
-        &resource->target,
-        &resource->result};
+        resource->start_nonce,
+        resource->previous_header,
+        resource->timestamp,
+        resource->matrix,
+        resource->target,
+        resource->result};
 
     // Additional validation for kernel launch parameters
     if (resource->optimal_grid_size == 0 || resource->optimal_block_size == 0)
@@ -629,8 +661,10 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
                                        NULL);
     if (cu_err != CUDA_SUCCESS)
     {
-        fprintf(stderr, "Kernel launch failed for %s: %d (grid=%zu, block=%zu)\n",
-                resource->device_name, cu_err, resource->optimal_grid_size, resource->optimal_block_size);
+        fprintf(stderr, "Kernel launch failed for %s: %s (%s) [%d] (grid=%zu, block=%zu)\n",
+                resource->device_name,
+                cu_error_name_fallback(cu_err), cu_error_string_fallback(cu_err), (int)cu_err,
+                resource->optimal_grid_size, resource->optimal_block_size);
         return cudaErrorLaunchFailure;
     }
 
