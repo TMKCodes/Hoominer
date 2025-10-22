@@ -15,14 +15,14 @@ if [ -z "$stats_raw" ] || ! echo "$stats_raw" | jq . >/dev/null 2>&1; then
 fi
 
 # Parse JSON using jq
-khs=$(echo "$stats_raw" | jq '[.hash[] / 1000] | add // 0')  
-hs=$(echo "$stats_raw" | jq '[.hash[] / 1000] // []')        
-busid=$(echo "$stats_raw" | jq '[.busid[] | if . == "cpu" then 0 else . end] // []')           
-air=$(echo "$stats_raw" | jq '.air // 0')                  
-accepted=$(echo "$stats_raw" | jq '.shares.accepted | add // 0')  
-rejected=$(echo "$stats_raw" | jq '.shares.rejected | add // 0')  
+khs=$(echo "$stats_raw" | jq '[.hash[] / 1000] | add // 0')
+hs=$(echo "$stats_raw" | jq '[.hash[] / 1000] // []')
+busid=$(echo "$stats_raw" | jq '[.busid[] | if . == "cpu" then 0 else . end] // []')
+air=$(echo "$stats_raw" | jq '.air // 0')
+accepted=$(echo "$stats_raw" | jq '.shares.accepted | add // 0')
+rejected=$(echo "$stats_raw" | jq '.shares.rejected | add // 0')
 hs_units="khs"
-ver=$(echo "$stats_raw" | jq -r '.miner_version // "unknown"')  
+ver=$(echo "$stats_raw" | jq -r '.miner_version // "unknown"')
 algo='hoohash'
 
 # Calculate uptime
@@ -35,9 +35,15 @@ else
     uptime="0"
 fi
 
-# Remove first element from temp and fan if CPU not enabled
-if ! echo "$busid" | jq -e 'contains([0])' >/dev/null; then
+hs_length=$(echo "$hs" | jq 'length')
+temp_length=$(echo "$temp" | jq 'length')
+fan_length=$(echo "$fan" | jq 'length')
+
+# Remove first element from temp and fan if hs array is shorter
+if [ "$hs_length" -lt "$temp_length" ]; then
     temp=$(echo "$temp" | jq '.[1:] // .')
+fi
+if [ "$hs_length" -lt "$fan_length" ]; then
     fan=$(echo "$fan" | jq '.[1:] // .')
 fi
 
@@ -67,4 +73,4 @@ stats=$(jq -n \
         ver: $ver
     }')
 
-echo $stats
+echo "$stats"
