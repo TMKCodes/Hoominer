@@ -150,7 +150,7 @@ if(WIN32)
   endif()
 endif()
 
-# CUDA runtime (we use CUDA runtime + driver; kernels loaded from cubins)
+# CUDA runtime (use static cudart to avoid dynamic library dependency)
 if(NOT HOOMINER_DISABLE_CUDA)
   enable_language(CUDA)
   # Let NVCC use MSVC on Windows automatically
@@ -158,7 +158,7 @@ if(NOT HOOMINER_DISABLE_CUDA)
   # Ensure separable compilation is off; we load cubins at runtime
   set_target_properties(hoominer PROPERTIES CUDA_SEPARABLE_COMPILATION OFF)
   find_package(CUDAToolkit REQUIRED)
-  target_link_libraries(hoominer PRIVATE CUDA::cudart)
+  target_link_libraries(hoominer PRIVATE CUDA::cudart_static)
 endif()
 
 # Link order: external libs then project libs

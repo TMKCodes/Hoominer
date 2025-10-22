@@ -15,5 +15,6 @@ Makefile
 *.sha1sum
 *.exe
 *.lib
+*.exp
 CMakeFiles/
 CMakeCache.txt
