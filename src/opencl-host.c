@@ -459,9 +459,13 @@ cl_int compile_opencl_kernel_from_xxd_header(StratumContext *ctx, OpenCLResource
   {
     snprintf(build_options, sizeof(build_options), "%s", ctx->config->build_options);
   }
-  else
+  else if (ctx->config->opencl_optimization_level >= 0)
   {
     snprintf(build_options, sizeof(build_options), "-O%d", ctx->config->opencl_optimization_level);
+  }
+  else
+  {
+    strncat(build_options, sizeof(build_options), "");
   }
   err = clBuildProgram(resource->program, 1, &resource->device, build_options, NULL, NULL);
   if (err != CL_SUCCESS)
@@ -645,15 +649,45 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
 
   // Set kernel arguments (assumes kernel signature expects matrix as __global const double *matrix)
   err = clSetKernelArg(resource->kernel, 0, sizeof(cl_ulong), &local_work_size);
-  err |= clSetKernelArg(resource->kernel, 1, sizeof(cl_ulong), &start_nonce);
-  err |= clSetKernelArg(resource->kernel, 2, sizeof(cl_mem), &resource->previous_header_buf);
-  err |= clSetKernelArg(resource->kernel, 3, sizeof(cl_mem), &resource->timestamp_buf);
-  err |= clSetKernelArg(resource->kernel, 4, sizeof(cl_mem), &resource->matrix_buf);
-  err |= clSetKernelArg(resource->kernel, 5, sizeof(cl_mem), &resource->target_buf);
-  err |= clSetKernelArg(resource->kernel, 6, sizeof(cl_mem), &resource->result_buf);
   if (err != CL_SUCCESS)
   {
-    fprintf(stderr, "Arg setting failed for %s: %d\n", resource->device_name, err);
+    fprintf(stderr, "Local work size buf failed for %s: %d\n", resource->device_name, err);
+    goto cleanup;
+  }
+  err = clSetKernelArg(resource->kernel, 1, sizeof(cl_ulong), &start_nonce);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Start nonce buf failed for %s: %d\n", resource->device_name, err);
+    goto cleanup;
+  }
+  err = clSetKernelArg(resource->kernel, 2, sizeof(cl_mem), &resource->previous_header_buf);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Previous header buf failed for %s: %d\n", resource->device_name, err);
+    goto cleanup;
+  }
+  err = clSetKernelArg(resource->kernel, 3, sizeof(cl_mem), &resource->timestamp_buf);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Timestamp buf failed for %s: %d\n", resource->device_name, err);
+    goto cleanup;
+  }
+  err = clSetKernelArg(resource->kernel, 4, sizeof(cl_mem), &resource->matrix_buf);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Matrix buf failed for %s: %d\n", resource->device_name, err);
+    goto cleanup;
+  }
+  err = clSetKernelArg(resource->kernel, 5, sizeof(cl_mem), &resource->target_buf);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Target buf failed for %s: %d\n", resource->device_name, err);
+    goto cleanup;
+  }
+  err = clSetKernelArg(resource->kernel, 6, sizeof(cl_mem), &resource->result_buf);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Result buf failed for %s: %d\n", resource->device_name, err);
     goto cleanup;
   }
 
