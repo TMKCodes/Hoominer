@@ -434,7 +434,7 @@ bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename
 
     printf("Kernel %s loaded for %s\n", kernel_name, resource->device_name);
 
-    return cudaSuccess;
+    return true;
 }
 
 cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *previous_header, unsigned char *target, double matrix[64][64],
