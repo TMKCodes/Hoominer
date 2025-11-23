@@ -1,5 +1,4 @@
 #include "cuda-host.h"
-#include <limits.h>
 
 // Function pointers for CUDA Driver API
 typedef CUresult (*CUInit_t)(unsigned int);
@@ -13,8 +12,6 @@ typedef CUresult (*CULaunchKernel_t)(CUfunction, unsigned int, unsigned int, uns
                                      unsigned int, unsigned int, unsigned int,
                                      unsigned int, cudaStream_t, void **, void **);
 typedef CUresult (*CUModuleUnload_t)(CUmodule);
-typedef CUresult (*CUGetErrorName_t)(CUresult, const char **);
-typedef CUresult (*CUGetErrorString_t)(CUresult, const char **);
 
 // Global handles for dynamic loading
 void *cuda_lib_handle = NULL;
@@ -27,29 +24,6 @@ CUModuleLoadData_t p_cuModuleLoadData = NULL;
 CUModuleGetFunction_t p_cuModuleGetFunction = NULL;
 CULaunchKernel_t p_cuLaunchKernel = NULL;
 CUModuleUnload_t p_cuModuleUnload = NULL;
-CUGetErrorName_t p_cuGetErrorName = NULL;
-CUGetErrorString_t p_cuGetErrorString = NULL;
-
-// Helpers to pretty-print CUDA Driver errors even when the symbol isn't available
-static const char *cu_error_name_fallback(CUresult code)
-{
-    const char *name = NULL;
-    if (p_cuGetErrorName && p_cuGetErrorName(code, &name) == CUDA_SUCCESS && name)
-        return name;
-    return "CUDA_ERROR_UNKNOWN_NAME";
-}
-
-static const char *cu_error_string_fallback(CUresult code)
-{
-    const char *msg = NULL;
-    if (p_cuGetErrorString && p_cuGetErrorString(code, &msg) == CUDA_SUCCESS && msg)
-        return msg;
-    return "No error string available (cuGetErrorString not loaded)";
-}
-
-// Standardized error log prefix for this module
-#define LOG_CUDA_DRV_ERR(prefix, devname, code) \
-    fprintf(stderr, "%s for %s: %s (%s) [%d]\n", (prefix), (devname), cu_error_name_fallback((code)), cu_error_string_fallback((code)), (int)(code))
 
 // Load CUDA driver library dynamically
 int load_cuda_library()
@@ -72,8 +46,6 @@ int load_cuda_library()
     p_cuModuleGetFunction = (CUModuleGetFunction_t)GetProcAddress(lib, "cuModuleGetFunction");
     p_cuLaunchKernel = (CULaunchKernel_t)GetProcAddress(lib, "cuLaunchKernel");
     p_cuModuleUnload = (CUModuleUnload_t)GetProcAddress(lib, "cuModuleUnload");
-    p_cuGetErrorName = (CUGetErrorName_t)GetProcAddress(lib, "cuGetErrorName");
-    p_cuGetErrorString = (CUGetErrorString_t)GetProcAddress(lib, "cuGetErrorString");
 #else
     cuda_lib_handle = dlopen("libcuda.so.1", RTLD_LAZY);
     if (!cuda_lib_handle)
@@ -92,8 +64,6 @@ int load_cuda_library()
     p_cuModuleGetFunction = (CUModuleGetFunction_t)dlsym(cuda_lib_handle, "cuModuleGetFunction");
     p_cuLaunchKernel = (CULaunchKernel_t)dlsym(cuda_lib_handle, "cuLaunchKernel");
     p_cuModuleUnload = (CUModuleUnload_t)dlsym(cuda_lib_handle, "cuModuleUnload");
-    p_cuGetErrorName = (CUGetErrorName_t)dlsym(cuda_lib_handle, "cuGetErrorName");
-    p_cuGetErrorString = (CUGetErrorString_t)dlsym(cuda_lib_handle, "cuGetErrorString");
 #endif
 
     if (!p_cuInit || !p_cuDeviceGetCount || !p_cuDeviceGet || !p_cuDeviceGetName ||
@@ -115,7 +85,8 @@ int load_cuda_library()
     CUresult cu_err = p_cuInit(0);
     if (cu_err != CUDA_SUCCESS)
     {
-        LOG_CUDA_DRV_ERR("cuInit failed", "driver", cu_err);
+        // Note: cuGetErrorString is not dynamically loaded here for simplicity
+        fprintf(stderr, "cuInit failed: %d\n", cu_err);
 #ifdef _WIN32
         FreeLibrary((HMODULE)cuda_lib_handle);
 #else
@@ -140,36 +111,18 @@ static void calculate_optimal_dimensions(CudaResources *resource, int work_multi
     int threads_per_block = 256;
     int max_active_blocks_per_sm = 0;
 
-    // Use heuristic-based occupancy calculation since Driver API doesn't support
-    // cudaOccupancyMaxActiveBlocksPerMultiprocessor with CUfunction
-    if (!resource->kernel)
+    // Estimate optimal blocks per SM
+    cudaError_t err = cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        &max_active_blocks_per_sm, resource->kernel, threads_per_block, 0);
+
+    if (err != cudaSuccess)
     {
-        fprintf(stderr, "Warning: Kernel not initialized for %s, using default values\n", resource->device_name);
+        fprintf(stderr, "Occupancy calc failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
         max_active_blocks_per_sm = 2;
-    }
-    else
-    {
-        // Use heuristic: assume 2-4 blocks per SM depending on block size
-        // This is a reasonable estimate for most mining kernels
-        if (threads_per_block <= 128)
-            max_active_blocks_per_sm = 4;
-        else if (threads_per_block <= 256)
-            max_active_blocks_per_sm = 3;
-        else
-            max_active_blocks_per_sm = 2;
-        
-        // Ensure we don't exceed theoretical limits
-        int max_theoretical_blocks = max_threads_per_sm / threads_per_block;
-        if (max_active_blocks_per_sm > max_theoretical_blocks)
-            max_active_blocks_per_sm = max_theoretical_blocks;
     }
 
     // Choose target blocks per SM
     int target_blocks_per_sm = max_active_blocks_per_sm >= 2 ? max_active_blocks_per_sm : 2;
-    
-    // Ensure target_blocks_per_sm is never zero to prevent division by zero
-    if (target_blocks_per_sm <= 0)
-        target_blocks_per_sm = 1;
 
     // Adjust threads per block to stay within per-SM thread limit
     int max_possible_threads = max_threads_per_sm / target_blocks_per_sm;
@@ -187,31 +140,11 @@ static void calculate_optimal_dimensions(CudaResources *resource, int work_multi
     if (grid_size > resource->device_prop.maxGridSize[0])
         grid_size = resource->device_prop.maxGridSize[0];
 
-    // Apply work multiplier but ensure we don't exceed device limits
-    int final_block_size;
-    // Check for potential overflow before multiplication
-    if (work_multiplier > 0 && threads_per_block > max_threads_per_block / work_multiplier)
-    {
-        printf("Warning: Work multiplier %d would cause overflow for %s. Using safe value.\n",
-               work_multiplier, resource->device_name);
-        final_block_size = max_threads_per_block - (max_threads_per_block % warp_size);
-    }
-    else
-    {
-        final_block_size = threads_per_block * work_multiplier;
-        if (final_block_size > max_threads_per_block)
-        {
-            printf("Warning: Work multiplier %d would exceed max threads per block (%d) for %s. Using %d instead.\n",
-                   work_multiplier, max_threads_per_block, resource->device_name, max_threads_per_block);
-            final_block_size = max_threads_per_block - (max_threads_per_block % warp_size);
-        }
-    }
-
-    resource->optimal_block_size = final_block_size;
+    resource->optimal_block_size = threads_per_block * work_multiplier;
     resource->optimal_grid_size = grid_size;
 
-    printf("Calculated for %s: base_block_size=%d, final_block_size=%zu, grid_size=%zu, work_multiplier=%d\n",
-           resource->device_name, threads_per_block, resource->optimal_block_size, resource->optimal_grid_size, work_multiplier);
+    printf("Calculated for %s: block_size=%d, grid_size=%d\n",
+           resource->device_name, threads_per_block, grid_size);
 }
 
 int compare_pci_bus_id(const void *a, const void *b)
@@ -241,10 +174,7 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, int selected
     CUresult cu_err = p_cuDeviceGetCount(&num_devices);
     if (cu_err != CUDA_SUCCESS || num_devices == 0)
     {
-        if (cu_err != CUDA_SUCCESS)
-            LOG_CUDA_DRV_ERR("cuDeviceGetCount failed", "driver", cu_err);
-        else
-            fprintf(stderr, "No CUDA devices found.\n");
+        fprintf(stderr, "No CUDA devices found or cuDeviceGetCount failed: %d\n", cu_err);
 #ifdef _WIN32
         FreeLibrary((HMODULE)cuda_lib_handle);
 #else
@@ -274,7 +204,7 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, int selected
         cu_err = p_cuDeviceGet(&device, i);
         if (cu_err != CUDA_SUCCESS)
         {
-            LOG_CUDA_DRV_ERR("cuDeviceGet failed", "driver", cu_err);
+            fprintf(stderr, "cuDeviceGet failed for device %u: %d\n", i, cu_err);
             continue;
         }
 
@@ -299,7 +229,7 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, int selected
         cu_err = p_cuDeviceGetAttribute(&compute_mode, CU_DEVICE_ATTRIBUTE_COMPUTE_MODE, device);
         if (cu_err != CUDA_SUCCESS)
         {
-            LOG_CUDA_DRV_ERR("cuDeviceGetAttribute(CU_DEVICE_ATTRIBUTE_COMPUTE_MODE) failed", res[devices_found].device_name, cu_err);
+            fprintf(stderr, "Device %u compute mode query failed: %d\n", i, cu_err);
             compute_mode = 0; // assume default
         }
         if (compute_mode == CU_COMPUTEMODE_PROHIBITED || temp_prop.major < 2)
@@ -345,30 +275,20 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, int selected
             continue;
         }
 
-        err = cudaMalloc(&res[devices_found].start_nonce, sizeof(unsigned long long));
-        if (err != cudaSuccess)
-        {
-            fprintf(stderr, "Device %u (PCI-BUS-ID: %u) start_nonce allocation failed: %s\n",
-                    i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
-            cudaStreamDestroy(res[devices_found].stream);
-            continue;
-        }
         err = cudaMalloc(&res[devices_found].previous_header, DOMAIN_HASH_SIZE);
         if (err != cudaSuccess)
         {
             fprintf(stderr, "Device %u (PCI-BUS-ID: %u) previous_header allocation failed: %s\n",
                     i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
             cudaStreamDestroy(res[devices_found].stream);
-            cudaFree(res[devices_found].start_nonce);
             continue;
         }
-        err = cudaMalloc(&res[devices_found].timestamp, sizeof(long long));
+        err = cudaMalloc(&res[devices_found].timestamp, sizeof(int64_t));
         if (err != cudaSuccess)
         {
             fprintf(stderr, "Device %u (PCI-BUS-ID: %u) timestamp allocation failed: %s\n",
                     i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
             cudaStreamDestroy(res[devices_found].stream);
-            cudaFree(res[devices_found].start_nonce);
             cudaFree(res[devices_found].previous_header);
             continue;
         }
@@ -378,7 +298,6 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, int selected
             fprintf(stderr, "Device %u (PCI-BUS-ID: %u) matrix allocation failed: %s\n",
                     i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
             cudaStreamDestroy(res[devices_found].stream);
-            cudaFree(res[devices_found].start_nonce);
             cudaFree(res[devices_found].previous_header);
             cudaFree(res[devices_found].timestamp);
             continue;
@@ -389,7 +308,6 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, int selected
             fprintf(stderr, "Device %u (PCI-BUS-ID: %u) target allocation failed: %s\n",
                     i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
             cudaStreamDestroy(res[devices_found].stream);
-            cudaFree(res[devices_found].start_nonce);
             cudaFree(res[devices_found].previous_header);
             cudaFree(res[devices_found].timestamp);
             cudaFree(res[devices_found].matrix);
@@ -401,7 +319,6 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, int selected
             fprintf(stderr, "Device %u (PCI-BUS-ID: %u) result allocation failed: %s\n",
                     i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
             cudaStreamDestroy(res[devices_found].stream);
-            cudaFree(res[devices_found].start_nonce);
             cudaFree(res[devices_found].previous_header);
             cudaFree(res[devices_found].timestamp);
             cudaFree(res[devices_found].matrix);
@@ -414,7 +331,6 @@ CudaResources *initialize_all_cuda_gpus(unsigned int *device_count, int selected
             fprintf(stderr, "Device %u (PCI-BUS-ID: %u) nonces_processed allocation failed: %s\n",
                     i, res[devices_found].pci_bus_id, cudaGetErrorString(err));
             cudaStreamDestroy(res[devices_found].stream);
-            cudaFree(res[devices_found].start_nonce);
             cudaFree(res[devices_found].previous_header);
             cudaFree(res[devices_found].timestamp);
             cudaFree(res[devices_found].matrix);
@@ -484,7 +400,7 @@ bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename
         fprintf(stderr, "Failed to read %s\n", cubin_filename);
         free(binary);
         fclose(file);
-        return false;
+        return cudaErrorInvalidValue;
     }
     fclose(file);
 
@@ -493,23 +409,22 @@ bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename
     {
         fprintf(stderr, "Set device failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
         free(binary);
-        return false;
+        return err;
     }
 
     cu_err = p_cuModuleLoadData(&resource->module, binary);
     free(binary);
     if (cu_err != CUDA_SUCCESS)
     {
-        LOG_CUDA_DRV_ERR("cuModuleLoadData failed", resource->device_name, cu_err);
+        // Note: cuGetErrorString is not dynamically loaded for simplicity
+        fprintf(stderr, "Module load failed for %s: %d\n", resource->device_name, cu_err);
         return false;
     }
 
     cu_err = p_cuModuleGetFunction(&resource->kernel, resource->module, kernel_name);
     if (cu_err != CUDA_SUCCESS)
     {
-        fprintf(stderr, "Kernel %s creation failed for %s: %s (%s) [%d]\n",
-                kernel_name, resource->device_name,
-                cu_error_name_fallback(cu_err), cu_error_string_fallback(cu_err), (int)cu_err);
+        fprintf(stderr, "Kernel %s creation failed for %s: %d\n", kernel_name, resource->device_name, cu_err);
         p_cuModuleUnload(resource->module);
         return false;
     }
@@ -519,11 +434,11 @@ bool load_cuda_kernel_binary(CudaResources *resource, const char *cubin_filename
 
     printf("Kernel %s loaded for %s\n", kernel_name, resource->device_name);
 
-    return true;
+    return cudaSuccess;
 }
 
 cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *previous_header, unsigned char *target, double matrix[64][64],
-                                    long long timestamp, unsigned long long start_nonce, CudaResult *result)
+                                    int64_t timestamp, uint64_t start_nonce, CudaResult *result)
 {
     cudaError_t err;
 
@@ -539,23 +454,10 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
         return cudaErrorInitializationError;
     }
 
-    if (!resource->kernel)
-    {
-        fprintf(stderr, "Kernel not initialized for %s\n", resource->device_name);
-        return cudaErrorInitializationError;
-    }
-
     err = cudaSetDevice(resource->device_id);
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Set device failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
-        return err;
-    }
-
-    err = cudaMemcpyAsync(resource->start_nonce, &start_nonce, sizeof(unsigned long long), cudaMemcpyHostToDevice, resource->stream);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "Memory copy to start_nonce failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
         return err;
     }
 
@@ -566,7 +468,7 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
         return err;
     }
 
-    err = cudaMemcpyAsync(resource->timestamp, &timestamp, sizeof(long long), cudaMemcpyHostToDevice, resource->stream);
+    err = cudaMemcpyAsync(resource->timestamp, &timestamp, sizeof(int64_t), cudaMemcpyHostToDevice, resource->stream);
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Memory copy to timestamp failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
@@ -595,76 +497,25 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
         return err;
     }
 
-    // Comprehensive validation
-    if (resource->optimal_block_size > resource->device_prop.maxThreadsPerBlock)
-    {
-        fprintf(stderr, "Block size %zu exceeds max threads per block %d for %s\n",
-                resource->optimal_block_size, resource->device_prop.maxThreadsPerBlock, resource->device_name);
-        return cudaErrorInvalidConfiguration;
-    }
-    
-    // Validate grid size against device limits
-    if (resource->optimal_grid_size > resource->device_prop.maxGridSize[0])
-    {
-        fprintf(stderr, "Grid size %zu exceeds max grid size %d for %s\n",
-                resource->optimal_grid_size, resource->device_prop.maxGridSize[0], resource->device_name);
-        return cudaErrorInvalidConfiguration;
-    }
-    
-    // Validate that grid_size * block_size doesn't exceed device limits
-    size_t total_threads = resource->optimal_grid_size * resource->optimal_block_size;
-    if (total_threads > (size_t)resource->device_prop.maxThreadsPerBlock * resource->device_prop.maxGridSize[0])
-    {
-        fprintf(stderr, "Total threads %zu exceeds device capacity for %s\n",
-                total_threads, resource->device_name);
-        return cudaErrorInvalidConfiguration;
-    }
-    
-    // Ensure block size is a multiple of warp size
-    if (resource->optimal_block_size % 32 != 0)
-    {
-        fprintf(stderr, "Block size %zu is not a multiple of warp size (32) for %s\n",
-                resource->optimal_block_size, resource->device_name);
-        return cudaErrorInvalidConfiguration;
-    }
-
-    // Validate all pointers before kernel launch
-    if (!resource->start_nonce || !resource->previous_header || !resource->timestamp || 
-        !resource->matrix || !resource->target || !resource->result)
-    {
-        fprintf(stderr, "Invalid device pointers for %s\n", resource->device_name);
-        return cudaErrorInvalidValue;
-    }
-
     void *args[] = {
-        resource->start_nonce,
-        resource->previous_header,
-        resource->timestamp,
-        resource->matrix,
-        resource->target,
-        resource->result};
-
-    // Additional validation for kernel launch parameters
-    if (resource->optimal_grid_size == 0 || resource->optimal_block_size == 0)
-    {
-        fprintf(stderr, "Invalid kernel launch parameters for %s: grid=%zu, block=%zu\n",
-                resource->device_name, resource->optimal_grid_size, resource->optimal_block_size);
-        return cudaErrorInvalidConfiguration;
-    }
+        &start_nonce,
+        &resource->previous_header,
+        &resource->timestamp,
+        &resource->matrix,
+        &resource->target,
+        &resource->result,
+        &resource->nonces_processed};
 
     CUresult cu_err = p_cuLaunchKernel(resource->kernel,
-                                       (unsigned int)resource->optimal_grid_size, 1, 1,
-                                       (unsigned int)resource->optimal_block_size, 1, 1,
+                                       resource->optimal_grid_size, 1, 1,
+                                       resource->optimal_block_size, 1, 1,
                                        0,
                                        resource->stream,
                                        args,
                                        NULL);
     if (cu_err != CUDA_SUCCESS)
     {
-        fprintf(stderr, "Kernel launch failed for %s: %s (%s) [%d] (grid=%zu, block=%zu)\n",
-                resource->device_name,
-                cu_error_name_fallback(cu_err), cu_error_string_fallback(cu_err), (int)cu_err,
-                resource->optimal_grid_size, resource->optimal_block_size);
+        fprintf(stderr, "Kernel launch failed for %s: %d\n", resource->device_name, cu_err);
         return cudaErrorLaunchFailure;
     }
 
@@ -682,11 +533,32 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
         return err;
     }
 
+    // Check if the matrix is correct
+    double matrix_back[64][64];
+    err = cudaMemcpyAsync(matrix_back, resource->matrix, 64 * 64 * sizeof(double), cudaMemcpyDeviceToHost, resource->stream);
+    if (err != cudaSuccess)
+    {
+        fprintf(stderr, "matrix_back copy failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
+        return err;
+    }
+
     err = cudaStreamSynchronize(resource->stream);
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Stream synchronization failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
         return err;
+    }
+
+    // Check if the matrix is correct
+    for (size_t r = 0; r < 64; ++r)
+    {
+        for (size_t c = 0; c < 64; ++c)
+        {
+            if (matrix_back[r][c] != matrix[r][c])
+            {
+                fprintf(stderr, "Matrix mismatch at [%zu][%zu]: %f vs %f\n", r, c, matrix_back[r][c], matrix[r][c]);
+            }
+        }
     }
 
     return cudaSuccess;
@@ -698,51 +570,16 @@ void cleanup_cuda_resources(CudaResources *resource)
         return;
 
     cudaSetDevice(resource->device_id);
-    
-    // Free all allocated device memory with error checking
-    if (resource->previous_header) {
-        cudaFree(resource->previous_header);
-        resource->previous_header = NULL;
-    }
-    if (resource->start_nonce) {
-        cudaFree(resource->start_nonce);
-        resource->start_nonce = NULL;
-    }
-    if (resource->timestamp) {
-        cudaFree(resource->timestamp);
-        resource->timestamp = NULL;
-    }
-    if (resource->matrix) {
-        cudaFree(resource->matrix);
-        resource->matrix = NULL;
-    }
-    if (resource->target) {
-        cudaFree(resource->target);
-        resource->target = NULL;
-    }
-    if (resource->result) {
-        cudaFree(resource->result);
-        resource->result = NULL;
-    }
-    if (resource->nonces_processed) {
-        cudaFree(resource->nonces_processed);
-        resource->nonces_processed = NULL;
-    }
-    if (resource->printf_buffer) {
-        cudaFree(resource->printf_buffer);
-        resource->printf_buffer = NULL;
-    }
-    
+    cudaFree(resource->previous_header);
+    cudaFree(resource->timestamp);
+    cudaFree(resource->matrix);
+    cudaFree(resource->target);
+    cudaFree(resource->result);
     if (resource->module && p_cuModuleUnload)
     {
         p_cuModuleUnload(resource->module);
-        resource->module = NULL;
     }
-    
-    if (resource->stream) {
-        cudaStreamDestroy(resource->stream);
-        resource->stream = NULL;
-    }
+    cudaStreamDestroy(resource->stream);
 }
 
 void cleanup_all_cuda_gpus(CudaResources *resources, unsigned int device_count)
