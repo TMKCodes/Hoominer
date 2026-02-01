@@ -49,7 +49,7 @@ static inline uint64_t le64toh(uint64_t x)
 
 MiningState *init_mining_state()
 {
-  MiningState *state = malloc(sizeof(MiningState));
+  MiningState *state = calloc(1, sizeof(MiningState));
   if (!state)
   {
     fprintf(stderr, "Failed to allocate memory for MiningState\n");
@@ -61,6 +61,10 @@ MiningState *init_mining_state()
   state->global_target = NULL;
   state->extranonce = NULL;
   state->job = NULL;
+  state->mining_cpu_threads = NULL;
+  state->mining_opencl_threads = NULL;
+  state->mining_cuda_threads = NULL;
+  state->new_job_available = 0;
   pthread_mutex_init(&state->job_mutex, NULL);
   pthread_mutex_init(&state->target_mutex, NULL);
 
@@ -208,6 +212,8 @@ void *mining_cpu_thread(void *arg)
 {
   MiningThread *mt = (MiningThread *)arg;
   StratumContext *ctx = mt->ctx;
+  const int thread_index = mt->threadIndex;
+  free(mt);
   MiningState *ms = ctx->ms;
   State state = {0};
   char *current_job_id = NULL;
@@ -219,7 +225,7 @@ void *mining_cpu_thread(void *arg)
   }
   ReportingDevice *cpu_reporting_device = ctx->hd->devices[reporting_index];
 
-  uint64_t nonce = mt->threadIndex;
+  uint64_t nonce = (uint64_t)thread_index;
   uint64_t step = ms->num_cpu_threads;
 
   while (ctx->running)
@@ -313,14 +319,16 @@ void *mining_opencl_thread(void *arg)
 {
   MiningThread *mt = (MiningThread *)arg;
   StratumContext *ctx = mt->ctx;
+  const int thread_index = mt->threadIndex;
+  free(mt);
   MiningState *ms = ctx->ms;
   State state = {0};
   char *current_job_id = NULL;
-  cl_ulong local_work_size = ctx->opencl_resources[mt->threadIndex].max_work_group_size;
-  cl_ulong global_work_size = ctx->opencl_resources[mt->threadIndex].max_global_work_size;
+  cl_ulong local_work_size = ctx->opencl_resources[thread_index].max_work_group_size;
+  cl_ulong global_work_size = ctx->opencl_resources[thread_index].max_global_work_size;
   uint64_t random_base = rand() & 0x3FFFF;
   // Prevent integer overflow in multiplication
-  cl_ulong thread_work_size = (cl_ulong)mt->threadIndex * global_work_size;
+  cl_ulong thread_work_size = (cl_ulong)thread_index * global_work_size;
   if (thread_work_size > UINT64_MAX / random_base)
   {
     thread_work_size = UINT64_MAX / (random_base + 1);
@@ -331,7 +339,7 @@ void *mining_opencl_thread(void *arg)
     cl_ulong extranonce_val = strtoull(ms->extranonce, NULL, 10);
     start_nonce = (extranonce_val << 32) | start_nonce;
   }
-  int reporting_index = ctx->cpu_device_count + mt->threadIndex;
+  int reporting_index = ctx->cpu_device_count + thread_index;
   if (reporting_index >= ctx->hd->device_count)
   {
     fprintf(stderr, "OpenCL reporting index %d exceeds device count %d\n", reporting_index, ctx->hd->device_count);
@@ -381,7 +389,7 @@ void *mining_opencl_thread(void *arg)
         break;
 
       OpenCLResult result = {0};
-      cl_int status = run_opencl_hoohash_kernel(&ctx->opencl_resources[mt->threadIndex], global_work_size,
+      cl_int status = run_opencl_hoohash_kernel(&ctx->opencl_resources[thread_index], global_work_size,
                                                 local_work_size, state.PrevHeader, ms->global_target, state.mat, state.Timestamp, start_nonce, &result);
 
       pthread_mutex_lock(&ctx->hd->hashrate_mutex);
@@ -393,13 +401,13 @@ void *mining_opencl_thread(void *arg)
       {
         if (status == -54)
         {
-          fprintf(stderr, "Device %d: Kernel execution failed: CL_INVALID_WORK_GROUP_SIZE. Reducing local work size by half.\n", mt->threadIndex);
+          fprintf(stderr, "Device %d: Kernel execution failed: CL_INVALID_WORK_GROUP_SIZE. Reducing local work size by half.\n", thread_index);
           local_work_size /= 2;
           break;
         }
         else
         {
-          fprintf(stderr, "Device %d: Kernel execution failed: %d\n", mt->threadIndex, status);
+          fprintf(stderr, "Device %d: Kernel execution failed: %d\n", thread_index, status);
           start_nonce += global_work_size;
           break;
         }
@@ -457,21 +465,23 @@ void *mining_cuda_thread(void *arg)
 {
   MiningThread *mt = (MiningThread *)arg;
   StratumContext *ctx = mt->ctx;
+  const int thread_index = mt->threadIndex;
+  free(mt);
   MiningState *ms = ctx->ms;
   State state = {0};
   char *current_job_id = NULL;
 
   // Validate thread index and CUDA resources
-  if (!mt || !ctx || !ctx->cuda_resources || mt->threadIndex >= ctx->cuda_device_count)
+  if (!ctx || !ctx->cuda_resources || thread_index >= (int)ctx->cuda_device_count)
   {
-    fprintf(stderr, "Invalid CUDA thread parameters: mt=%p, ctx=%p, threadIndex=%d, device_count=%u\n",
-            mt, ctx, mt ? mt->threadIndex : -1, ctx ? ctx->cuda_device_count : 0);
+    fprintf(stderr, "Invalid CUDA thread parameters: ctx=%p, threadIndex=%d, device_count=%u\n",
+            ctx, thread_index, ctx ? ctx->cuda_device_count : 0);
     return NULL;
   }
 
   // Prevent integer overflow in multiplication
-  size_t grid_size = ctx->cuda_resources[mt->threadIndex].optimal_grid_size;
-  size_t block_size = ctx->cuda_resources[mt->threadIndex].optimal_block_size;
+  size_t grid_size = ctx->cuda_resources[thread_index].optimal_grid_size;
+  size_t block_size = ctx->cuda_resources[thread_index].optimal_block_size;
   if (grid_size > UINT64_MAX / block_size)
   {
     grid_size = UINT64_MAX / (block_size + 1);
@@ -479,17 +489,17 @@ void *mining_cuda_thread(void *arg)
   unsigned long long hashes_per_cuda_call = grid_size * block_size;
 
   // Prevent overflow in thread multiplication
-  if (mt->threadIndex > 0 && hashes_per_cuda_call > UINT64_MAX / (uint64_t)mt->threadIndex)
+  if (thread_index > 0 && hashes_per_cuda_call > UINT64_MAX / (uint64_t)thread_index)
   {
-    hashes_per_cuda_call = UINT64_MAX / ((uint64_t)mt->threadIndex + 1);
+    hashes_per_cuda_call = UINT64_MAX / ((uint64_t)thread_index + 1);
   }
-  unsigned long long start_nonce = (uint64_t)mt->threadIndex * hashes_per_cuda_call;
+  unsigned long long start_nonce = (uint64_t)thread_index * hashes_per_cuda_call;
   if (ms->extranonce != NULL)
   {
     uint64_t extranonce_val = strtoull(ms->extranonce, NULL, 10);
-    start_nonce = (extranonce_val << 32) | ((uint64_t)mt->threadIndex * hashes_per_cuda_call);
+    start_nonce = (extranonce_val << 32) | ((uint64_t)thread_index * hashes_per_cuda_call);
   }
-  int reporting_index = ctx->cpu_device_count + ctx->opencl_device_count + mt->threadIndex;
+  int reporting_index = ctx->cpu_device_count + ctx->opencl_device_count + thread_index;
   if (reporting_index >= ctx->hd->device_count || reporting_index < 0)
   {
     fprintf(stderr, "CUDA reporting index %d exceeds device count %d or is negative\n", reporting_index, ctx->hd->device_count);
@@ -547,7 +557,7 @@ void *mining_cuda_thread(void *arg)
         break;
 
       CudaResult result = {0};
-      int error = run_cuda_hoohash_kernel(&ctx->cuda_resources[mt->threadIndex],
+      int error = run_cuda_hoohash_kernel(&ctx->cuda_resources[thread_index],
                                           state.PrevHeader, ms->global_target, state.mat, (long long)state.Timestamp,
                                           start_nonce, &result);
 
@@ -558,7 +568,7 @@ void *mining_cuda_thread(void *arg)
 
       if (error != 0)
       {
-        fprintf(stderr, "Device %d: Kernel execution failed: %d\n", mt->threadIndex, error);
+        fprintf(stderr, "Device %d: Kernel execution failed: %d\n", thread_index, error);
         start_nonce += hashes_per_cuda_call;
         break;
       }

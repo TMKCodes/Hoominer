@@ -10,4 +10,4 @@ cd ./releases/
 rm -rf hoominer.tar.gz
 tar -czvf hoominer.tar.gz hoominer/
 cd ..
-rsync -avz --progress ./releases/hoominer/ tonto@192.168.122.1:/mnt/st3/tonto/Hoosat-Repositories/HTN/hoominer/releases/hoominer/
+#rsync -avz --progress ./releases/hoominer/ tonto@192.168.122.1:/mnt/st3/tonto/Hoosat-Repositories/HTN/hoominer/releases/hoominer/

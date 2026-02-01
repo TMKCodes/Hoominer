@@ -22,6 +22,9 @@ StratumContext *init_stratum_context()
   ctx->hd = NULL;
   ctx->running = true;
   ctx->current_stratum_index = 0;
+  ctx->disable_cpu = 0;
+  ctx->disable_gpu = 0;
+  ctx->recv_thread_created = 0;
   init_int_fifo(&ctx->mining_submit_fifo);
 
   // Initialize OpenSSL only if needed later
