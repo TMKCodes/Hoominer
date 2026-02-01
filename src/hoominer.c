@@ -104,6 +104,30 @@ static void cleanup_stratum_connection(StratumContext *ctx)
       ctx->ms->mining_cuda_threads = NULL;
       ctx->ms->num_cuda_threads = 0;
     }
+
+    // Clear job queue to prevent memory leaks on reconnection
+    pthread_mutex_lock(&ctx->ms->job_queue.queue_mutex);
+    for (int i = 0; i < JOB_QUEUE_SIZE; i++)
+    {
+      if (ctx->ms->job_queue.jobs[i].job_id)
+      {
+        free(ctx->ms->job_queue.jobs[i].job_id);
+        ctx->ms->job_queue.jobs[i].job_id = NULL;
+      }
+      ctx->ms->job_queue.jobs[i].running = 0;
+      ctx->ms->job_queue.jobs[i].completed = 0;
+    }
+    ctx->ms->job_queue.head = 0;
+    ctx->ms->job_queue.tail = 0;
+    ctx->ms->new_job_available = 0;
+    pthread_mutex_unlock(&ctx->ms->job_queue.queue_mutex);
+
+    // Clear extranonce on reconnection to avoid stale data
+    if (ctx->ms->extranonce)
+    {
+      free(ctx->ms->extranonce);
+      ctx->ms->extranonce = NULL;
+    }
   }
 
   // As a safety net, close SSL/socket here too (thread normally does SSL cleanup).
@@ -495,6 +519,7 @@ int main(int argc, char **argv)
   if (!ctx)
   {
     printf("Failed to allocate StratumContext\n");
+    free(config);
     return 1;
   }
   ctx->config = config;
@@ -571,6 +596,7 @@ int main(int argc, char **argv)
   if (config->list_gpus == true)
   {
     list_gpus(ctx);
+    cleanup(1);
     return 1;
   }
 
