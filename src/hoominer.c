@@ -263,6 +263,11 @@ void cleanup(int sig)
       free(ctx->ms->global_target);
       ctx->ms->global_target = NULL;
     }
+    if (ctx->ms->extranonce)
+    {
+      free(ctx->ms->extranonce);
+      ctx->ms->extranonce = NULL;
+    }
     pthread_mutex_destroy(&ctx->ms->job_mutex);
     pthread_mutex_destroy(&ctx->ms->target_mutex);
     free(ctx->ms);
@@ -315,6 +320,28 @@ void cleanup(int sig)
   {
     close(ctx->sockfd);
     ctx->sockfd = -1;
+  }
+
+  // Free config and its members
+  if (ctx->config)
+  {
+    // Free stratum pool IPs
+    for (int i = 0; i < ctx->config->stratum_urls_num; i++)
+    {
+      if (ctx->config->stratum_urls[i].pool_ip)
+      {
+        free(ctx->config->stratum_urls[i].pool_ip);
+        ctx->config->stratum_urls[i].pool_ip = NULL;
+      }
+    }
+    // Free build options if allocated
+    if (ctx->config->build_options)
+    {
+      free(ctx->config->build_options);
+      ctx->config->build_options = NULL;
+    }
+    free(ctx->config);
+    ctx->config = NULL;
   }
 
   // Free context

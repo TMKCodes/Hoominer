@@ -575,6 +575,7 @@ void cleanup_cuda_resources(CudaResources *resource)
     cudaFree(resource->matrix);
     cudaFree(resource->target);
     cudaFree(resource->result);
+    cudaFree(resource->nonces_processed);
     if (resource->module && p_cuModuleUnload)
     {
         p_cuModuleUnload(resource->module);

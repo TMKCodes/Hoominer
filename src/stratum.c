@@ -266,7 +266,18 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
 
       if (json_object_is_type(extranonce_param, json_type_string))
       {
-        ms->extranonce = json_object_get_string(extranonce_param);
+        const char *new_extranonce = json_object_get_string(extranonce_param);
+        // Free old extranonce if any
+        if (ms->extranonce)
+        {
+          free(ms->extranonce);
+          ms->extranonce = NULL;
+        }
+        // Duplicate the string since JSON object will be freed
+        if (new_extranonce)
+        {
+          ms->extranonce = strdup(new_extranonce);
+        }
       }
     }
     else if (!strcmp(method_str, "mining.notify"))
@@ -767,6 +778,9 @@ int connect_to_stratum_server(const char *hostname, int port)
 
 void free_stratum_context(StratumContext *ctx)
 {
+  if (!ctx)
+    return;
+
   if (ctx->ssl)
   {
     SSL_shutdown(ctx->ssl);
@@ -783,5 +797,6 @@ void free_stratum_context(StratumContext *ctx)
     socket_close_portable(ctx->sockfd);
     ctx->sockfd = -1;
   }
+  // Note: ctx->config is freed by cleanup() in hoominer.c
   free(ctx);
 }

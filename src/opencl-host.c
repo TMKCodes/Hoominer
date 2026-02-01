@@ -465,7 +465,7 @@ cl_int compile_opencl_kernel_from_xxd_header(StratumContext *ctx, OpenCLResource
   }
   else
   {
-    strncat(build_options, sizeof(build_options), "");
+    build_options[0] = '\0'; // Initialize empty string
   }
   err = clBuildProgram(resource->program, 1, &resource->device, build_options, NULL, NULL);
   if (err != CL_SUCCESS)
