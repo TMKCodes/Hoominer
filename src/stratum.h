@@ -7,6 +7,7 @@
 #include <time.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <malloc.h>
 #ifndef _WIN32
 #include <pthread.h>
 #include <unistd.h>

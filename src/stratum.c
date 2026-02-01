@@ -409,6 +409,7 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
           ms->job_queue.tail = next_tail;
           ms->new_job_available = 1;
           pthread_cond_broadcast(&ms->job_queue.queue_cond);
+          malloc_trim(0);
         }
         else
         {
