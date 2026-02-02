@@ -377,7 +377,7 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
 
       pthread_mutex_lock(&ms->job_queue.queue_mutex);
       while (ms->job_queue.head != ms->job_queue.tail &&
-             ms->job_queue.jobs[ms->job_queue.head].timestamp < (uint64_t)time(NULL) - JOB_MAX_AGE)
+             ms->job_queue.jobs[ms->job_queue.head].timestamp < (uint64_t)time(NULL) * 1000 - JOB_MAX_AGE * 1000ULL)
       {
         free(ms->job_queue.jobs[ms->job_queue.head].job_id);
         ms->job_queue.jobs[ms->job_queue.head].job_id = NULL;
