@@ -3,6 +3,176 @@
 #include "opencl-host.h"
 #include "platform_compat.h"
 
+#ifndef _WIN32
+#include <malloc.h>
+
+static long get_rss_bytes(void)
+{
+  FILE *fp = fopen("/proc/self/status", "r");
+  if (!fp)
+    return 0;
+  char line[256];
+  long mem_kb = 0;
+  while (fgets(line, sizeof(line), fp))
+  {
+    if (sscanf(line, "VmRSS: %ld kB", &mem_kb) == 1)
+      break;
+  }
+  fclose(fp);
+  return mem_kb * 1024L;
+}
+
+static long get_smaps_rollup_kb(const char *key)
+{
+  FILE *fp = fopen("/proc/self/smaps_rollup", "r");
+  if (!fp)
+    return -1;
+  char line[256];
+  long value_kb = -1;
+  while (fgets(line, sizeof(line), fp))
+  {
+    if (sscanf(line, "%255[^:]: %ld kB", line, &value_kb) == 2)
+    {
+      if (strcmp(line, key) == 0)
+      {
+        fclose(fp);
+        return value_kb;
+      }
+    }
+  }
+  fclose(fp);
+  return -1;
+}
+
+static long get_smaps_kb_fallback(const char *key)
+{
+  FILE *fp = fopen("/proc/self/smaps", "r");
+  if (!fp)
+    return -1;
+  char line[256];
+  long total_kb = 0;
+  char name[256];
+  long value_kb = 0;
+  while (fgets(line, sizeof(line), fp))
+  {
+    if (sscanf(line, "%255[^:]: %ld kB", name, &value_kb) == 2)
+    {
+      if (strcmp(name, key) == 0)
+        total_kb += value_kb;
+    }
+  }
+  fclose(fp);
+  return total_kb > 0 ? total_kb : -1;
+}
+#endif
+
+static void log_opencl_cache_telemetry(OpenCLResources *resource)
+{
+  static unsigned long long call_count = 0;
+  static time_t last_log = 0;
+  static time_t last_malloc_info_dump = 0;
+  call_count++;
+
+  time_t now = time(NULL);
+  if (last_log != 0 && (now - last_log) < 10)
+    return;
+  if (call_count % 10 != 0)
+    return;
+
+  last_log = now;
+
+  cl_uint queue_ref = 0;
+  cl_uint context_ref = 0;
+  cl_uint mem_ref_prev = 0, mem_ref_ts = 0, mem_ref_mat = 0, mem_ref_tgt = 0, mem_ref_res = 0;
+
+  clGetCommandQueueInfo(resource->queue, CL_QUEUE_REFERENCE_COUNT, sizeof(queue_ref), &queue_ref, NULL);
+  clGetContextInfo(resource->context, CL_CONTEXT_REFERENCE_COUNT, sizeof(context_ref), &context_ref, NULL);
+  clGetMemObjectInfo(resource->previous_header_buf, CL_MEM_REFERENCE_COUNT, sizeof(mem_ref_prev), &mem_ref_prev, NULL);
+  clGetMemObjectInfo(resource->timestamp_buf, CL_MEM_REFERENCE_COUNT, sizeof(mem_ref_ts), &mem_ref_ts, NULL);
+  clGetMemObjectInfo(resource->matrix_buf, CL_MEM_REFERENCE_COUNT, sizeof(mem_ref_mat), &mem_ref_mat, NULL);
+  clGetMemObjectInfo(resource->target_buf, CL_MEM_REFERENCE_COUNT, sizeof(mem_ref_tgt), &mem_ref_tgt, NULL);
+  clGetMemObjectInfo(resource->result_buf, CL_MEM_REFERENCE_COUNT, sizeof(mem_ref_res), &mem_ref_res, NULL);
+
+#ifndef _WIN32
+  long rss_bytes = get_rss_bytes();
+  struct mallinfo2 mi = mallinfo2();
+  long anon_kb = get_smaps_rollup_kb("Anonymous");
+  long priv_dirty_kb = get_smaps_rollup_kb("Private_Dirty");
+  long rss_kb = get_smaps_rollup_kb("Rss");
+  if (anon_kb < 0)
+    anon_kb = get_smaps_kb_fallback("Anonymous");
+  if (priv_dirty_kb < 0)
+    priv_dirty_kb = get_smaps_kb_fallback("Private_Dirty");
+  if (rss_kb < 0)
+    rss_kb = get_smaps_kb_fallback("Rss");
+  fprintf(stderr,
+          "[OpenCL telemetry] device=%s calls=%llu RSS=%ld MB heap(uordblks)=%zu MB heap(arena)=%zu MB heap(hblkhd)=%zu MB rss=%ld MB anon=%ld MB pdirty=%ld MB qref=%u cref=%u memref(prev=%u ts=%u mat=%u tgt=%u res=%u)\n",
+          resource->device_name,
+          call_count,
+          rss_bytes / 1024 / 1024,
+          (size_t)mi.uordblks / 1024 / 1024,
+          (size_t)mi.arena / 1024 / 1024,
+          (size_t)mi.hblkhd / 1024 / 1024,
+          (rss_kb > 0 ? rss_kb / 1024 : -1),
+          (anon_kb > 0 ? anon_kb / 1024 : -1),
+          (priv_dirty_kb > 0 ? priv_dirty_kb / 1024 : -1),
+          queue_ref,
+          context_ref,
+          mem_ref_prev,
+          mem_ref_ts,
+          mem_ref_mat,
+          mem_ref_tgt,
+          mem_ref_res);
+
+  if ((time(NULL) - last_malloc_info_dump) >= 30)
+  {
+    FILE *mf = fopen("./hoominer_malloc.xml", "w");
+    if (mf)
+    {
+      malloc_info(0, mf);
+      fclose(mf);
+      last_malloc_info_dump = time(NULL);
+    }
+  }
+#else
+  fprintf(stderr,
+          "[OpenCL telemetry] device=%s calls=%llu qref=%u cref=%u memref(prev=%u ts=%u mat=%u tgt=%u res=%u)\n",
+          resource->device_name,
+          call_count,
+          queue_ref,
+          context_ref,
+          mem_ref_prev,
+          mem_ref_ts,
+          mem_ref_mat,
+          mem_ref_tgt,
+          mem_ref_res);
+#endif
+}
+
+static void maybe_unload_opencl_compiler(OpenCLResources *resource)
+{
+  static unsigned long long unload_counter = 0;
+  const char *cache_disable = getenv("CL_CACHE_DISABLE");
+  const char *pocl_cache_disable = getenv("POCL_CACHE_DISABLE");
+  const char *amd_cache_disable = getenv("AMD_OCL_CACHE_DISABLE");
+  if (!cache_disable && !pocl_cache_disable && !amd_cache_disable)
+    return;
+
+  if (++unload_counter % 10 != 0)
+    return;
+
+#ifdef CL_VERSION_1_2
+  if (resource && resource->platform)
+  {
+    clUnloadPlatformCompiler(resource->platform);
+  }
+  else
+#endif
+  {
+    clUnloadCompiler();
+  }
+}
+
 cl_int calculate_work_sizes(StratumContext *ctx, OpenCLResources *resource)
 {
   // Query work group sizes
@@ -266,6 +436,7 @@ OpenCLResources *initalize_all_opencl_gpus(StratumContext *ctx, cl_uint *device_
     }
 
     // Populate the res array only for valid devices
+    res[devices_found].platform = platform;
     res[devices_found].device = devices[idx];
     strncpy(res[devices_found].device_name, device_name, sizeof(res[devices_found].device_name) - 1);
     res[devices_found].pci_bus_id = pci_bus_id;
@@ -285,21 +456,8 @@ OpenCLResources *initalize_all_opencl_gpus(StratumContext *ctx, cl_uint *device_
       goto cleanup;
     }
 
-    // Check if out-of-order queue is supported
-    cl_command_queue_properties device_queue_props = 0;
-    err = clGetDeviceInfo(res[devices_found].device, CL_DEVICE_QUEUE_PROPERTIES, sizeof(cl_command_queue_properties), &device_queue_props, NULL);
-    if (err != CL_SUCCESS)
-    {
-      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) queue properties query failed: %d\n", idx, res[devices_found].pci_bus_id, err);
-      goto cleanup;
-    }
-
-    cl_queue_properties properties[] = {
-        CL_QUEUE_PROPERTIES,
-        (device_queue_props & CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE) ? CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE : 0,
-        0};
-
-    res[devices_found].queue = clCreateCommandQueueWithProperties(res[devices_found].context, res[devices_found].device, properties, &err);
+    // Use in-order command queue to minimize driver-side event caching
+    res[devices_found].queue = clCreateCommandQueueWithProperties(res[devices_found].context, res[devices_found].device, NULL, &err);
     if (err != CL_SUCCESS)
     {
       fprintf(stderr, "Device %u (PCI-BUS-ID: %u) creation failed: %d\n", idx, res[devices_found].pci_bus_id, err);
@@ -522,6 +680,58 @@ cl_int compile_opencl_kernel_from_xxd_header(StratumContext *ctx, OpenCLResource
   return CL_SUCCESS;
 }
 
+cl_int opencl_reinit_device(StratumContext *ctx, OpenCLResources *resource, const unsigned char *kernel, unsigned int kernel_length, const char *kernel_name, const char **required_extensions, size_t num_required_extensions)
+{
+  if (!resource)
+    return CL_INVALID_VALUE;
+
+  cleanup_opencl_resources(resource);
+
+  cl_int err = CL_SUCCESS;
+  resource->context = clCreateContext(NULL, 1, &resource->device, NULL, NULL, &err);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "OpenCL reset: context create failed for %s: %d\n", resource->device_name, err);
+    return err;
+  }
+
+  resource->queue = clCreateCommandQueueWithProperties(resource->context, resource->device, NULL, &err);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "OpenCL reset: queue create failed for %s: %d\n", resource->device_name, err);
+    goto fail;
+  }
+
+  resource->previous_header_buf = clCreateBuffer(resource->context, CL_MEM_READ_ONLY, DOMAIN_HASH_SIZE, NULL, &err);
+  if (err != CL_SUCCESS)
+    goto fail;
+  resource->timestamp_buf = clCreateBuffer(resource->context, CL_MEM_READ_ONLY, sizeof(cl_long), NULL, &err);
+  if (err != CL_SUCCESS)
+    goto fail;
+  resource->matrix_buf = clCreateBuffer(resource->context, CL_MEM_READ_ONLY, 64 * 64 * sizeof(double), NULL, &err);
+  if (err != CL_SUCCESS)
+    goto fail;
+  resource->target_buf = clCreateBuffer(resource->context, CL_MEM_READ_ONLY, DOMAIN_HASH_SIZE, NULL, &err);
+  if (err != CL_SUCCESS)
+    goto fail;
+  resource->result_buf = clCreateBuffer(resource->context, CL_MEM_READ_WRITE, sizeof(OpenCLResult), NULL, &err);
+  if (err != CL_SUCCESS)
+    goto fail;
+
+  err = compile_opencl_kernel_from_xxd_header(ctx, resource, kernel, kernel_length, kernel_name, required_extensions, num_required_extensions);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "OpenCL reset: kernel compile failed for %s: %d\n", resource->device_name, err);
+    goto fail;
+  }
+
+  return CL_SUCCESS;
+
+fail:
+  cleanup_opencl_resources(resource);
+  return err;
+}
+
 cl_int load_opencl_kernel_binary(StratumContext *ctx, OpenCLResources *resource, const char *binary_filename, const char *kernel_name)
 {
   cl_int err;
@@ -587,9 +797,6 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
                                  cl_ulong start_nonce, OpenCLResult *result)
 {
   cl_int err = CL_SUCCESS;
-  cl_event write_events[5] = {NULL, NULL, NULL, NULL, NULL};
-  cl_event kernel_event = NULL;
-  cl_event read_result_event = NULL;
 
   // Validate inputs
   if (!resource || !previous_header || !target || !matrix || !result)
@@ -603,12 +810,18 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
   const size_t MAT_DIM = 64;
   const size_t MAT_COUNT = MAT_DIM * MAT_DIM;
   const size_t MAT_BYTES = MAT_COUNT * sizeof(double);
-  double *flat_matrix = (double *)malloc(MAT_BYTES);
-  if (!flat_matrix)
+  if (!resource->flat_matrix_host || resource->flat_matrix_bytes < MAT_BYTES)
   {
-    fprintf(stderr, "Failed to allocate host buffer for flattened matrix\n");
-    return CL_OUT_OF_HOST_MEMORY;
+    double *new_buf = (double *)realloc(resource->flat_matrix_host, MAT_BYTES);
+    if (!new_buf)
+    {
+      fprintf(stderr, "Failed to allocate host buffer for flattened matrix\n");
+      return CL_OUT_OF_HOST_MEMORY;
+    }
+    resource->flat_matrix_host = new_buf;
+    resource->flat_matrix_bytes = MAT_BYTES;
   }
+  double *flat_matrix = resource->flat_matrix_host;
   for (size_t r = 0; r < MAT_DIM; ++r)
   {
     for (size_t c = 0; c < MAT_DIM; ++c)
@@ -619,17 +832,17 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
 
   // Write to persistent buffers asynchronously
   err = clEnqueueWriteBuffer(resource->queue, resource->previous_header_buf,
-                             CL_FALSE, 0, DOMAIN_HASH_SIZE, previous_header,
-                             0, NULL, &write_events[0]);
+                             CL_TRUE, 0, DOMAIN_HASH_SIZE, previous_header,
+                             0, NULL, NULL);
   err |= clEnqueueWriteBuffer(resource->queue, resource->timestamp_buf,
-                              CL_FALSE, 0, sizeof(cl_long), &timestamp,
-                              0, NULL, &write_events[1]);
+                              CL_TRUE, 0, sizeof(cl_long), &timestamp,
+                              0, NULL, NULL);
   err |= clEnqueueWriteBuffer(resource->queue, resource->matrix_buf,
-                              CL_FALSE, 0, MAT_BYTES, flat_matrix,
-                              0, NULL, &write_events[2]);
+                              CL_TRUE, 0, MAT_BYTES, flat_matrix,
+                              0, NULL, NULL);
   err |= clEnqueueWriteBuffer(resource->queue, resource->target_buf,
-                              CL_FALSE, 0, DOMAIN_HASH_SIZE, target,
-                              0, NULL, &write_events[3]);
+                              CL_TRUE, 0, DOMAIN_HASH_SIZE, target,
+                              0, NULL, NULL);
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Buffer write failed for %s: %d\n", resource->device_name, err);
@@ -638,9 +851,9 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
 
   // Initialize result buffer
   OpenCLResult init_result = {0};
-  err = clEnqueueWriteBuffer(resource->queue, resource->result_buf, CL_FALSE,
+  err = clEnqueueWriteBuffer(resource->queue, resource->result_buf, CL_TRUE,
                              0, sizeof(OpenCLResult), &init_result,
-                             0, NULL, &write_events[4]);
+                             0, NULL, NULL);
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Result buffer write failed for %s: %d\n", resource->device_name, err);
@@ -695,57 +908,35 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
   err = clEnqueueNDRangeKernel(resource->queue, resource->kernel, 1, NULL,
                                (const size_t *)&global_work_size,
                                (const size_t *)&local_work_size,
-                               5, write_events, &kernel_event);
+                               0, NULL, NULL);
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Kernel execution failed for %s: %d\n", resource->device_name, err);
     goto cleanup;
   }
 
-  // Read result asynchronously (wait on kernel_event)
-  err = clEnqueueReadBuffer(resource->queue, resource->result_buf, CL_FALSE,
-                            0, sizeof(OpenCLResult), result, 1,
-                            &kernel_event, &read_result_event);
+  // Ensure kernel completion before reading
+  err = clFinish(resource->queue);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Queue finish failed for %s: %d\n", resource->device_name, err);
+    goto cleanup;
+  }
+
+  // Read result
+  err = clEnqueueReadBuffer(resource->queue, resource->result_buf, CL_TRUE,
+                            0, sizeof(OpenCLResult), result, 0,
+                            NULL, NULL);
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Read failed for %s: %d\n", resource->device_name, err);
     goto cleanup;
   }
 
-  // Wait for completion
-  {
-    cl_event read_events[1] = {read_result_event};
-    err = clWaitForEvents(1, read_events);
-    if (err != CL_SUCCESS)
-    {
-      fprintf(stderr, "Event wait failed for %s: %d\n", resource->device_name, err);
-    }
-  }
+  maybe_unload_opencl_compiler(resource);
+  log_opencl_cache_telemetry(resource);
 
 cleanup:
-  // Free host buffer
-  if (flat_matrix)
-    free(flat_matrix);
-
-  // Clean up events
-  for (int i = 0; i < 5; i++)
-  {
-    if (write_events[i])
-    {
-      clReleaseEvent(write_events[i]);
-      write_events[i] = NULL;
-    }
-  }
-  if (kernel_event)
-  {
-    clReleaseEvent(kernel_event);
-    kernel_event = NULL;
-  }
-  if (read_result_event)
-  {
-    clReleaseEvent(read_result_event);
-    read_result_event = NULL;
-  }
 
   return err;
 }
@@ -755,15 +946,28 @@ void cleanup_opencl_resources(OpenCLResources *resource)
   if (!resource)
     return;
 
-  clReleaseMemObject(resource->previous_header_buf);
-  clReleaseMemObject(resource->timestamp_buf);
-  clReleaseMemObject(resource->matrix_buf);
-  clReleaseMemObject(resource->target_buf);
-  clReleaseMemObject(resource->result_buf);
-  clReleaseKernel(resource->kernel);
-  clReleaseProgram(resource->program);
-  clReleaseCommandQueue(resource->queue);
-  clReleaseContext(resource->context);
+  if (resource->previous_header_buf)
+    clReleaseMemObject(resource->previous_header_buf);
+  if (resource->timestamp_buf)
+    clReleaseMemObject(resource->timestamp_buf);
+  if (resource->matrix_buf)
+    clReleaseMemObject(resource->matrix_buf);
+  if (resource->target_buf)
+    clReleaseMemObject(resource->target_buf);
+  if (resource->result_buf)
+    clReleaseMemObject(resource->result_buf);
+  if (resource->kernel)
+    clReleaseKernel(resource->kernel);
+  if (resource->program)
+    clReleaseProgram(resource->program);
+  if (resource->queue)
+    clReleaseCommandQueue(resource->queue);
+  if (resource->context)
+    clReleaseContext(resource->context);
+  if (resource->flat_matrix_host)
+    free(resource->flat_matrix_host);
+  resource->flat_matrix_host = NULL;
+  resource->flat_matrix_bytes = 0;
 }
 
 void cleanup_all_opencl_gpus(OpenCLResources *resources, cl_uint device_count)

@@ -17,6 +17,28 @@
 #include "api.h"
 #include "platform_compat.h"
 
+static void apply_opencl_cache_env(const struct HoominerConfig *config)
+{
+  if (!config || !config->disable_opencl_cache)
+    return;
+
+#ifdef _WIN32
+  _putenv_s("CL_CACHE_DISABLE", "1");
+  _putenv_s("POCL_CACHE_DISABLE", "1");
+  _putenv_s("POCL_CACHE", "0");
+  _putenv_s("AMD_OCL_CACHE_DISABLE", "1");
+#else
+  setenv("CL_CACHE_DISABLE", "1", 1);
+  setenv("CL_CACHE_DIR", "/tmp/hoominer_cl_cache", 1);
+  setenv("POCL_CACHE_DISABLE", "1", 1);
+  setenv("POCL_CACHE", "0", 1);
+  setenv("POCL_CACHE_DIR", "/tmp/hoominer_pocl_cache", 1);
+  setenv("AMD_OCL_CACHE_DISABLE", "1", 1);
+  setenv("OCL_CACHE_DISABLE", "1", 1);
+#endif
+  printf("OpenCL cache disabled (best-effort via environment variables)\n");
+}
+
 #ifdef _WIN32
 #include <windows.h>
 int get_cpu_threads()
@@ -586,6 +608,7 @@ int main(int argc, char **argv)
   printf("Executable directory: %s\n", exe_dir);
 
   // Initialize mining resources
+  apply_opencl_cache_env(config);
   if (initialize_mining(ctx, config->username, config->algorithm, exe_dir) != 0)
   {
     printf("Failed to initialize mining resources.\n");

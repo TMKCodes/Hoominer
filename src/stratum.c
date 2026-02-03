@@ -1,6 +1,24 @@
 #include "stratum.h"
 #include "platform_compat.h"
 
+long get_memory_usage()
+{
+  FILE *fp = fopen("/proc/self/status", "r");
+  if (!fp)
+    return 0;
+  char line[256];
+  long mem = 0;
+  while (fgets(line, sizeof(line), fp))
+  {
+    if (sscanf(line, "VmRSS: %ld kB", &mem) == 1)
+    {
+      break;
+    }
+  }
+  fclose(fp);
+  return mem * 1024; // bytes
+}
+
 StratumContext *init_stratum_context()
 {
   StratumContext *ctx = malloc(sizeof(StratumContext));
@@ -282,145 +300,173 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
     }
     else if (!strcmp(method_str, "mining.notify"))
     {
-      // {
-      //   "id":1,
-      //   "jsonrpc":"2.0",
-      //   "method":"mining.notify",
-      //   "params":[
-      //     "1",
-      //     [
-      //       9680649812803242576,
-      //       5479210451378731168,
-      //       9916984324433298320,
-      //       15931787360748167486
-      //     ],
-      //     1754036484859
-      //   ]
-      // }
-
-      json_object *params;
-      if (!json_object_object_get_ex(message, "params", &params) || !json_object_is_type(params, json_type_array))
+      if (!strcmp(ctx->config->algorithm, "bitcoin"))
       {
-        printf("mining.notify: params missing or not an array\n");
-        return;
+        // {
+        // "id": null
+        // "method": "mining.notify"
+        // "params": [
+        //        jobid,
+        //        prevhashreversed,
+        //        coinbase0hex,
+        //        coinbase1hex,
+        //        merklebranch[
+        //             txhex,
+        //             txhex,
+        //        ],
+        //        versionHex,
+        //        bits,
+        //        curtimehex,
+        //        true
+        //    ]
+        // }
       }
-
-      json_object *job_id = json_object_array_get_idx(params, 0);
-      json_object *header_item = json_object_array_get_idx(params, 1);
-      json_object *time_param = json_object_array_get_idx(params, 2);
-
-      if (!json_object_is_type(job_id, json_type_string) || !header_item || !time_param ||
-          (!json_object_is_type(time_param, json_type_int) && !json_object_is_type(time_param, json_type_double)))
+      else if (!strcmp(ctx->config->algorithm, "hoohash"))
       {
-        printf("mining.notify: Invalid parameters\n");
-        return;
-      }
-
-      uint8_t header[DOMAIN_HASH_SIZE] = {0};
-      uint64_t timestamp_int;
-
-      if (json_object_is_type(time_param, json_type_int))
-        timestamp_int = json_object_get_uint64(time_param);
-      else
-        timestamp_int = (uint64_t)json_object_get_double(time_param);
-
-      if (json_object_is_type(header_item, json_type_array))
-      {
-        if (json_object_array_length(header_item) != 4)
+        // {
+        //   "id":1,
+        //   "jsonrpc":"2.0",
+        //   "method":"mining.notify",
+        //   "params":[
+        //     "1",
+        //     [
+        //       9680649812803242576,
+        //       5479210451378731168,
+        //       9916984324433298320,
+        //       15931787360748167486
+        //     ],
+        //     1754036484859
+        //   ]
+        // }
+        json_object *params;
+        if (!json_object_object_get_ex(message, "params", &params) || !json_object_is_type(params, json_type_array))
         {
-          printf("Invalid header array size: %zu\n", json_object_array_length(header_item));
+          printf("mining.notify: params missing or not an array\n");
           return;
         }
-        uint64_t hash_elements[4] = {0};
-        for (int i = 0; i < 4; i++)
+
+        json_object *job_id = json_object_array_get_idx(params, 0);
+        json_object *header_item = json_object_array_get_idx(params, 1);
+        json_object *time_param = json_object_array_get_idx(params, 2);
+
+        if (!json_object_is_type(job_id, json_type_string) || !header_item || !time_param ||
+            (!json_object_is_type(time_param, json_type_int) && !json_object_is_type(time_param, json_type_double)))
         {
-          json_object *item = json_object_array_get_idx(header_item, i);
-          if (json_object_is_type(item, json_type_int))
+          printf("mining.notify: Invalid parameters\n");
+          return;
+        }
+
+        uint8_t header[DOMAIN_HASH_SIZE] = {0};
+        uint64_t timestamp_int;
+
+        if (json_object_is_type(time_param, json_type_int))
+          timestamp_int = json_object_get_uint64(time_param);
+        else
+          timestamp_int = (uint64_t)json_object_get_double(time_param);
+
+        if (json_object_is_type(header_item, json_type_array))
+        {
+          if (json_object_array_length(header_item) != 4)
           {
-            hash_elements[i] = json_object_get_uint64(item);
+            printf("Invalid header array size: %zu\n", json_object_array_length(header_item));
+            return;
           }
-          else if (json_object_is_type(item, json_type_string))
+          uint64_t hash_elements[4] = {0};
+          for (int i = 0; i < 4; i++)
           {
-            if (sscanf(json_object_get_string(item), "%" SCNx64, &hash_elements[i]) != 1)
+            json_object *item = json_object_array_get_idx(header_item, i);
+            if (json_object_is_type(item, json_type_int))
             {
+              hash_elements[i] = json_object_get_uint64(item);
+            }
+            else if (json_object_is_type(item, json_type_string))
+            {
+              if (sscanf(json_object_get_string(item), "%" SCNx64, &hash_elements[i]) != 1)
+              {
+                return;
+              }
+            }
+            else
+            {
+              printf("Invalid header element at index %d\n", i);
               return;
             }
           }
-          else
+          smallJobHeader(hash_elements, header);
+        }
+        else if (json_object_is_type(header_item, json_type_string))
+        {
+          const char *hex_str = json_object_get_string(header_item);
+          if (strlen(hex_str) != 64)
           {
-            printf("Invalid header element at index %d\n", i);
+            printf("Invalid hex string length: %zu\n", strlen(hex_str));
             return;
           }
-        }
-        smallJobHeader(hash_elements, header);
-      }
-      else if (json_object_is_type(header_item, json_type_string))
-      {
-        const char *hex_str = json_object_get_string(header_item);
-        if (strlen(hex_str) != 64)
-        {
-          printf("Invalid hex string length: %zu\n", strlen(hex_str));
-          return;
-        }
-        if (hex_to_bytes(hex_str, header, DOMAIN_HASH_SIZE) != 0)
-        {
-          printf("Failed to parse hex header: %s\n", hex_str);
-          return;
-        }
-        print_hex("Parsed Hex Header", header, DOMAIN_HASH_SIZE);
-      }
-      else
-      {
-        printf("Invalid header format in mining.notify\n");
-        return;
-      }
-
-      pthread_mutex_lock(&ms->job_queue.queue_mutex);
-      while (ms->job_queue.head != ms->job_queue.tail &&
-             ms->job_queue.jobs[ms->job_queue.head].timestamp < (uint64_t)time(NULL) * 1000 - JOB_MAX_AGE * 1000ULL)
-      {
-        free(ms->job_queue.jobs[ms->job_queue.head].job_id);
-        ms->job_queue.jobs[ms->job_queue.head].job_id = NULL;
-        ms->job_queue.head = (ms->job_queue.head + 1) % JOB_QUEUE_SIZE;
-      }
-
-      int next_tail = (ms->job_queue.tail + 1) % JOB_QUEUE_SIZE;
-      if (next_tail == ms->job_queue.head)
-      {
-        free(ms->job_queue.jobs[ms->job_queue.head].job_id);
-        ms->job_queue.jobs[ms->job_queue.head].job_id = NULL;
-        ms->job_queue.head = (ms->job_queue.head + 1) % JOB_QUEUE_SIZE;
-      }
-
-      QueuedJob *new_job = &ms->job_queue.jobs[ms->job_queue.tail];
-      const char *jid = json_object_get_string(job_id);
-      if (jid)
-      {
-        new_job->job_id = strdup(jid);
-        if (new_job->job_id)
-        {
-          if (ctx->config->debug == 1)
-            printf("Received new job %s\n", new_job->job_id);
-          memcpy(new_job->header, header, DOMAIN_HASH_SIZE);
-          new_job->timestamp = timestamp_int;
-          new_job->running = 1;
-          new_job->completed = 0;
-          generateHoohashMatrix(header, new_job->matrix);
-          ms->job_queue.tail = next_tail;
-          ms->new_job_available = 1;
-          pthread_cond_broadcast(&ms->job_queue.queue_cond);
-          malloc_trim(0);
+          if (hex_to_bytes(hex_str, header, DOMAIN_HASH_SIZE) != 0)
+          {
+            printf("Failed to parse hex header: %s\n", hex_str);
+            return;
+          }
+          print_hex("Parsed Hex Header", header, DOMAIN_HASH_SIZE);
         }
         else
         {
-          printf("Failed to allocate memory for job ID\n");
+          printf("Invalid header format in mining.notify\n");
+          return;
         }
+
+        pthread_mutex_lock(&ms->job_queue.queue_mutex);
+        while (ms->job_queue.head != ms->job_queue.tail &&
+               ms->job_queue.jobs[ms->job_queue.head].timestamp < (uint64_t)time(NULL) * 1000 - JOB_MAX_AGE * 1000ULL)
+        {
+          free(ms->job_queue.jobs[ms->job_queue.head].job_id);
+          ms->job_queue.jobs[ms->job_queue.head].job_id = NULL;
+          ms->job_queue.head = (ms->job_queue.head + 1) % JOB_QUEUE_SIZE;
+        }
+
+        int next_tail = (ms->job_queue.tail + 1) % JOB_QUEUE_SIZE;
+        if (next_tail == ms->job_queue.head)
+        {
+          free(ms->job_queue.jobs[ms->job_queue.head].job_id);
+          ms->job_queue.jobs[ms->job_queue.head].job_id = NULL;
+          ms->job_queue.head = (ms->job_queue.head + 1) % JOB_QUEUE_SIZE;
+        }
+
+        QueuedJob *new_job = &ms->job_queue.jobs[ms->job_queue.tail];
+        const char *jid = json_object_get_string(job_id);
+        if (jid)
+        {
+          if (new_job->job_id)
+          {
+            free(new_job->job_id);
+            new_job->job_id = NULL;
+          }
+          new_job->job_id = strdup(jid);
+          if (new_job->job_id)
+          {
+            if (ctx->config->debug == 1)
+              printf("Received new job %s\n", new_job->job_id);
+            memcpy(new_job->header, header, DOMAIN_HASH_SIZE);
+            new_job->timestamp = timestamp_int;
+            new_job->running = 1;
+            new_job->completed = 0;
+            generateHoohashMatrix(header, new_job->matrix);
+            ms->job_queue.tail = next_tail;
+            ms->new_job_available = 1;
+            pthread_cond_broadcast(&ms->job_queue.queue_cond);
+            malloc_trim(0);
+          }
+          else
+          {
+            printf("Failed to allocate memory for job ID\n");
+          }
+        }
+        else
+        {
+          printf("Job ID string is NULL\n");
+        }
+        pthread_mutex_unlock(&ms->job_queue.queue_mutex);
       }
-      else
-      {
-        printf("Job ID string is NULL\n");
-      }
-      pthread_mutex_unlock(&ms->job_queue.queue_mutex);
     }
   }
   else
@@ -437,7 +483,7 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
         if (ctx->config->debug == 1)
         {
           printf("device index %d\n", device_index);
-          printf("deivces %d\n", devices);
+          printf("devices %d\n", devices);
         }
         if (devices > device_index && device_index >= 0)
         {
@@ -497,6 +543,14 @@ void *stratum_receive_thread(void *arg)
   char buffer[BUFFER_SIZE];
   char json_buffer[BUFFER_SIZE * 2] = {0};
   size_t json_len = 0;
+  static int message_count = 0;
+  struct json_tokener *tok = json_tokener_new();
+  if (!tok)
+  {
+    fprintf(stderr, "stratum_receive_thread: Failed to allocate JSON tokener\n");
+    ctx->running = 0;
+    return NULL;
+  }
 
   while (ctx->running)
   {
@@ -542,14 +596,20 @@ void *stratum_receive_thread(void *arg)
         while ((end = strchr(start, '\n')) && end < partial_end)
         {
           *end = '\0';
-          json_object *msg = json_tokener_parse(start);
+          json_object *msg = json_tokener_parse_ex(tok, start, -1);
           if (msg)
           {
             process_stratum_message(msg, ctx, ctx->ms);
             json_object_put(msg);
+            message_count++;
+            if (message_count % 10000 == 0)
+            {
+              printf("Processed %d messages, Memory usage: %ld MB\n", message_count, get_memory_usage() / 1024 / 1024);
+            }
           }
           else
             printf("stratum_receive_thread: Failed to parse JSON: %s\n", start);
+          json_tokener_reset(tok);
           json_len -= (end - start + 1);
           start = end + 1;
         }
@@ -565,14 +625,20 @@ void *stratum_receive_thread(void *arg)
       while ((end = strchr(start, '\n')))
       {
         *end = '\0';
-        json_object *msg = json_tokener_parse(start);
+        json_object *msg = json_tokener_parse_ex(tok, start, -1);
         if (msg)
         {
           process_stratum_message(msg, ctx, ctx->ms);
           json_object_put(msg);
+          message_count++;
+          if (message_count % 10000 == 0)
+          {
+            printf("Processed %d messages, Memory usage: %ld MB\n", message_count, get_memory_usage() / 1024 / 1024);
+          }
         }
         else
           printf("stratum_receive_thread: Failed to parse JSON: %s\n", start);
+        json_tokener_reset(tok);
         json_len -= (end - start + 1);
         start = end + 1;
       }
@@ -582,6 +648,8 @@ void *stratum_receive_thread(void *arg)
       }
     }
   }
+
+  json_tokener_free(tok);
 
   // Cleanup SSL if enabled
   if (ctx->ssl)

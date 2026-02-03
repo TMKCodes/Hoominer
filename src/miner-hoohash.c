@@ -1,7 +1,11 @@
 #include "miner-hoohash.h"
 #include <time.h>
 #include <inttypes.h>
+#ifndef _WIN32
+#include <malloc.h>
+#endif
 #include "platform_compat.h"
+#include "hoohash_cl.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -123,6 +127,20 @@ void print_hex(const char *label, const uint8_t *data, size_t len)
   printf("\n");
 }
 
+static int encode_hex_into(const uint8_t *bytes, size_t length, char *out, size_t out_size)
+{
+  if (!bytes || !out || out_size < (length * 2 + 1))
+  {
+    return -1;
+  }
+  for (size_t i = 0; i < length; i++)
+  {
+    snprintf(out + i * 2, 3, "%02x", bytes[i]);
+  }
+  out[length * 2] = '\0';
+  return 0;
+}
+
 int submit_mining_solution(int sockfd, const char *worker, const char *job_id, uint64_t nonce, uint8_t *hash, MiningState *ms, StratumContext *ctx, int reporting_index)
 {
   pthread_mutex_lock(&ms->job_queue.queue_mutex);
@@ -141,41 +159,34 @@ int submit_mining_solution(int sockfd, const char *worker, const char *job_id, u
   pthread_cond_broadcast(&ms->job_queue.queue_cond);
   pthread_mutex_unlock(&ms->job_queue.queue_mutex);
 
-  json_object *req = json_object_new_object();
-  json_object_object_add(req, "id", json_object_new_int(1));
-  json_object_object_add(req, "method", json_object_new_string("mining.submit"));
-
-  json_object *params = json_object_new_array();
-  json_object_array_add(params, json_object_new_string(worker));
-  json_object_array_add(params, json_object_new_string(job_id));
-  char nonce_hex[20];
-  snprintf(nonce_hex, sizeof(nonce_hex), "%016" PRIx64, nonce);
-  json_object_array_add(params, json_object_new_string(nonce_hex));
-  char *hash_hex = encodeHex(hash, DOMAIN_HASH_SIZE);
-  json_object_array_add(params, json_object_new_string(hash_hex));
-  json_object_object_add(req, "params", params);
-
-  printf("Solution found, Nonce: %" PRIu64 ", PoW hash: %s\n", (uint64_t)nonce, hash_hex);
-
-  const char *msg = json_object_to_json_string_ext(req, JSON_C_TO_STRING_PLAIN);
-  if (!msg)
+  if (!worker || !job_id || !hash)
   {
-    free(hash_hex);
-    json_object_put(req);
+    fprintf(stderr, "submit_mining_solution: invalid parameters\n");
     return -1;
   }
 
-  static char submission_buffer[4096];
-  // struct timespec start, end;
-  // clock_gettimeCLOCK_MONOTONIC, &start);
-  snprintf(submission_buffer, sizeof(submission_buffer), "%s\n", msg);
-  int ret = send(sockfd, submission_buffer, strlen(submission_buffer), 0);
-  // clock_gettime(CLOCK_MONOTONIC, &end);
-  // double latency = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
-  // printf("Share submission latency: %.3f ms\n", latency * 1000);
+  char nonce_hex[17];
+  snprintf(nonce_hex, sizeof(nonce_hex), "%016" PRIx64, nonce);
+  char hash_hex[DOMAIN_HASH_SIZE * 2 + 1];
+  if (encode_hex_into(hash, DOMAIN_HASH_SIZE, hash_hex, sizeof(hash_hex)) != 0)
+  {
+    fprintf(stderr, "submit_mining_solution: failed to encode hash\n");
+    return -1;
+  }
 
-  free(hash_hex);
-  json_object_put(req);
+  printf("Solution found, Nonce: %" PRIu64 ", PoW hash: %s\n", (uint64_t)nonce, hash_hex);
+
+  static char submission_buffer[4096];
+  int written = snprintf(submission_buffer, sizeof(submission_buffer),
+                         "{\"id\":1,\"method\":\"mining.submit\",\"params\":[\"%s\",\"%s\",\"%s\",\"%s\"]}\n",
+                         worker, job_id, nonce_hex, hash_hex);
+  if (written < 0 || (size_t)written >= sizeof(submission_buffer))
+  {
+    fprintf(stderr, "submit_mining_solution: JSON buffer too small\n");
+    return -1;
+  }
+
+  int ret = send(sockfd, submission_buffer, (size_t)written, 0);
   enqueue_int_fifo(&ctx->mining_submit_fifo, reporting_index);
   return ret < 0 ? -1 : 0;
 }
@@ -324,9 +335,11 @@ void *mining_opencl_thread(void *arg)
   MiningState *ms = ctx->ms;
   State state = {0};
   char *current_job_id = NULL;
+  unsigned int trim_counter = 0;
   cl_ulong local_work_size = ctx->opencl_resources[thread_index].max_work_group_size;
   cl_ulong global_work_size = ctx->opencl_resources[thread_index].max_global_work_size;
   uint64_t random_base = rand() & 0x3FFFF;
+  time_t last_opencl_reset = time(NULL);
   // Prevent integer overflow in multiplication
   cl_ulong thread_work_size = (cl_ulong)thread_index * global_work_size;
   if (thread_work_size > UINT64_MAX / random_base)
@@ -388,9 +401,32 @@ void *mining_opencl_thread(void *arg)
       if (!job_valid)
         break;
 
+      if (ctx->config->opencl_reset_interval > 0 && time(NULL) - last_opencl_reset >= ctx->config->opencl_reset_interval)
+      {
+        const char *required_extensions[] = {"cl_khr_fp64"};
+        printf("Resetting OpenCL device %d (interval %d s)\n", thread_index, ctx->config->opencl_reset_interval);
+        cl_int reset_err = opencl_reinit_device(ctx, &ctx->opencl_resources[thread_index], Hoohash_cl, Hoohash_cl_len, "Hoohash_hash", required_extensions, 1);
+        if (reset_err != CL_SUCCESS)
+        {
+          fprintf(stderr, "OpenCL reset failed for device %d: %d\n", thread_index, reset_err);
+          sleep_ms(1000);
+        }
+        local_work_size = ctx->opencl_resources[thread_index].max_work_group_size;
+        global_work_size = ctx->opencl_resources[thread_index].max_global_work_size;
+        last_opencl_reset = time(NULL);
+      }
+
       OpenCLResult result = {0};
       cl_int status = run_opencl_hoohash_kernel(&ctx->opencl_resources[thread_index], global_work_size,
                                                 local_work_size, state.PrevHeader, ms->global_target, state.mat, state.Timestamp, start_nonce, &result);
+
+#ifndef _WIN32
+      if (++trim_counter >= 1000)
+      {
+        malloc_trim(0);
+        trim_counter = 0;
+      }
+#endif
 
       pthread_mutex_lock(&ctx->hd->hashrate_mutex);
       opencl_reporting_device->nonces_processed += global_work_size;

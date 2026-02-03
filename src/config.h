@@ -30,6 +30,8 @@ struct HoominerConfig
   bool disable_gpu;
   bool disable_opencl;
   bool disable_cuda;
+  bool disable_opencl_cache;
+  int opencl_reset_interval;
   int cpu_threads;
   char *selected_gpus_str;
   char *build_options;
