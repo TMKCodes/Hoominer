@@ -266,13 +266,22 @@ void *mining_cpu_thread_pepepow(void *arg)
       uint8_t result[DOMAIN_HASH_SIZE];
       hoohashv110_compute(mat, hdr, result);
 
+      /* PEPEPOW uses big-endian hash comparison (Bitcoin convention): the
+       * most-significant byte is at index 0.  The CPU compare_target()
+       * function treats the hash as little-endian (MSB at index 31), so we
+       * must reverse the hash bytes before comparing -- identical to what
+       * the GPU kernels do explicitly (see hoohash.cu / Hoohash.cl). */
+      uint8_t reversed_hash[DOMAIN_HASH_SIZE];
+      for (int i = 0; i < DOMAIN_HASH_SIZE; i++)
+        reversed_hash[i] = result[DOMAIN_HASH_SIZE - 1 - i];
+
       pthread_mutex_lock(&ctx->hd->hashrate_mutex);
       cpu_reporting_device->nonces_processed++;
       nonces_processed++;
       pthread_mutex_unlock(&ctx->hd->hashrate_mutex);
 
       pthread_mutex_lock(&ms->target_mutex);
-      int meets_target = compare_target(result, ms->global_target, DOMAIN_HASH_SIZE);
+      int meets_target = compare_target(reversed_hash, ms->global_target, DOMAIN_HASH_SIZE);
       pthread_mutex_unlock(&ms->target_mutex);
 
       if (meets_target <= 0)
