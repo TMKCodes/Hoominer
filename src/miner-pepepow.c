@@ -131,9 +131,10 @@ int submit_pepepow_solution(int sockfd, const char *worker, const char *job_id,
   pthread_cond_broadcast(&ms->job_queue.queue_cond);
   pthread_mutex_unlock(&ms->job_queue.queue_mutex);
 
-  /* Format nonce as 8-char hex string (uint32 value, big-endian display).
-   * Pool reconstructs the nonce by parsing this as a uint32 and writing it
-   * as LE at offset 76 of the header. */
+  /* Format nonce as 8-char lower-case hex string of the uint32 value
+   * (e.g. nonce=0x9EFE8071 → "9efe8071").  This is the numeric representation
+   * of the nonce; the pool interprets it as a uint32 and writes it as
+   * little-endian bytes at offset 76 of the reconstructed header. */
   char nonce_hex[9];
   snprintf(nonce_hex, sizeof(nonce_hex), "%08x", nonce);
 
@@ -182,7 +183,7 @@ void *mining_cpu_thread_pepepow(void *arg)
   /* Each thread uses a different nonce starting point, stepping by thread
    * count so threads never duplicate work.  We wrap modulo UINT32_MAX+1. */
   uint32_t nonce = (uint32_t)thread_index;
-  const uint32_t step = (uint32_t)ms->num_cpu_threads;
+  const uint32_t step = (ms->num_cpu_threads > 0) ? (uint32_t)ms->num_cpu_threads : 1;
 
   while (ctx->running)
   {

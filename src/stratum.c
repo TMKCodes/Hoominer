@@ -586,8 +586,11 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
 
         /* extranonce2: all-zero bytes of extranonce2_size (default 4). */
         int en2_size = (ms->extranonce2_size > 0) ? ms->extranonce2_size : 4;
+        /* Cap to a sensible maximum: extranonce2 occupies bytes within the
+         * coinbase script, which is at most ~100 bytes total; 14 bytes is more
+         * than enough for any real-world PEPEPOW pool configuration. */
         if (en2_size > 14)
-          en2_size = 14; /* sanity cap */
+          en2_size = 14;
 
         /* Build coinbase transaction bytes:
          *   coinbase1_bytes + extranonce1_bytes + extranonce2_bytes + coinbase2_bytes */
