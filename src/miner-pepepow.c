@@ -131,7 +131,7 @@ int submit_pepepow_solution(int sockfd, const char *worker, const char *job_id,
   /* Format nonce as 8-char little-endian hex (matching how it sits in the
    * header) so the pool can reconstruct and verify the header exactly. */
   char nonce_hex[9];
-  snprintf(nonce_hex, sizeof(nonce_hex), "%08" PRIx32, nonce);
+  snprintf(nonce_hex, sizeof(nonce_hex), "%08x", nonce);
 
   char hash_hex[DOMAIN_HASH_SIZE * 2 + 1];
   for (size_t i = 0; i < DOMAIN_HASH_SIZE; i++)
@@ -175,12 +175,6 @@ void *mining_cpu_thread_pepepow(void *arg)
   char *current_job_id = NULL;
 
   int reporting_index = 0;
-  if (reporting_index >= ctx->hd->device_count)
-  {
-    fprintf(stderr, "PEPEPOW CPU reporting index %d exceeds device count %d\n",
-            reporting_index, ctx->hd->device_count);
-    return NULL;
-  }
   ReportingDevice *cpu_reporting_device = ctx->hd->devices[reporting_index];
 
   /* Each thread uses a different nonce starting point, stepping by thread
@@ -276,17 +270,15 @@ void *mining_cpu_thread_pepepow(void *arg)
       {
         if (ctx->config->debug == 1)
           printf("PEPEPOW: submitting solution for job %s\n", current_job_id);
+        /* submit_pepepow_solution marks the job completed in the queue. */
         submit_pepepow_solution(ctx->sockfd, ctx->worker, current_job_id,
                                 nonce, result, ms, ctx, reporting_index);
-        current_job.completed = 1;
-        current_job.running   = 0;
         break;
       }
 
       nonce += step;
     }
-
-    current_job.running = 0;
+    /* Inner loop exited: either job was superseded or a solution was found. */
 
     if (ctx->config->debug == 1)
     {
