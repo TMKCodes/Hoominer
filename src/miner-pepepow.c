@@ -128,8 +128,9 @@ int submit_pepepow_solution(int sockfd, const char *worker, const char *job_id,
   pthread_cond_broadcast(&ms->job_queue.queue_cond);
   pthread_mutex_unlock(&ms->job_queue.queue_mutex);
 
-  /* Format nonce as 8-char little-endian hex (matching how it sits in the
-   * header) so the pool can reconstruct and verify the header exactly. */
+  /* Format nonce as 8-char hex string (numeric value, as per Bitcoin-style
+   * stratum v1 convention).  The pool reconstructs the nonce by parsing this
+   * value as a uint32 and writing it as LE at offset 76 of the header. */
   char nonce_hex[9];
   snprintf(nonce_hex, sizeof(nonce_hex), "%08x", nonce);
 
@@ -141,7 +142,9 @@ int submit_pepepow_solution(int sockfd, const char *worker, const char *job_id,
   printf("PEPEPOW solution found, Nonce: %" PRIu32 " (0x%s), PoW hash: %s\n",
          nonce, nonce_hex, hash_hex);
 
-  static char buf[4096];
+  /* Use a stack-local buffer to avoid data races when multiple threads
+   * call submit_pepepow_solution concurrently. */
+  char buf[4096];
   int written = snprintf(buf, sizeof(buf),
     "{\"id\":1,\"method\":\"mining.submit\","
     "\"params\":[\"%s\",\"%s\",\"%s\",\"%s\"]}\n",
@@ -180,7 +183,7 @@ void *mining_cpu_thread_pepepow(void *arg)
   /* Each thread uses a different nonce starting point, stepping by thread
    * count so threads never duplicate work.  We wrap modulo UINT32_MAX+1. */
   uint32_t nonce = (uint32_t)thread_index;
-  const uint32_t step = (ms->num_cpu_threads > 0) ? (uint32_t)ms->num_cpu_threads : 1;
+  const uint32_t step = (uint32_t)ms->num_cpu_threads;
 
   while (ctx->running)
   {

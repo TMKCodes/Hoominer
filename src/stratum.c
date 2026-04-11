@@ -526,10 +526,10 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
         masked_hdr[79] = 0;
 
         blake3_hasher pp_hasher;
-        uint8_t matrix_seed[DOMAIN_HASH_SIZE];
+        uint8_t pp_matrix_seed[DOMAIN_HASH_SIZE];
         blake3_hasher_init(&pp_hasher);
         blake3_hasher_update(&pp_hasher, masked_hdr, PEPEPOW_HEADER_SIZE);
-        blake3_hasher_finalize(&pp_hasher, matrix_seed, DOMAIN_HASH_SIZE);
+        blake3_hasher_finalize(&pp_hasher, pp_matrix_seed, DOMAIN_HASH_SIZE);
 
         pthread_mutex_lock(&ms->job_queue.queue_mutex);
 
@@ -569,7 +569,7 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
             pp_job->timestamp = (long long)time(NULL) * 1000;
             pp_job->running   = 1;
             pp_job->completed = 0;
-            generateHoohashMatrix(matrix_seed, pp_job->matrix);
+            generateHoohashMatrix(pp_matrix_seed, pp_job->matrix);
             ms->job_queue.tail    = pp_next_tail;
             ms->new_job_available = 1;
             pthread_cond_broadcast(&ms->job_queue.queue_cond);

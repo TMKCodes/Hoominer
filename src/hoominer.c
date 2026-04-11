@@ -275,16 +275,13 @@ static void self_test_pepepow(void)
   printf("[pepepow-self-test] --------------------------------------------------\n");
   printf("[pepepow-self-test] Testing PEPEPOW (hoohashv110) hash function\n");
 
-  /* Construct a deterministic 80-byte test header.
-   * Bytes [76..79] are the nonce field (initially 0 here; we test nonce 1). */
+  /* Construct a deterministic 80-byte test header where each byte equals
+   * its index.  Bytes [76..79] (nonce field) are explicitly zeroed so the
+   * matrix seed is computed for nonce=0 as the mining loop would do. */
   uint8_t test_header[PEPEPOW_HEADER_SIZE] = {0};
-  for (int i = 0; i < PEPEPOW_HEADER_SIZE; i++)
+  for (int i = 0; i < PEPEPOW_NONCE_OFFSET; i++)
     test_header[i] = (uint8_t)(i & 0xFF);
-  /* Zero the nonce field as it will be set by the mining loop. */
-  test_header[76] = 0;
-  test_header[77] = 0;
-  test_header[78] = 0;
-  test_header[79] = 0;
+  /* test_header[76..79] remain 0 (nonce-zeroed template). */
 
   /* Build the nonce-masked header and derive the matrix seed. */
   uint8_t masked[PEPEPOW_HEADER_SIZE];

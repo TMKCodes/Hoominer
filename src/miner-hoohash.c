@@ -677,9 +677,9 @@ int start_mining_threads(StratumContext *ctx, MiningState *ms)
       printf("Starting %d CPU threads\n", ms->num_cpu_threads);
 
     /* Select the CPU thread function based on the configured algorithm. */
-    void *(*cpu_thread_fn)(void *) = mining_cpu_thread;
+    void *(*mining_thread_fn)(void *) = mining_cpu_thread;
     if (strcmp(ctx->config->algorithm, "pepepow") == 0)
-      cpu_thread_fn = mining_cpu_thread_pepepow;
+      mining_thread_fn = mining_cpu_thread_pepepow;
 
     for (int i = 0; i < ms->num_cpu_threads; i++)
     {
@@ -691,7 +691,7 @@ int start_mining_threads(StratumContext *ctx, MiningState *ms)
       }
       mt->threadIndex = i;
       mt->ctx = ctx;
-      if (pthread_create(&ms->mining_cpu_threads[i], NULL, cpu_thread_fn, mt) != 0)
+      if (pthread_create(&ms->mining_cpu_threads[i], NULL, mining_thread_fn, mt) != 0)
       {
         printf("start_mining_threads: Failed to create thread %d\n", i);
         free(mt);
