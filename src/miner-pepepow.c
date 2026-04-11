@@ -263,17 +263,21 @@ void *mining_cpu_thread_pepepow(void *arg)
       memcpy(hdr, hdr_template, PEPEPOW_HEADER_SIZE);
       write_uint32_le(hdr + PEPEPOW_NONCE_OFFSET, nonce);
 
-      uint8_t result[DOMAIN_HASH_SIZE];
-      hoohashv110_compute(mat, hdr, result);
+      uint8_t pow_hash[DOMAIN_HASH_SIZE];
+      hoohashv110_compute(mat, hdr, pow_hash);
 
-      /* PEPEPOW uses big-endian hash comparison (Bitcoin convention): the
-       * most-significant byte is at index 0.  The CPU compare_target()
-       * function treats the hash as little-endian (MSB at index 31), so we
-       * must reverse the hash bytes before comparing -- identical to what
-       * the GPU kernels do explicitly (see hoohash.cu / Hoohash.cl). */
-      uint8_t reversed_hash[DOMAIN_HASH_SIZE];
+      /*
+       * Build both representations explicitly (matching scanhash_pepew):
+       * - pow_raw: bytes as returned by HoohashMatrixMultiplication
+       * - pow_rev: byte-reversed form for share check
+       *
+       * Share check: global_target is a 32-byte big-endian target (from
+       * target_from_pool_difficulty).  The pool evaluates difficulty on the
+       * reversed hash form, so we compare pow_rev against global_target.
+       */
+      uint8_t pow_rev[DOMAIN_HASH_SIZE];
       for (int i = 0; i < DOMAIN_HASH_SIZE; i++)
-        reversed_hash[i] = result[DOMAIN_HASH_SIZE - 1 - i];
+        pow_rev[i] = pow_hash[DOMAIN_HASH_SIZE - 1 - i];
 
       pthread_mutex_lock(&ctx->hd->hashrate_mutex);
       cpu_reporting_device->nonces_processed++;
@@ -281,7 +285,7 @@ void *mining_cpu_thread_pepepow(void *arg)
       pthread_mutex_unlock(&ctx->hd->hashrate_mutex);
 
       pthread_mutex_lock(&ms->target_mutex);
-      int meets_target = compare_target(reversed_hash, ms->global_target, DOMAIN_HASH_SIZE);
+      int meets_target = memcmp(pow_rev, ms->global_target, DOMAIN_HASH_SIZE);
       pthread_mutex_unlock(&ms->target_mutex);
 
       if (meets_target <= 0)
