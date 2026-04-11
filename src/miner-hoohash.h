@@ -57,6 +57,8 @@ struct QueuedJob
   char *job_id;
   uint8_t header[DOMAIN_HASH_SIZE];
   uint8_t pepepow_header[80];
+  char ntime_hex[16];        /* ntime as 8-char hex (e.g. "69da10c4"), used in PEPEPOW submit */
+  char extranonce2_hex[32];  /* extranonce2 as hex string, used in PEPEPOW submit */
   long long timestamp;
   double matrix[64][64];
   volatile int running;
@@ -117,7 +119,8 @@ struct MiningState
   int num_opencl_threads;
   int num_cuda_threads;
   uint8_t *global_target;
-  char *extranonce; // Owned memory - must be freed
+  char *extranonce; // Owned memory - must be freed (extranonce1 for PEPEPOW)
+  int extranonce2_size; // extranonce2 size in bytes (PEPEPOW Bitcoin stratum v1)
   MiningJob *job;
   pthread_mutex_t job_mutex;
   pthread_t *mining_cpu_threads;

@@ -65,6 +65,7 @@ MiningState *init_mining_state()
   state->num_cuda_threads = 0;
   state->global_target = NULL;
   state->extranonce = NULL;
+  state->extranonce2_size = 4; /* default; overridden by subscribe response */
   state->job = NULL;
   state->mining_cpu_threads = NULL;
   state->mining_opencl_threads = NULL;

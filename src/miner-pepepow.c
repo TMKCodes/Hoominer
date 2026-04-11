@@ -98,14 +98,17 @@ static void hoohashv110_compute(double mat[64][64],
 /* ---------------------------------------------------------------------------
  * submit_pepepow_solution
  *
- * Send a PEPEPOW share to the pool.  The nonce is encoded as an 8-character
- * lower-case hex string representing the little-endian uint32 value.
+ * Send a PEPEPOW share to the pool using Bitcoin stratum v1 5-parameter format:
+ *   ["worker", "job_id", "extranonce2", "ntime", "nonce"]
+ * The nonce is encoded as an 8-character lower-case hex string representing
+ * the uint32 value (big-endian display, e.g. nonce=0x9EFE8071 → "9efe8071").
  * -------------------------------------------------------------------------*/
 int submit_pepepow_solution(int sockfd, const char *worker, const char *job_id,
-                            uint32_t nonce, uint8_t *hash, MiningState *ms,
+                            uint32_t nonce, const char *ntime_hex,
+                            const char *extranonce2_hex, MiningState *ms,
                             StratumContext *ctx, int reporting_index)
 {
-  if (!worker || !job_id || !hash)
+  if (!worker || !job_id || !ntime_hex || !extranonce2_hex)
   {
     fprintf(stderr, "submit_pepepow_solution: invalid parameters\n");
     return -1;
@@ -128,27 +131,23 @@ int submit_pepepow_solution(int sockfd, const char *worker, const char *job_id,
   pthread_cond_broadcast(&ms->job_queue.queue_cond);
   pthread_mutex_unlock(&ms->job_queue.queue_mutex);
 
-  /* Format nonce as 8-char hex string (numeric value, as per Bitcoin-style
-   * stratum v1 convention).  The pool reconstructs the nonce by parsing this
-   * value as a uint32 and writing it as LE at offset 76 of the header. */
+  /* Format nonce as 8-char hex string (uint32 value, big-endian display).
+   * Pool reconstructs the nonce by parsing this as a uint32 and writing it
+   * as LE at offset 76 of the header. */
   char nonce_hex[9];
   snprintf(nonce_hex, sizeof(nonce_hex), "%08x", nonce);
 
-  char hash_hex[DOMAIN_HASH_SIZE * 2 + 1];
-  for (size_t i = 0; i < DOMAIN_HASH_SIZE; i++)
-    snprintf(hash_hex + i * 2, 3, "%02x", hash[i]);
-  hash_hex[DOMAIN_HASH_SIZE * 2] = '\0';
+  printf("PEPEPOW solution found, Nonce: %" PRIu32 " (0x%s)\n",
+         nonce, nonce_hex);
 
-  printf("PEPEPOW solution found, Nonce: %" PRIu32 " (0x%s), PoW hash: %s\n",
-         nonce, nonce_hex, hash_hex);
-
-  /* Use a stack-local buffer to avoid data races when multiple threads
-   * call submit_pepepow_solution concurrently. */
+  /* Bitcoin stratum v1 submit: 5 params, no PoW hash in the message.
+   * Format: {"method":"mining.submit","params":["worker","job_id","extranonce2","ntime","nonce"],"id":N} */
   char buf[4096];
   int written = snprintf(buf, sizeof(buf),
-    "{\"id\":1,\"method\":\"mining.submit\","
-    "\"params\":[\"%s\",\"%s\",\"%s\",\"%s\"]}\n",
-    worker, job_id, nonce_hex, hash_hex);
+    "{\"method\":\"mining.submit\","
+    "\"params\":[\"%s\",\"%s\",\"%s\",\"%s\",\"%s\"],"
+    "\"id\":4}\n",
+    worker, job_id, extranonce2_hex, ntime_hex, nonce_hex);
   if (written < 0 || (size_t)written >= sizeof(buf))
   {
     fprintf(stderr, "submit_pepepow_solution: JSON buffer too small\n");
@@ -218,11 +217,17 @@ void *mining_cpu_thread_pepepow(void *arg)
       continue;
     }
 
-    /* Snapshot the job's precomputed matrix and header template. */
+    /* Snapshot the job's precomputed matrix, header template, and submit fields. */
     double mat[64][64];
     uint8_t hdr_template[PEPEPOW_HEADER_SIZE];
+    char ntime_hex[16];
+    char extranonce2_hex[32];
     memcpy(mat, current_job.matrix, sizeof(double) * 64 * 64);
     memcpy(hdr_template, current_job.pepepow_header, PEPEPOW_HEADER_SIZE);
+    strncpy(ntime_hex, current_job.ntime_hex, sizeof(ntime_hex) - 1);
+    ntime_hex[sizeof(ntime_hex) - 1] = '\0';
+    strncpy(extranonce2_hex, current_job.extranonce2_hex, sizeof(extranonce2_hex) - 1);
+    extranonce2_hex[sizeof(extranonce2_hex) - 1] = '\0';
 
     struct timespec start_time, end_time;
     if (ctx->config->debug == 1)
@@ -275,7 +280,8 @@ void *mining_cpu_thread_pepepow(void *arg)
           printf("PEPEPOW: submitting solution for job %s\n", current_job_id);
         /* submit_pepepow_solution marks the job completed in the queue. */
         submit_pepepow_solution(ctx->sockfd, ctx->worker, current_job_id,
-                                nonce, result, ms, ctx, reporting_index);
+                                nonce, ntime_hex, extranonce2_hex,
+                                ms, ctx, reporting_index);
         break;
       }
 

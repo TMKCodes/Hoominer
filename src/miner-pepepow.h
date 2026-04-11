@@ -7,12 +7,15 @@
 #define PEPEPOW_NONCE_OFFSET 76
 
 /*
- * Submit a PEPEPOW mining solution.
- * nonce    - the uint32 nonce that was used (from offset 76 of the header)
- * hash     - the 32-byte PoW hash
+ * Submit a PEPEPOW mining solution using Bitcoin stratum v1 5-parameter format:
+ *   ["worker", "job_id", "extranonce2", "ntime", "nonce"]
+ * nonce          - the uint32 nonce found at header offset 76
+ * ntime_hex      - ntime as 8-char hex string from the job (e.g. "69da10c4")
+ * extranonce2_hex - extranonce2 as hex string for this job
  */
 int submit_pepepow_solution(int sockfd, const char *worker, const char *job_id,
-                            uint32_t nonce, uint8_t *hash, MiningState *ms,
+                            uint32_t nonce, const char *ntime_hex,
+                            const char *extranonce2_hex, MiningState *ms,
                             StratumContext *ctx, int reporting_index);
 
 /*
