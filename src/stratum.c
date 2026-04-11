@@ -1,5 +1,30 @@
 #include "stratum.h"
 #include "platform_compat.h"
+#include "miner-pepepow.h"
+#include <blake3.h>
+#include <openssl/sha.h>
+
+/* Double-SHA256 helper used for Bitcoin-style coinbase/merkle construction */
+static void sha256d(const uint8_t *in, size_t len, uint8_t *out)
+{
+  uint8_t tmp[SHA256_DIGEST_LENGTH];
+  SHA256(in, len, tmp);
+  SHA256(tmp, SHA256_DIGEST_LENGTH, out);
+}
+
+/* Decode a variable-length hex string into a caller-supplied buffer.
+ * Returns 0 on success, -1 if hex_len is odd or buf is too small. */
+static int hex_decode(const char *hex, size_t hex_len, uint8_t *buf, size_t buf_len)
+{
+  if (hex_len % 2 != 0 || buf_len < hex_len / 2)
+    return -1;
+  for (size_t i = 0; i < hex_len / 2; i++)
+  {
+    if (sscanf(hex + i * 2, "%2hhx", &buf[i]) != 1)
+      return -1;
+  }
+  return 0;
+}
 
 long get_memory_usage()
 {
@@ -258,26 +283,28 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
             free(ms->global_target);
           double difficulty = json_object_get_double(diff);
           ms->global_target = target_from_pool_difficulty(difficulty, DOMAIN_HASH_SIZE);
-          if (ctx->config->debug == 1)
+          if (!strcmp(ctx->config->algorithm, "pepepow"))
+            printf("New PEPEPOW stratum difficulty %g\n", difficulty);
+          else if (ctx->config->debug == 1)
             printf("Received new difficulty %f\n", difficulty);
           pthread_mutex_unlock(&ms->target_mutex);
         }
       }
     }
-    else if (!strcmp(method_str, "set_extranonce"))
+    else if (!strcmp(method_str, "set_extranonce") || !strcmp(method_str, "mining.set_extranonce"))
     {
       // {
       //   "id":null,
-      //   "jsonrpc":"2.0",
-      //   "method":"set_extranonce",
+      //   "method":"mining.set_extranonce",
       //   "params":[
-      //     "00"
+      //     "extranonce1hex",
+      //     extranonce2_size
       //   ]
       // }
       json_object *params;
       if (!json_object_object_get_ex(message, "params", &params) || !json_object_is_type(params, json_type_array))
       {
-        printf("mining.notify: params missing or not an array\n");
+        printf("mining.set_extranonce: params missing or not an array\n");
         return;
       }
       json_object *extranonce_param = json_object_array_get_idx(params, 0);
@@ -296,6 +323,14 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
         {
           ms->extranonce = strdup(new_extranonce);
         }
+      }
+      // Update extranonce2_size if provided (PEPEPOW Bitcoin stratum v1)
+      json_object *extranonce2_size_param = json_object_array_get_idx(params, 1);
+      if (extranonce2_size_param &&
+          (json_object_is_type(extranonce2_size_param, json_type_int) ||
+           json_object_is_type(extranonce2_size_param, json_type_double)))
+      {
+        ms->extranonce2_size = json_object_get_int(extranonce2_size_param);
       }
     }
     else if (!strcmp(method_str, "mining.notify"))
@@ -467,12 +502,297 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
         }
         pthread_mutex_unlock(&ms->job_queue.queue_mutex);
       }
+      else if (!strcmp(ctx->config->algorithm, "pepepow"))
+      {
+        // Bitcoin stratum v1 mining.notify for PEPEPOW:
+        // {
+        //   "id": null,
+        //   "method": "mining.notify",
+        //   "params": [
+        //     "job_id",          [0] string
+        //     "prevhash",        [1] 64 hex chars (32 bytes)
+        //     "coinbase1",       [2] hex string
+        //     "coinbase2",       [3] hex string
+        //     ["merkle_branch"], [4] array of 64-char hex strings
+        //     "version",         [5] 8 hex chars (4 bytes, LE)
+        //     "nbits",           [6] 8 hex chars (4 bytes, LE)
+        //     "ntime",           [7] 8 hex chars (4 bytes, LE)
+        //     true/false         [8] clean_jobs
+        //   ]
+        // }
+        json_object *params;
+        if (!json_object_object_get_ex(message, "params", &params) ||
+            !json_object_is_type(params, json_type_array) ||
+            json_object_array_length(params) < 9)
+        {
+          printf("pepepow mining.notify: params missing, not an array, or fewer than 9 elements\n");
+          return;
+        }
+
+        json_object *job_id_obj      = json_object_array_get_idx(params, 0);
+        json_object *prevhash_obj    = json_object_array_get_idx(params, 1);
+        json_object *coinbase1_obj   = json_object_array_get_idx(params, 2);
+        json_object *coinbase2_obj   = json_object_array_get_idx(params, 3);
+        json_object *merkle_obj      = json_object_array_get_idx(params, 4);
+        json_object *version_obj     = json_object_array_get_idx(params, 5);
+        json_object *nbits_obj       = json_object_array_get_idx(params, 6);
+        json_object *ntime_obj       = json_object_array_get_idx(params, 7);
+
+        if (!json_object_is_type(job_id_obj, json_type_string)   ||
+            !json_object_is_type(prevhash_obj, json_type_string) ||
+            !json_object_is_type(coinbase1_obj, json_type_string)||
+            !json_object_is_type(coinbase2_obj, json_type_string)||
+            !json_object_is_type(merkle_obj, json_type_array)    ||
+            !json_object_is_type(version_obj, json_type_string)  ||
+            !json_object_is_type(nbits_obj, json_type_string)    ||
+            !json_object_is_type(ntime_obj, json_type_string))
+        {
+          printf("pepepow mining.notify: invalid parameter types\n");
+          return;
+        }
+
+        const char *prevhash_hex  = json_object_get_string(prevhash_obj);
+        const char *coinbase1_hex = json_object_get_string(coinbase1_obj);
+        const char *coinbase2_hex = json_object_get_string(coinbase2_obj);
+        const char *version_hex   = json_object_get_string(version_obj);
+        const char *nbits_hex     = json_object_get_string(nbits_obj);
+        const char *ntime_hex_str = json_object_get_string(ntime_obj);
+
+        if (strlen(prevhash_hex) != 64 || strlen(version_hex) != 8 ||
+            strlen(nbits_hex) != 8     || strlen(ntime_hex_str) != 8)
+        {
+          printf("pepepow mining.notify: invalid fixed-field hex lengths\n");
+          return;
+        }
+
+        size_t cb1_len = strlen(coinbase1_hex);
+        size_t cb2_len = strlen(coinbase2_hex);
+        if (cb1_len % 2 != 0 || cb2_len % 2 != 0)
+        {
+          printf("pepepow mining.notify: coinbase hex length is not even\n");
+          return;
+        }
+
+        /* Get extranonce1 from mining state (set by subscribe response). */
+        const char *en1_hex = (ms->extranonce && ms->extranonce[0] != '\0')
+                              ? ms->extranonce : "";
+        size_t en1_hex_len  = strlen(en1_hex);
+        if (en1_hex_len % 2 != 0)
+        {
+          printf("pepepow mining.notify: extranonce1 hex length is not even\n");
+          return;
+        }
+        size_t en1_bytes = en1_hex_len / 2;
+
+        /* extranonce2: all-zero bytes of extranonce2_size (default 4). */
+        int en2_size = (ms->extranonce2_size > 0) ? ms->extranonce2_size : 4;
+        if (en2_size > 14)
+          en2_size = 14; /* sanity cap */
+
+        /* Build coinbase transaction bytes:
+         *   coinbase1_bytes + extranonce1_bytes + extranonce2_bytes + coinbase2_bytes */
+        size_t cb1_bytes = cb1_len / 2;
+        size_t cb2_bytes = cb2_len / 2;
+        size_t coinbase_total = cb1_bytes + en1_bytes + (size_t)en2_size + cb2_bytes;
+        uint8_t *coinbase_tx = malloc(coinbase_total);
+        if (!coinbase_tx)
+        {
+          printf("pepepow mining.notify: malloc failed for coinbase_tx\n");
+          return;
+        }
+
+        uint8_t *p = coinbase_tx;
+        if (hex_decode(coinbase1_hex, cb1_len, p, cb1_bytes) != 0)
+        {
+          printf("pepepow mining.notify: failed to decode coinbase1\n");
+          free(coinbase_tx);
+          return;
+        }
+        p += cb1_bytes;
+
+        if (en1_bytes > 0 && hex_decode(en1_hex, en1_hex_len, p, en1_bytes) != 0)
+        {
+          printf("pepepow mining.notify: failed to decode extranonce1\n");
+          free(coinbase_tx);
+          return;
+        }
+        p += en1_bytes;
+
+        /* extranonce2 = all zeros */
+        memset(p, 0, (size_t)en2_size);
+        p += en2_size;
+
+        if (hex_decode(coinbase2_hex, cb2_len, p, cb2_bytes) != 0)
+        {
+          printf("pepepow mining.notify: failed to decode coinbase2\n");
+          free(coinbase_tx);
+          return;
+        }
+
+        /* Compute SHA256D(coinbase_tx) → coinbase hash (merkle root seed) */
+        uint8_t merkle_root[32];
+        sha256d(coinbase_tx, coinbase_total, merkle_root);
+        free(coinbase_tx);
+
+        /* Process merkle branch: merkle_root = SHA256D(merkle_root || branch_i) */
+        int branch_count = (int)json_object_array_length(merkle_obj);
+        for (int bi = 0; bi < branch_count; bi++)
+        {
+          json_object *branch_item = json_object_array_get_idx(merkle_obj, bi);
+          if (!json_object_is_type(branch_item, json_type_string))
+          {
+            printf("pepepow mining.notify: merkle branch item %d is not a string\n", bi);
+            return;
+          }
+          const char *branch_hex = json_object_get_string(branch_item);
+          if (strlen(branch_hex) != 64)
+          {
+            printf("pepepow mining.notify: merkle branch item %d has wrong length\n", bi);
+            return;
+          }
+          uint8_t branch_bytes[32];
+          if (hex_decode(branch_hex, 64, branch_bytes, 32) != 0)
+          {
+            printf("pepepow mining.notify: failed to decode merkle branch item %d\n", bi);
+            return;
+          }
+          uint8_t combined[64];
+          memcpy(combined,      merkle_root,  32);
+          memcpy(combined + 32, branch_bytes, 32);
+          sha256d(combined, 64, merkle_root);
+        }
+
+        /* Assemble 80-byte Bitcoin block header:
+         *   [0-3]   version  (4 bytes, as-is from stratum LE hex)
+         *   [4-35]  prevhash (32 bytes, as-is from stratum)
+         *   [36-67] merkle_root (32 bytes computed above)
+         *   [68-71] ntime  (4 bytes, as-is from stratum LE hex)
+         *   [72-75] nbits  (4 bytes, as-is from stratum LE hex)
+         *   [76-79] nonce  (4 bytes, zero - filled by miner)
+         */
+        uint8_t pepepow_hdr[PEPEPOW_HEADER_SIZE] = {0};
+        if (hex_decode(version_hex,   8,  pepepow_hdr,       4) != 0 ||
+            hex_decode(prevhash_hex,  64, pepepow_hdr + 4,  32) != 0 ||
+            hex_decode(ntime_hex_str, 8,  pepepow_hdr + 68,  4) != 0 ||
+            hex_decode(nbits_hex,     8,  pepepow_hdr + 72,  4) != 0)
+        {
+          printf("pepepow mining.notify: failed to decode header fields\n");
+          return;
+        }
+        memcpy(pepepow_hdr + 36, merkle_root, 32);
+        /* nonce bytes [76-79] stay zero; miner writes them per attempt */
+
+        /* Build extranonce2 hex string (all zeros, size en2_size bytes). */
+        char extranonce2_hex[32];
+        memset(extranonce2_hex, '0', (size_t)en2_size * 2);
+        extranonce2_hex[en2_size * 2] = '\0';
+
+        /* Precompute the Hoohash matrix from BLAKE3(header with nonce zeroed).
+         * Since nonce bytes are already zero, we can use pepepow_hdr directly. */
+        blake3_hasher pp_hasher;
+        uint8_t pp_matrix_seed[DOMAIN_HASH_SIZE];
+        blake3_hasher_init(&pp_hasher);
+        blake3_hasher_update(&pp_hasher, pepepow_hdr, PEPEPOW_HEADER_SIZE);
+        blake3_hasher_finalize(&pp_hasher, pp_matrix_seed, DOMAIN_HASH_SIZE);
+
+        pthread_mutex_lock(&ms->job_queue.queue_mutex);
+
+        /* Evict jobs that are too old. */
+        while (ms->job_queue.head != ms->job_queue.tail &&
+               ms->job_queue.jobs[ms->job_queue.head].timestamp <
+                 (uint64_t)time(NULL) * 1000 - JOB_MAX_AGE * 1000ULL)
+        {
+          free(ms->job_queue.jobs[ms->job_queue.head].job_id);
+          ms->job_queue.jobs[ms->job_queue.head].job_id = NULL;
+          ms->job_queue.head = (ms->job_queue.head + 1) % JOB_QUEUE_SIZE;
+        }
+
+        int pp_next_tail = (ms->job_queue.tail + 1) % JOB_QUEUE_SIZE;
+        if (pp_next_tail == ms->job_queue.head)
+        {
+          free(ms->job_queue.jobs[ms->job_queue.head].job_id);
+          ms->job_queue.jobs[ms->job_queue.head].job_id = NULL;
+          ms->job_queue.head = (ms->job_queue.head + 1) % JOB_QUEUE_SIZE;
+        }
+
+        QueuedJob *pp_job = &ms->job_queue.jobs[ms->job_queue.tail];
+        const char *jid   = json_object_get_string(job_id_obj);
+        if (jid)
+        {
+          if (pp_job->job_id)
+          {
+            free(pp_job->job_id);
+            pp_job->job_id = NULL;
+          }
+          pp_job->job_id = strdup(jid);
+          if (pp_job->job_id)
+          {
+            if (ctx->config->debug == 1)
+              printf("PEPEPOW: received new job %s\n", pp_job->job_id);
+            memcpy(pp_job->pepepow_header, pepepow_hdr, PEPEPOW_HEADER_SIZE);
+            strncpy(pp_job->ntime_hex, ntime_hex_str, sizeof(pp_job->ntime_hex) - 1);
+            pp_job->ntime_hex[sizeof(pp_job->ntime_hex) - 1] = '\0';
+            strncpy(pp_job->extranonce2_hex, extranonce2_hex, sizeof(pp_job->extranonce2_hex) - 1);
+            pp_job->extranonce2_hex[sizeof(pp_job->extranonce2_hex) - 1] = '\0';
+            pp_job->timestamp = (long long)time(NULL) * 1000;
+            pp_job->running   = 1;
+            pp_job->completed = 0;
+            generateHoohashMatrix(pp_matrix_seed, pp_job->matrix);
+            ms->job_queue.tail    = pp_next_tail;
+            ms->new_job_available = 1;
+            pthread_cond_broadcast(&ms->job_queue.queue_cond);
+            malloc_trim(0);
+          }
+          else
+          {
+            printf("PEPEPOW: failed to allocate memory for job ID\n");
+          }
+        }
+        else
+        {
+          printf("PEPEPOW: job ID string is NULL\n");
+        }
+        pthread_mutex_unlock(&ms->job_queue.queue_mutex);
+      }
     }
   }
   else
   {
     json_object *result;
     json_object *error;
+
+    /* Detect PEPEPOW mining.subscribe response and extract extranonce1 /
+     * extranonce2_size.
+     * Format: {"id":1,"result":[[...subs...],"extranonce1_hex",en2_size],"error":null}
+     * We recognise it by result being a 3-element array whose second element
+     * is a string (extranonce1) and third element is an integer (en2 size). */
+    if (!strcmp(ctx->config->algorithm, "pepepow") &&
+        json_object_object_get_ex(message, "result", &result) &&
+        json_object_is_type(result, json_type_array) &&
+        json_object_array_length(result) == 3)
+    {
+      json_object *en1_obj  = json_object_array_get_idx(result, 1);
+      json_object *en2_obj  = json_object_array_get_idx(result, 2);
+      if (json_object_is_type(en1_obj, json_type_string) &&
+          (json_object_is_type(en2_obj, json_type_int) ||
+           json_object_is_type(en2_obj, json_type_double)))
+      {
+        const char *en1 = json_object_get_string(en1_obj);
+        int en2_size    = json_object_get_int(en2_obj);
+        if (ms->extranonce)
+        {
+          free(ms->extranonce);
+          ms->extranonce = NULL;
+        }
+        if (en1)
+          ms->extranonce = strdup(en1);
+        ms->extranonce2_size = en2_size;
+        if (ctx->config->debug == 1)
+          printf("PEPEPOW subscribe: extranonce1=%s extranonce2_size=%d\n",
+                 en1 ? en1 : "(null)", en2_size);
+      }
+    }
+
     int devices = ctx->cpu_device_count + ctx->opencl_device_count + ctx->cuda_device_count;
     if (devices > 0)
     {

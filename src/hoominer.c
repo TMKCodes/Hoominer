@@ -7,12 +7,14 @@
 #include <libgen.h>
 #endif
 #include <time.h> // Added for time tracking
+#include <blake3.h>
 #include "config.h"
 #include "opencl-host.h"
 #include "cuda-host.h"
 #include "stratum.h"
 #include "reporting.h"
 #include "miner-hoohash.h"
+#include "miner-pepepow.h"
 #include "hoohash_cl.h"
 #include "api.h"
 #include "platform_compat.h"
@@ -261,6 +263,65 @@ static void self_test_from_main_vectors(void)
   }
 }
 
+/*
+ * PEPEPOW self-test: exercise hoohashv110_compute() (the PEPEPOW hash
+ * function) against a synthetic 80-byte header.  The test exercises the
+ * complete code path (BLAKE3 first-pass, matrix generation from masked
+ * header, matrix multiplication) and prints the output so that it can be
+ * compared against a reference implementation.
+ */
+static void self_test_pepepow(void)
+{
+  printf("[pepepow-self-test] --------------------------------------------------\n");
+  printf("[pepepow-self-test] Testing PEPEPOW (hoohashv110) hash function\n");
+
+  /* Construct a deterministic 80-byte test header where each byte equals
+   * its index.  Bytes [76..79] (nonce field) are explicitly zeroed so the
+   * matrix seed is computed for nonce=0 as the mining loop would do. */
+  uint8_t test_header[PEPEPOW_HEADER_SIZE] = {0};
+  for (int i = 0; i < PEPEPOW_NONCE_OFFSET; i++)
+    test_header[i] = (uint8_t)(i & 0xFF);
+  /* test_header[76..79] remain 0 (nonce-zeroed template). */
+
+  /* Build the nonce-masked header and derive the matrix seed. */
+  uint8_t masked[PEPEPOW_HEADER_SIZE];
+  memcpy(masked, test_header, PEPEPOW_HEADER_SIZE);
+  /* nonce bytes [76..79] are already 0 */
+
+  blake3_hasher hasher;
+  uint8_t matrix_seed[DOMAIN_HASH_SIZE];
+  blake3_hasher_init(&hasher);
+  blake3_hasher_update(&hasher, masked, PEPEPOW_HEADER_SIZE);
+  blake3_hasher_finalize(&hasher, matrix_seed, DOMAIN_HASH_SIZE);
+
+  double mat[64][64];
+  generateHoohashMatrix(matrix_seed, mat);
+
+  /* Test with nonce = 1 */
+  uint8_t hdr_n1[PEPEPOW_HEADER_SIZE];
+  memcpy(hdr_n1, test_header, PEPEPOW_HEADER_SIZE);
+  hdr_n1[76] = 1; /* nonce = 1, LE uint32 */
+
+  /* Compute first-pass hash and final PoW hash using hoohashv110 logic. */
+  uint8_t first_pass[DOMAIN_HASH_SIZE];
+  blake3_hasher_init(&hasher);
+  blake3_hasher_update(&hasher, hdr_n1, PEPEPOW_HEADER_SIZE);
+  blake3_hasher_finalize(&hasher, first_pass, DOMAIN_HASH_SIZE);
+
+  uint8_t output[DOMAIN_HASH_SIZE];
+  HoohashMatrixMultiplication(mat, first_pass, output, 1ULL);
+
+  printf("[pepepow-self-test] Header (first 16 bytes): ");
+  print_hex("", test_header, 16);
+  printf("[pepepow-self-test] MatrixSeed: ");
+  print_hex("", matrix_seed, DOMAIN_HASH_SIZE);
+  printf("[pepepow-self-test] FirstPass (nonce=1): ");
+  print_hex("", first_pass, DOMAIN_HASH_SIZE);
+  printf("[pepepow-self-test] Output (nonce=1): ");
+  print_hex("", output, DOMAIN_HASH_SIZE);
+  printf("[pepepow-self-test] --------------------------------------------------\n");
+}
+
 void cleanup(int sig)
 {
   printf("Cleanup initiated due to signal %d\n", sig);
@@ -412,7 +473,9 @@ int initialize_mining(StratumContext *ctx, const char *username, const char *alg
   ctx->ms->num_opencl_threads = 0;
   ctx->ms->num_cuda_threads = 0;
 
-  if (ctx->config->disable_gpu == false)
+  /* GPU support is not implemented for PEPEPOW in this release; skip. */
+  if (ctx->config->disable_gpu == false &&
+      strcmp(algorithm, "pepepow") != 0)
   {
     if (ctx->config->disable_opencl == false)
     {
@@ -554,8 +617,16 @@ int main(int argc, char **argv)
   self_test_hash_endianness();
   if (config->debug == 1)
   {
-    printf("[self-test] Running hoohash test vectors...\n");
-    self_test_from_main_vectors();
+    if (strcmp(config->algorithm, "pepepow") == 0)
+    {
+      printf("[self-test] Running PEPEPOW test vectors...\n");
+      self_test_pepepow();
+    }
+    else
+    {
+      printf("[self-test] Running hoohash test vectors...\n");
+      self_test_from_main_vectors();
+    }
   }
 
   if (config->list_gpus == false)

@@ -18,6 +18,7 @@ set(HOOMINER_SRC
   src/datatypes.c
   src/hoominer.c
   src/miner-hoohash.c
+  src/miner-pepepow.c
   src/opencl-host.c
   src/overclock.c
   src/reporting.c
