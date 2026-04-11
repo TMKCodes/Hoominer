@@ -668,7 +668,7 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
         /* Assemble 80-byte Bitcoin block header:
          *   [0-3]   version  (4 bytes, as-is from stratum LE hex)
          *   [4-35]  prevhash (32 bytes, as-is from stratum)
-         *   [36-67] merkle_root (32 bytes computed above)
+         *   [36-67] merkle_root (32 bytes, word-swapped to match cpuminer)
          *   [68-71] ntime  (4 bytes, as-is from stratum LE hex)
          *   [72-75] nbits  (4 bytes, as-is from stratum LE hex)
          *   [76-79] nonce  (4 bytes, zero - filled by miner)
@@ -682,7 +682,21 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
           printf("pepepow mining.notify: failed to decode header fields\n");
           return;
         }
-        memcpy(pepepow_hdr + 36, merkle_root, 32);
+        /* Word-swap the merkle root: reverse bytes within each uint32 word.
+         * cpuminer's stratum_gen_work stores merkle words via be32dec()
+         * (interpreting the raw SHA-256d bytes as big-endian uint32s) into
+         * the native-endian pdata[] array.  The scanhash function later
+         * serialises pdata[] with le32enc(), which on a little-endian host
+         * byte-swaps each 4-byte word relative to the SHA-256d output.
+         * We must replicate that transform so our BLAKE3 input matches
+         * what the pool and the working cpuminer both produce. */
+        for (int i = 0; i < 32; i += 4)
+        {
+          pepepow_hdr[36 + i + 0] = merkle_root[i + 3];
+          pepepow_hdr[36 + i + 1] = merkle_root[i + 2];
+          pepepow_hdr[36 + i + 2] = merkle_root[i + 1];
+          pepepow_hdr[36 + i + 3] = merkle_root[i + 0];
+        }
         /* nonce bytes [76-79] stay zero; miner writes them per attempt */
 
         /* Build extranonce2 hex string (all zeros, size en2_size bytes). */

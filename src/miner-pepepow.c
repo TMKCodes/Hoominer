@@ -100,8 +100,9 @@ static void hoohashv110_compute(double mat[64][64],
  *
  * Send a PEPEPOW share to the pool using Bitcoin stratum v1 5-parameter format:
  *   ["worker", "job_id", "extranonce2", "ntime", "nonce"]
- * The nonce is encoded as an 8-character lower-case hex string representing
- * the uint32 value (big-endian display, e.g. nonce=0x9EFE8071 → "9efe8071").
+ * The nonce is encoded as an 8-character lower-case hex string of the 4 LE
+ * bytes (matching cpuminer's le32enc + bin2hex convention), e.g.
+ * nonce value 42 → LE bytes [2A,00,00,00] → "2a000000".
  * -------------------------------------------------------------------------*/
 int submit_pepepow_solution(int sockfd, const char *worker, const char *job_id,
                             uint32_t nonce, const char *ntime_hex,
@@ -131,12 +132,15 @@ int submit_pepepow_solution(int sockfd, const char *worker, const char *job_id,
   pthread_cond_broadcast(&ms->job_queue.queue_cond);
   pthread_mutex_unlock(&ms->job_queue.queue_mutex);
 
-  /* Format nonce as 8-char lower-case hex string of the uint32 value
-   * (e.g. nonce=0x9EFE8071 → "9efe8071").  This is the numeric representation
-   * of the nonce; the pool interprets it as a uint32 and writes it as
-   * little-endian bytes at offset 76 of the reconstructed header. */
+  /* Format nonce as 8-char lower-case hex string of the LE bytes.
+   * Bitcoin stratum v1 convention (matching cpuminer's le32enc + bin2hex):
+   * the nonce uint32 is written as 4 little-endian bytes then hex-encoded,
+   * e.g. nonce=0x0000002A → LE bytes [2A,00,00,00] → "2a000000". */
+  uint8_t nonce_le[4];
+  write_uint32_le(nonce_le, nonce);
   char nonce_hex[9];
-  snprintf(nonce_hex, sizeof(nonce_hex), "%08x", nonce);
+  snprintf(nonce_hex, sizeof(nonce_hex), "%02x%02x%02x%02x",
+           nonce_le[0], nonce_le[1], nonce_le[2], nonce_le[3]);
 
   printf("PEPEPOW solution found, Nonce: %" PRIu32 " (0x%s)\n",
          nonce, nonce_hex);
