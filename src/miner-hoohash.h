@@ -56,6 +56,7 @@ struct QueuedJob
 {
   char *job_id;
   uint8_t header[DOMAIN_HASH_SIZE];
+  uint8_t pepepow_header[80];
   long long timestamp;
   double matrix[64][64];
   volatile int running;

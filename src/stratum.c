@@ -1,5 +1,7 @@
 #include "stratum.h"
 #include "platform_compat.h"
+#include "miner-pepepow.h"
+#include <blake3.h>
 
 long get_memory_usage()
 {
@@ -464,6 +466,123 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
         else
         {
           printf("Job ID string is NULL\n");
+        }
+        pthread_mutex_unlock(&ms->job_queue.queue_mutex);
+      }
+      else if (!strcmp(ctx->config->algorithm, "pepepow"))
+      {
+        // {
+        //   "id": null,
+        //   "method": "mining.notify",
+        //   "params": [
+        //     "job_id",
+        //     "80bytehexstring"   -- full 80-byte Bitcoin-style header (160 hex chars)
+        //   ]
+        // }
+        json_object *params;
+        if (!json_object_object_get_ex(message, "params", &params) ||
+            !json_object_is_type(params, json_type_array))
+        {
+          printf("pepepow mining.notify: params missing or not an array\n");
+          return;
+        }
+
+        json_object *job_id_obj   = json_object_array_get_idx(params, 0);
+        json_object *header_obj   = json_object_array_get_idx(params, 1);
+
+        if (!json_object_is_type(job_id_obj, json_type_string) ||
+            !json_object_is_type(header_obj, json_type_string))
+        {
+          printf("pepepow mining.notify: invalid parameter types\n");
+          return;
+        }
+
+        const char *hex_str = json_object_get_string(header_obj);
+        if (strlen(hex_str) != PEPEPOW_HEADER_SIZE * 2)
+        {
+          printf("pepepow mining.notify: unexpected header hex length %zu (expected %d)\n",
+                 strlen(hex_str), PEPEPOW_HEADER_SIZE * 2);
+          return;
+        }
+
+        uint8_t pepepow_hdr[PEPEPOW_HEADER_SIZE] = {0};
+        for (int bi = 0; bi < PEPEPOW_HEADER_SIZE; bi++)
+        {
+          if (sscanf(hex_str + bi * 2, "%2hhx", &pepepow_hdr[bi]) != 1)
+          {
+            printf("pepepow mining.notify: failed to parse header hex at byte %d\n", bi);
+            return;
+          }
+        }
+
+        /* Precompute the matrix from the nonce-masked header.
+         * The nonce occupies bytes [76..79]; zeroing them makes the matrix
+         * constant for all nonces of this job template. */
+        uint8_t masked_hdr[PEPEPOW_HEADER_SIZE];
+        memcpy(masked_hdr, pepepow_hdr, PEPEPOW_HEADER_SIZE);
+        masked_hdr[76] = 0;
+        masked_hdr[77] = 0;
+        masked_hdr[78] = 0;
+        masked_hdr[79] = 0;
+
+        blake3_hasher pp_hasher;
+        uint8_t matrix_seed[DOMAIN_HASH_SIZE];
+        blake3_hasher_init(&pp_hasher);
+        blake3_hasher_update(&pp_hasher, masked_hdr, PEPEPOW_HEADER_SIZE);
+        blake3_hasher_finalize(&pp_hasher, matrix_seed, DOMAIN_HASH_SIZE);
+
+        pthread_mutex_lock(&ms->job_queue.queue_mutex);
+
+        /* Evict jobs that are too old. */
+        while (ms->job_queue.head != ms->job_queue.tail &&
+               ms->job_queue.jobs[ms->job_queue.head].timestamp <
+                 (uint64_t)time(NULL) * 1000 - JOB_MAX_AGE * 1000ULL)
+        {
+          free(ms->job_queue.jobs[ms->job_queue.head].job_id);
+          ms->job_queue.jobs[ms->job_queue.head].job_id = NULL;
+          ms->job_queue.head = (ms->job_queue.head + 1) % JOB_QUEUE_SIZE;
+        }
+
+        int pp_next_tail = (ms->job_queue.tail + 1) % JOB_QUEUE_SIZE;
+        if (pp_next_tail == ms->job_queue.head)
+        {
+          free(ms->job_queue.jobs[ms->job_queue.head].job_id);
+          ms->job_queue.jobs[ms->job_queue.head].job_id = NULL;
+          ms->job_queue.head = (ms->job_queue.head + 1) % JOB_QUEUE_SIZE;
+        }
+
+        QueuedJob *pp_job = &ms->job_queue.jobs[ms->job_queue.tail];
+        const char *jid   = json_object_get_string(job_id_obj);
+        if (jid)
+        {
+          if (pp_job->job_id)
+          {
+            free(pp_job->job_id);
+            pp_job->job_id = NULL;
+          }
+          pp_job->job_id = strdup(jid);
+          if (pp_job->job_id)
+          {
+            if (ctx->config->debug == 1)
+              printf("PEPEPOW: received new job %s\n", pp_job->job_id);
+            memcpy(pp_job->pepepow_header, pepepow_hdr, PEPEPOW_HEADER_SIZE);
+            pp_job->timestamp = (long long)time(NULL) * 1000;
+            pp_job->running   = 1;
+            pp_job->completed = 0;
+            generateHoohashMatrix(matrix_seed, pp_job->matrix);
+            ms->job_queue.tail    = pp_next_tail;
+            ms->new_job_available = 1;
+            pthread_cond_broadcast(&ms->job_queue.queue_cond);
+            malloc_trim(0);
+          }
+          else
+          {
+            printf("PEPEPOW: failed to allocate memory for job ID\n");
+          }
+        }
+        else
+        {
+          printf("PEPEPOW: job ID string is NULL\n");
         }
         pthread_mutex_unlock(&ms->job_queue.queue_mutex);
       }
