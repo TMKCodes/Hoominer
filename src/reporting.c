@@ -1,7 +1,7 @@
 #include "reporting.h"
 #include "platform_compat.h"
 
-ReportingDevice *init_reporting_device(uint32_t device_id, char *device_name)
+ReportingDevice *init_reporting_device(uint32_t device_id, const char *device_name)
 {
   ReportingDevice *device = malloc(sizeof(ReportingDevice));
   if (!device)
@@ -10,7 +10,12 @@ ReportingDevice *init_reporting_device(uint32_t device_id, char *device_name)
   }
 
   device->device_id = device_id;
-  device->device_name = device_name;
+  device->device_name = device_name ? strdup(device_name) : NULL;
+  if (device_name && !device->device_name)
+  {
+    free(device);
+    return NULL;
+  }
   device->nonces_processed = 0;
   device->accepted = 0;
   device->rejected = 0;
@@ -88,6 +93,7 @@ void free_hashrate_display(HashrateDisplay *hd)
   for (uint32_t i = 0; i < hd->device_count; i++)
   {
     pthread_mutex_destroy(&hd->devices[i]->device_mutex);
+    free(hd->devices[i]->device_name);
     free(hd->devices[i]);
   }
   free(hd->devices);

@@ -29,10 +29,22 @@
 NVCC = nvcc
 
 # Flags
-CFLAGS = -Xcompiler "-fPIC -g -O0 -Wall -Wextra -static-libgcc -static-libstdc++"
+# Set STATIC=0 for a dynamically-linked build (useful for Valgrind/ASan and systems
+# that don't have static archives for all deps).
+STATIC ?= 1
+
+CFLAGS = -Xcompiler "-fPIC -g -O0 -Wall -Wextra"
 INCLUDES = -Ialgorithms/blake3/c -I/opt/cuda/include -I/usr/local/include -I/usr/include
-NVCCFLAGS = $(CFLAGS) $(INCLUDES) --linker-options "-static"
-LDFLAGS = -lcudart_static -lm -lOpenCL
+NVCCFLAGS = $(CFLAGS) $(INCLUDES)
+LDFLAGS = -lcudart_static -lm -lOpenCL -lssl -lcrypto -lgmp
+
+ifeq ($(STATIC),1)
+	CFLAGS += -Xcompiler "-static-libgcc -static-libstdc++"
+	NVCCFLAGS += --linker-options "-static"
+	PCIACCESS_LIB = /usr/local/lib/libpciaccess.a
+else
+	PCIACCESS_LIB = -lpciaccess
+endif
 
 # Directories
 SRC_DIR = src
@@ -76,14 +88,11 @@ $(BUILD_DIR)/%.cu.o: $(SRC_DIR)/%.cu | $(BUILD_DIR)
 # Link final binary
 $(MINER_BIN): $(OBJS) | $(BUILD_DIR)
 	$(NVCC) -o $@ $(OBJS) \
-		/usr/lib/x86_64-linux-gnu/libssl.a \
-		/usr/lib/x86_64-linux-gnu/libcrypto.a \
-		/usr/lib/x86_64-linux-gnu/libgmp.a \
 		algorithms/hoohash/build/lib-hoohash.a \
 		/usr/local/lib/libblake3.a \
 		/usr/local/lib/libmicrohttpd.a \
 		/usr/local/lib/libjson-c.a \
-		/usr/local/lib/x86_64-linux-gnu/libpciaccess.a \
+			$(PCIACCESS_LIB) \
 		$(LDFLAGS)
 	chmod +x $@
 

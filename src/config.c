@@ -8,11 +8,13 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
     fprintf(stderr, "Invalid parameters passed to parse_args\n");
     exit(1);
   }
-  
+
   config->disable_cpu = false;
   config->disable_gpu = false;
   config->disable_opencl = false;
   config->disable_cuda = false;
+  config->disable_opencl_cache = false;
+  config->opencl_reset_interval = 60;
   config->list_gpus = false;
   config->cpu_threads = 0;
   config->debug = false;
@@ -33,7 +35,7 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
       fprintf(stderr, "Null argument at position %d\n", i);
       continue;
     }
-    
+
     if (!strcmp(argv[i], "--user") && i + 1 < argc)
       config->username = argv[++i];
     else if (!strcmp(argv[i], "--pass") && i + 1 < argc)
@@ -50,6 +52,10 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
       config->disable_gpu = true;
     else if (!strcmp(argv[i], "--disable-opencl"))
       config->disable_opencl = true;
+    else if (!strcmp(argv[i], "--disable-opencl-cache"))
+      config->disable_opencl_cache = true;
+    else if (!strcmp(argv[i], "--opencl-reset-interval") && i + 1 < argc)
+      config->opencl_reset_interval = atoi(argv[++i]);
     else if (!strcmp(argv[i], "--disable-cuda"))
       config->disable_cuda = true;
     else if (!strcmp(argv[i], "--list-gpus"))
@@ -110,7 +116,7 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
           exit(1);
         }
         strcpy(url, url_part);
-        
+
         if (config->debug == 1)
           printf("Parsed URL part: '%s'\n", url);
 
@@ -163,7 +169,8 @@ void parse_args(int argc, char **argv, struct HoominerConfig *config)
 struct StratumConfig *get_stratum(struct HoominerConfig *config, int current_index)
 {
   // Prevent division by zero
-  if (config->stratum_urls_num == 0) {
+  if (config->stratum_urls_num == 0)
+  {
     return NULL;
   }
   struct StratumConfig *stratum = &config->stratum_urls[current_index % config->stratum_urls_num];
@@ -182,6 +189,8 @@ void show_config(char **argv)
   printf("--disable-cpu\t\t\t\tDisable CPU mining completely.\n");
   printf("--disable-gpu\t\t\t\tDisable GPU mining completely.\n");
   printf("--disable-opencl\t\t\tDisable OpenCL mining.\n");
+  printf("--disable-opencl-cache\t\tDisable OpenCL driver kernel cache (best-effort).\n");
+  printf("--opencl-reset-interval <seconds>\tReset OpenCL context periodically (default 60s, 0 to disable).\n");
   printf("--disable-cuda\t\t\t\tDisable CUDA mining.\n");
   printf("--debug\t\t\t\t\tMore information displayed.\n");
   printf("\nCPU parameters: \n");

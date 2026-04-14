@@ -17,6 +17,28 @@
 #include "api.h"
 #include "platform_compat.h"
 
+static void apply_opencl_cache_env(const struct HoominerConfig *config)
+{
+  if (!config || !config->disable_opencl_cache)
+    return;
+
+#ifdef _WIN32
+  _putenv_s("CL_CACHE_DISABLE", "1");
+  _putenv_s("POCL_CACHE_DISABLE", "1");
+  _putenv_s("POCL_CACHE", "0");
+  _putenv_s("AMD_OCL_CACHE_DISABLE", "1");
+#else
+  setenv("CL_CACHE_DISABLE", "1", 1);
+  setenv("CL_CACHE_DIR", "/tmp/hoominer_cl_cache", 1);
+  setenv("POCL_CACHE_DISABLE", "1", 1);
+  setenv("POCL_CACHE", "0", 1);
+  setenv("POCL_CACHE_DIR", "/tmp/hoominer_pocl_cache", 1);
+  setenv("AMD_OCL_CACHE_DISABLE", "1", 1);
+  setenv("OCL_CACHE_DISABLE", "1", 1);
+#endif
+  printf("OpenCL cache disabled (best-effort via environment variables)\n");
+}
+
 #ifdef _WIN32
 #include <windows.h>
 int get_cpu_threads()
@@ -48,6 +70,106 @@ int get_cpu_threads()
 
 char *exe_path = NULL;
 StratumContext *ctx = NULL;
+
+static void cleanup_stratum_connection(StratumContext *ctx)
+{
+  if (!ctx)
+    return;
+
+  // Ask threads to exit their loops.
+  ctx->running = false;
+
+  // Join (do not cancel) so threads can run their own cleanup sections.
+  if (ctx->recv_thread_created)
+  {
+    pthread_join(ctx->recv_thread, NULL);
+    ctx->recv_thread_created = 0;
+  }
+
+  if (ctx->hd && ctx->hd->display_thread_created)
+  {
+    pthread_join(ctx->hd->display_thread, NULL);
+    ctx->hd->display_thread_created = 0;
+  }
+
+  // Mining threads also use ctx->running; join them here to avoid leaking
+  // joinable thread resources across reconnect cycles.
+  if (ctx->ms)
+  {
+    if (ctx->ms->mining_cpu_threads)
+    {
+      for (int i = 0; i < ctx->ms->num_cpu_threads; i++)
+      {
+        pthread_join(ctx->ms->mining_cpu_threads[i], NULL);
+      }
+      free(ctx->ms->mining_cpu_threads);
+      ctx->ms->mining_cpu_threads = NULL;
+      ctx->ms->num_cpu_threads = 0;
+    }
+    if (ctx->ms->mining_opencl_threads)
+    {
+      for (int i = 0; i < ctx->ms->num_opencl_threads; i++)
+      {
+        pthread_join(ctx->ms->mining_opencl_threads[i], NULL);
+      }
+      free(ctx->ms->mining_opencl_threads);
+      ctx->ms->mining_opencl_threads = NULL;
+      ctx->ms->num_opencl_threads = 0;
+    }
+    if (ctx->ms->mining_cuda_threads)
+    {
+      for (int i = 0; i < ctx->ms->num_cuda_threads; i++)
+      {
+        pthread_join(ctx->ms->mining_cuda_threads[i], NULL);
+      }
+      free(ctx->ms->mining_cuda_threads);
+      ctx->ms->mining_cuda_threads = NULL;
+      ctx->ms->num_cuda_threads = 0;
+    }
+
+    // Clear job queue to prevent memory leaks on reconnection
+    pthread_mutex_lock(&ctx->ms->job_queue.queue_mutex);
+    for (int i = 0; i < JOB_QUEUE_SIZE; i++)
+    {
+      if (ctx->ms->job_queue.jobs[i].job_id)
+      {
+        free(ctx->ms->job_queue.jobs[i].job_id);
+        ctx->ms->job_queue.jobs[i].job_id = NULL;
+      }
+      ctx->ms->job_queue.jobs[i].running = 0;
+      ctx->ms->job_queue.jobs[i].completed = 0;
+    }
+    ctx->ms->job_queue.head = 0;
+    ctx->ms->job_queue.tail = 0;
+    ctx->ms->new_job_available = 0;
+    pthread_mutex_unlock(&ctx->ms->job_queue.queue_mutex);
+
+    // Clear extranonce on reconnection to avoid stale data
+    if (ctx->ms->extranonce)
+    {
+      free(ctx->ms->extranonce);
+      ctx->ms->extranonce = NULL;
+    }
+  }
+
+  // As a safety net, close SSL/socket here too (thread normally does SSL cleanup).
+  if (ctx->ssl)
+  {
+    SSL_shutdown(ctx->ssl);
+    SSL_free(ctx->ssl);
+    ctx->ssl = NULL;
+  }
+  if (ctx->ssl_ctx)
+  {
+    SSL_CTX_free(ctx->ssl_ctx);
+    ctx->ssl_ctx = NULL;
+  }
+  if (ctx->sockfd >= 0)
+  {
+    socket_close_portable(ctx->sockfd);
+    ctx->sockfd = -1;
+  }
+}
 static void self_test_hash_endianness(void)
 {
 #ifdef _WIN32
@@ -150,132 +272,27 @@ void cleanup(int sig)
     exit(sig == SIGINT || sig == SIGTERM ? EXIT_FAILURE : EXIT_SUCCESS);
   }
 
-  // Signal all threads to stop
-  ctx->running = false;
-
-  // Cancel and join threads
-  if (ctx->hd && ctx->hd->display_thread_created)
-  {
-    pthread_cancel(ctx->hd->display_thread);
-    pthread_join(ctx->hd->display_thread, NULL);
-  }
-
-  if (ctx->recv_thread_created)
-  {
-    pthread_cancel(ctx->recv_thread);
-    pthread_join(ctx->recv_thread, NULL);
-  }
+  // Stop and join connection/display threads
+  cleanup_stratum_connection(ctx);
 
   if (ctx->ms)
   {
-    // Stop mining threads
-    if (ctx->ms->mining_cpu_threads)
-    {
-      for (int i = 0; i < ctx->ms->num_cpu_threads; i++)
-      {
-        pthread_cancel(ctx->ms->mining_cpu_threads[i]);
-        pthread_join(ctx->ms->mining_cpu_threads[i], NULL);
-      }
-      free(ctx->ms->mining_cpu_threads);
-      ctx->ms->mining_cpu_threads = NULL;
-    }
-
-    if (ctx->ms->mining_opencl_threads)
-    {
-      for (int i = 0; i < ctx->ms->num_opencl_threads; i++)
-      {
-        pthread_cancel(ctx->ms->mining_opencl_threads[i]);
-        pthread_join(ctx->ms->mining_opencl_threads[i], NULL);
-      }
-      free(ctx->ms->mining_opencl_threads);
-      ctx->ms->mining_opencl_threads = NULL;
-    }
-
-    if (ctx->ms->mining_cuda_threads)
-    {
-      for (int i = 0; i < ctx->ms->num_cuda_threads; i++)
-      {
-        pthread_cancel(ctx->ms->mining_cuda_threads[i]);
-        pthread_join(ctx->ms->mining_cuda_threads[i], NULL);
-      }
-      free(ctx->ms->mining_cuda_threads);
-      ctx->ms->mining_cuda_threads = NULL;
-    }
-
-    // Clean up job queue
-    if (ctx->hd && ctx->hd->display_thread_created)
-    {
-      // printf("Cleaning display thread\n");
-      pthread_cancel(ctx->hd->display_thread);
-      pthread_join(ctx->hd->display_thread, NULL);
-      ctx->hd->display_thread_created = 0;
-    }
-    if (ctx->recv_thread_created)
-    {
-      // printf("Cleaning receive thread\n");
-      pthread_cancel(ctx->recv_thread);
-      pthread_join(ctx->recv_thread, NULL);
-      ctx->recv_thread_created = 0;
-    }
-    if (ctx->ms && ctx->ms->mining_cpu_threads)
-    {
-      // printf("Cleaning CPU threads\n");
-      for (int i = 0; i < ctx->ms->num_cpu_threads; i++)
-      {
-        pthread_cancel(ctx->ms->mining_cpu_threads[i]);
-        pthread_join(ctx->ms->mining_cpu_threads[i], NULL);
-      }
-      free(ctx->ms->mining_cpu_threads);
-      ctx->ms->mining_cpu_threads = NULL;
-    }
-    if (ctx->ms && ctx->ms->mining_opencl_threads)
-    {
-      // printf("Cleaning OpenCL threads\n");
-      for (int i = 0; i < ctx->ms->num_opencl_threads; i++)
-      {
-        pthread_cancel(ctx->ms->mining_opencl_threads[i]);
-        pthread_join(ctx->ms->mining_opencl_threads[i], NULL);
-      }
-      free(ctx->ms->mining_opencl_threads);
-      ctx->ms->mining_opencl_threads = NULL;
-    }
-    if (ctx->ms && ctx->ms->mining_cuda_threads)
-    {
-      // printf("Cleaning CUDA threads\n");
-      for (int i = 0; i < ctx->ms->num_cuda_threads; i++)
-      {
-        pthread_cancel(ctx->ms->mining_cuda_threads[i]);
-        pthread_join(ctx->ms->mining_cuda_threads[i], NULL);
-      }
-      free(ctx->ms->mining_cuda_threads);
-      ctx->ms->mining_cuda_threads = NULL;
-    }
-    if (ctx->sockfd >= 0)
-    {
-      // printf("Cleaning sockfd\n");
-      close(ctx->sockfd);
-      ctx->sockfd = -1;
-    }
-
     // Clear job queue
-    if (ctx->ms)
+    // printf("Cleaning jobs\n");
+    pthread_mutex_destroy(&ctx->ms->job_queue.queue_mutex);
+    pthread_cond_destroy(&ctx->ms->job_queue.queue_cond);
+    for (int i = 0; i < JOB_QUEUE_SIZE; i++)
     {
-      // printf("Cleaning jobs\n");
-      pthread_mutex_destroy(&ctx->ms->job_queue.queue_mutex);
-      pthread_cond_destroy(&ctx->ms->job_queue.queue_cond);
-      for (int i = 0; i < JOB_QUEUE_SIZE; i++)
+      if (ctx->ms->job_queue.jobs[i].job_id)
       {
-        if (ctx->ms->job_queue.jobs[i].job_id)
-        {
-          free(ctx->ms->job_queue.jobs[i].job_id);
-          ctx->ms->job_queue.jobs[i].job_id = NULL;
-        }
-        ctx->ms->job_queue.jobs[i].running = 0;
-        ctx->ms->job_queue.jobs[i].completed = 0;
+        free(ctx->ms->job_queue.jobs[i].job_id);
+        ctx->ms->job_queue.jobs[i].job_id = NULL;
       }
-      ctx->ms->job_queue.head = 0;
-      ctx->ms->job_queue.tail = 0;
+      ctx->ms->job_queue.jobs[i].running = 0;
+      ctx->ms->job_queue.jobs[i].completed = 0;
     }
+    ctx->ms->job_queue.head = 0;
+    ctx->ms->job_queue.tail = 0;
 
     for (int i = 0; i < JOB_QUEUE_SIZE; i++)
     {
@@ -291,6 +308,11 @@ void cleanup(int sig)
     {
       free(ctx->ms->global_target);
       ctx->ms->global_target = NULL;
+    }
+    if (ctx->ms->extranonce)
+    {
+      free(ctx->ms->extranonce);
+      ctx->ms->extranonce = NULL;
     }
     pthread_mutex_destroy(&ctx->ms->job_mutex);
     pthread_mutex_destroy(&ctx->ms->target_mutex);
@@ -335,8 +357,7 @@ void cleanup(int sig)
   // Clean up hashrate display
   if (ctx->hd)
   {
-    pthread_mutex_destroy(&ctx->hd->hashrate_mutex);
-    free(ctx->hd);
+    free_hashrate_display(ctx->hd);
     ctx->hd = NULL;
   }
 
@@ -345,6 +366,28 @@ void cleanup(int sig)
   {
     close(ctx->sockfd);
     ctx->sockfd = -1;
+  }
+
+  // Free config and its members
+  if (ctx->config)
+  {
+    // Free stratum pool IPs
+    for (int i = 0; i < ctx->config->stratum_urls_num; i++)
+    {
+      if (ctx->config->stratum_urls[i].pool_ip)
+      {
+        free(ctx->config->stratum_urls[i].pool_ip);
+        ctx->config->stratum_urls[i].pool_ip = NULL;
+      }
+    }
+    // Free build options if allocated
+    if (ctx->config->build_options)
+    {
+      free(ctx->config->build_options);
+      ctx->config->build_options = NULL;
+    }
+    free(ctx->config);
+    ctx->config = NULL;
   }
 
   // Free context
@@ -463,9 +506,7 @@ void initialize_reporting_devices(StratumContext *ctx)
       {
         char device_name[64];
         snprintf(device_name, sizeof(device_name), "GPU[BUS_ID: %d]", ctx->opencl_resources[i].pci_bus_id);
-        char *name_copy = strdup(device_name);
-        // ReportingDevice *opencl_reporting_device = init_reporting_device(ctx->cpu_device_count + i, ctx->opencl_resources[i].device_name);
-        ReportingDevice *opencl_reporting_device = init_reporting_device(ctx->cpu_device_count + i, name_copy);
+        ReportingDevice *opencl_reporting_device = init_reporting_device(ctx->cpu_device_count + i, device_name);
         add_reporting_device(ctx->hd, opencl_reporting_device);
       }
     }
@@ -475,9 +516,7 @@ void initialize_reporting_devices(StratumContext *ctx)
       {
         char device_name[64];
         snprintf(device_name, sizeof(device_name), "GPU[BUS_ID: %d]", ctx->cuda_resources[i].pci_bus_id);
-        char *name_copy = strdup(device_name);
-        // ReportingDevice *cuda_reporting_device = init_reporting_device(ctx->cpu_device_count + ctx->opencl_device_count + i, ctx->cuda_resources[i].device_name);
-        ReportingDevice *cuda_reporting_device = init_reporting_device(ctx->cpu_device_count + ctx->opencl_device_count + i, name_copy);
+        ReportingDevice *cuda_reporting_device = init_reporting_device(ctx->cpu_device_count + ctx->opencl_device_count + i, device_name);
         add_reporting_device(ctx->hd, cuda_reporting_device);
       }
     }
@@ -502,6 +541,7 @@ int main(int argc, char **argv)
   if (!ctx)
   {
     printf("Failed to allocate StratumContext\n");
+    free(config);
     return 1;
   }
   ctx->config = config;
@@ -568,6 +608,7 @@ int main(int argc, char **argv)
   printf("Executable directory: %s\n", exe_dir);
 
   // Initialize mining resources
+  apply_opencl_cache_env(config);
   if (initialize_mining(ctx, config->username, config->algorithm, exe_dir) != 0)
   {
     printf("Failed to initialize mining resources.\n");
@@ -578,6 +619,7 @@ int main(int argc, char **argv)
   if (config->list_gpus == true)
   {
     list_gpus(ctx);
+    cleanup(1);
     return 1;
   }
 
@@ -609,21 +651,7 @@ int main(int argc, char **argv)
 
     // Disconnection detected or initialization failed
     printf("Disconnected from stratum server. Reconnecting...\n");
-    ctx->running = false;
-
-    // Clean up threads and socket
-    if (ctx->hd && ctx->hd->display_thread_created)
-    {
-      pthread_cancel(ctx->hd->display_thread);
-      pthread_join(ctx->hd->display_thread, NULL);
-      ctx->hd->display_thread_created = 0;
-    }
-    if (ctx->recv_thread_created)
-    {
-      pthread_cancel(ctx->recv_thread);
-      pthread_join(ctx->recv_thread, NULL);
-      ctx->recv_thread_created = 0;
-    }
+    cleanup_stratum_connection(ctx);
     if (reconnect_start_time == 0)
     {
       reconnect_start_time = time(NULL);
@@ -638,7 +666,7 @@ int main(int argc, char **argv)
     printf("Reconnecting in 0.1 second...\n");
     sleep_ms(100);
   }
-  if(daemon)
+  if (daemon)
   {
     stop_api(daemon);
   }

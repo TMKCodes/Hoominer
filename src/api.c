@@ -1,4 +1,5 @@
 #include "api.h"
+#include <string.h>
 
 // Callback for handling HTTP requests
 static enum MHD_Result request_handler(void *cls, struct MHD_Connection *connection,
@@ -115,7 +116,13 @@ static enum MHD_Result request_handler(void *cls, struct MHD_Connection *connect
       struct json_object *version_string = json_object_new_string(ctx->version);
       json_object_object_add(root, "miner_version", version_string);
 
-      const char *json_response = json_object_to_json_string(root);
+      const char *json_str = json_object_to_json_string(root);
+      char *json_response = strdup(json_str);
+      json_object_put(root); // Free the JSON object
+      if (!json_response)
+      {
+        return MHD_NO;
+      }
       response = MHD_create_response_from_buffer(strlen(json_response), json_response, MHD_RESPMEM_MUST_FREE);
       MHD_add_response_header(response, "Content-Type", "application/json");
       ret = MHD_queue_response(connection, MHD_HTTP_OK, response);

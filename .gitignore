@@ -1,4 +1,5 @@
 build/
+releases/
 releases/*tar.gz
 releases/*sha1sum
 releases/hoominer/hoominer

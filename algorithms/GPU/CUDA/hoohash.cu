@@ -1067,7 +1067,7 @@ extern "C" __global__ void Hoohash_hash(
     if (compare_target(reversed_hash, target) <= 0)
     {
         // Try atomic write if better hash found
-        if (atomicCAS(&result->nonce, 0ULL, nonce) == 0)
+        if (atomicCAS((unsigned long long *)&result->nonce, 0ULL, (unsigned long long)nonce) == 0)
         {
             for (int i = 0; i < 32; i++)
             {

@@ -1,28 +1,37 @@
 #include "target.h"
 
+static mpz_t max_target_static;
+static int max_target_initialized = 0;
+static mpz_t max_val_static;
+static int max_val_initialized = 0;
+
 double difficulty_from_target(uint8_t *target, size_t len)
 {
-  mpz_t target_val, max_val, quotient;
+  if (!max_val_initialized)
+  {
+    mpz_init(max_val_static);
+    mpz_set_str(max_val_static, "00000000FFFF0000000000000000000000000000000000000000000000000000", 16);
+    max_val_initialized = 1;
+  }
+
+  mpz_t target_val, quotient;
   mpz_init(target_val);
-  mpz_init(max_val);
   mpz_init(quotient);
 
   mpz_import(target_val, len, 1, sizeof(uint8_t), 0, 0, target);
-  mpz_set_str(max_val, "00000000FFFF0000000000000000000000000000000000000000000000000000", 16);
+  // mpz_set_str(max_val, "00000000FFFF0000000000000000000000000000000000000000000000000000", 16);
 
   if (mpz_cmp_ui(target_val, 0) == 0)
   {
     mpz_clear(target_val);
-    mpz_clear(max_val);
     mpz_clear(quotient);
     return 0.0;
   }
 
-  mpz_tdiv_q(quotient, max_val, target_val);
+  mpz_tdiv_q(quotient, max_val_static, target_val);
   double difficulty = mpz_get_d(quotient);
 
   mpz_clear(target_val);
-  mpz_clear(max_val);
   mpz_clear(quotient);
   return difficulty;
 }
@@ -32,17 +41,23 @@ uint8_t *target_from_pool_difficulty(double difficulty, size_t len)
   if (difficulty <= 0)
     return NULL;
 
-  mpz_t max_target, target;
+  if (!max_target_initialized)
+  {
+    mpz_init(max_target_static);
+    mpz_set_str(max_target_static, "00000000FFFF0000000000000000000000000000000000000000000000000000", 16);
+    max_target_initialized = 1;
+  }
+
+  mpz_t target;
   mpf_t diff_mpf, max_mpf;
 
-  mpz_init(max_target);
   mpz_init(target);
   mpf_init2(diff_mpf, 512);
   mpf_init2(max_mpf, 512);
 
-  mpz_set_str(max_target, "00000000FFFF0000000000000000000000000000000000000000000000000000", 16);
+  // mpz_set_str(max_target, "00000000FFFF0000000000000000000000000000000000000000000000000000", 16);
   mpf_set_d(diff_mpf, difficulty);
-  mpf_set_z(max_mpf, max_target);
+  mpf_set_z(max_mpf, max_target_static);
   mpf_div(diff_mpf, max_mpf, diff_mpf);
   mpf_floor(diff_mpf, diff_mpf);
   mpz_set_f(target, diff_mpf);
@@ -74,7 +89,6 @@ uint8_t *target_from_pool_difficulty(double difficulty, size_t len)
   // printf("\nComputed Difficulty: %.6f\n", difficulty_from_target(target_bytes));
 
 cleanup:
-  mpz_clear(max_target);
   mpz_clear(target);
   mpf_clear(diff_mpf);
   mpf_clear(max_mpf);

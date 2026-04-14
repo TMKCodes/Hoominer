@@ -40,7 +40,7 @@ struct HashrateDisplay
   sig_atomic_t running;
 };
 
-ReportingDevice *init_reporting_device(uint32_t device_id, char *device_name);
+ReportingDevice *init_reporting_device(uint32_t device_id, const char *device_name);
 HashrateDisplay *init_hashrate_display(uint32_t initial_capacity);
 int add_reporting_device(HashrateDisplay *hd, ReportingDevice *device);
 void free_hashrate_display(HashrateDisplay *hd);

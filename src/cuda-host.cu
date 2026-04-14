@@ -533,32 +533,11 @@ cudaError_t run_cuda_hoohash_kernel(CudaResources *resource, unsigned char *prev
         return err;
     }
 
-    // Check if the matrix is correct
-    double matrix_back[64][64];
-    err = cudaMemcpyAsync(matrix_back, resource->matrix, 64 * 64 * sizeof(double), cudaMemcpyDeviceToHost, resource->stream);
-    if (err != cudaSuccess)
-    {
-        fprintf(stderr, "matrix_back copy failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
-        return err;
-    }
-
     err = cudaStreamSynchronize(resource->stream);
     if (err != cudaSuccess)
     {
         fprintf(stderr, "Stream synchronization failed for %s: %s\n", resource->device_name, cudaGetErrorString(err));
         return err;
-    }
-
-    // Check if the matrix is correct
-    for (size_t r = 0; r < 64; ++r)
-    {
-        for (size_t c = 0; c < 64; ++c)
-        {
-            if (matrix_back[r][c] != matrix[r][c])
-            {
-                fprintf(stderr, "Matrix mismatch at [%zu][%zu]: %f vs %f\n", r, c, matrix_back[r][c], matrix[r][c]);
-            }
-        }
     }
 
     return cudaSuccess;
@@ -575,6 +554,7 @@ void cleanup_cuda_resources(CudaResources *resource)
     cudaFree(resource->matrix);
     cudaFree(resource->target);
     cudaFree(resource->result);
+    cudaFree(resource->nonces_processed);
     if (resource->module && p_cuModuleUnload)
     {
         p_cuModuleUnload(resource->module);
