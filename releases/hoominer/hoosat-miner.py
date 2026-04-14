@@ -1,5 +1,6 @@
 import hashlib
 import os
+import sys
 import subprocess
 import tempfile
 import threading
@@ -13,9 +14,17 @@ HOOMINER_VERSION = "0.3.4"
 DOWNLOAD_URL = f"https://github.com/Hoosat-Oy/hoominer/releases/download/{HOOMINER_VERSION}/hoominer-{HOOMINER_VERSION}-windows.zip"
 
 
+miner_process = None
+
+
 def _get_cache_dir() -> str:
-    base_dir = os.getenv("LOCALAPPDATA") or os.path.expanduser("~")
-    cache_dir = os.path.join(base_dir, "HoosatMinerLauncher", f"hoominer-{HOOMINER_VERSION}")
+    if getattr(sys, 'frozen', False):
+        # Running as executable
+        exe_dir = os.path.dirname(sys.executable)
+    else:
+        # Running as script
+        exe_dir = os.path.dirname(os.path.abspath(__file__))
+    cache_dir = os.path.join(exe_dir, f"hoominer-{HOOMINER_VERSION}")
     os.makedirs(cache_dir, exist_ok=True)
     return cache_dir
 
@@ -135,6 +144,7 @@ def _set_busy(is_busy: bool, status_text: str | None = None) -> None:
 
 
 def _start_mining_worker(stratum: str, wallet: str, device_mode: str, disable_cuda: bool) -> None:
+    global miner_process
     try:
         cache_dir = _get_cache_dir()
         zip_path = os.path.join(cache_dir, f"hoominer-{HOOMINER_VERSION}-windows.zip")
@@ -147,14 +157,21 @@ def _start_mining_worker(stratum: str, wallet: str, device_mode: str, disable_cu
         cmd = _build_command(miner_exe, stratum, wallet, device_mode, disable_cuda)
 
         creationflags = 0
-        if os.name == "nt" and hasattr(subprocess, "CREATE_NEW_CONSOLE"):
-            creationflags = subprocess.CREATE_NEW_CONSOLE
+        # if os.name == "nt" and hasattr(subprocess, "CREATE_NEW_CONSOLE"):
+        #     creationflags = subprocess.CREATE_NEW_CONSOLE
 
-        subprocess.Popen(cmd, cwd=os.path.dirname(miner_exe), creationflags=creationflags)
+        miner_process = subprocess.Popen(cmd, cwd=os.path.dirname(miner_exe), creationflags=creationflags)
 
         def on_success() -> None:
-            _set_busy(False, "Started")
-            messagebox.showinfo("Success", "Hoominer started! A console window should show output.")
+            status_var.set("Mining")
+            start_button.config(text="Stop Mining", command=stop_mining, state=tk.NORMAL)
+            stratum_entry.config(state=tk.DISABLED)
+            wallet_entry.config(state=tk.DISABLED)
+            for rb in device_mode_radiobuttons:
+                rb.config(state=tk.DISABLED)
+            disable_cuda_check.config(state=tk.DISABLED)
+            for rb in disable_mode_radiobuttons:
+                rb.config(state=tk.DISABLED)
 
         root.after(0, on_success)
     except Exception as e:
@@ -165,7 +182,32 @@ def _start_mining_worker(stratum: str, wallet: str, device_mode: str, disable_cu
         root.after(0, on_error)
 
 
+def stop_mining():
+    global miner_process
+    if miner_process and miner_process.poll() is None:
+        miner_process.terminate()
+        try:
+            miner_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            miner_process.kill()
+        miner_process = None
+    start_button.config(text="Start Mining", command=start_mining)
+    status_var.set("Stopped")
+    stratum_entry.config(state=tk.NORMAL)
+    wallet_entry.config(state=tk.NORMAL)
+    for rb in device_mode_radiobuttons:
+        rb.config(state=tk.NORMAL)
+    disable_cuda_check.config(state=tk.NORMAL)
+    for rb in disable_mode_radiobuttons:
+        rb.config(state=tk.NORMAL)
+
+
 def start_mining() -> None:
+    global miner_process
+    if miner_process and miner_process.poll() is None:
+        messagebox.showinfo("Info", "Miner is already running.")
+        return
+
     stratum = stratum_entry.get().strip()
     wallet = wallet_entry.get().strip()
     device_mode = device_mode_var.get()
@@ -177,7 +219,7 @@ def start_mining() -> None:
     if "://" not in stratum or ":" not in stratum:
         if not messagebox.askyesno(
             "Confirm",
-            "Stratum address doesn’t look like a URL (e.g. stratum+tcp://pool:port).\n\nStart anyway?",
+            "Stratum address doesn't look like a URL (e.g. stratum+tcp://pool:port).\n\nStart anyway?",
         ):
             return
 
