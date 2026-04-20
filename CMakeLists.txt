@@ -55,6 +55,10 @@ target_include_directories(hoominer PRIVATE
 # OpenSSL
 find_package(OpenSSL REQUIRED)
 target_link_libraries(hoominer PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+OpenSSL - Force static linking
+# set(OPENSSL_USE_STATIC_LIBS TRUE)
+# find_package(OpenSSL REQUIRED)
+# target_link_libraries(hoominer PRIVATE OpenSSL::SSL OpenSSL::Crypto)
 
 # JSON-C (prefer CMake config from vcpkg)
 find_package(json-c CONFIG QUIET)
@@ -165,22 +169,18 @@ endif()
 # Link order: external libs then project libs
 target_link_libraries(hoominer PRIVATE ${BLAKE3_LIBRARY} hoohash)
 
-# GMP (big integers)
-find_package(GMP CONFIG QUIET)
-if(TARGET gmp::gmp)
-  target_link_libraries(hoominer PRIVATE gmp::gmp)
+#  Use specific static GMP path
+set(GMP_STATIC_LIB "/usr/lib/x86_64-linux-gnu/libgmp.a")
+if(EXISTS ${GMP_STATIC_LIB})
+    target_link_libraries(hoominer PRIVATE ${GMP_STATIC_LIB})
 else()
-  if(DEFINED VCPKG_ROOT)
-    list(APPEND _GMP_HINTS "${VCPKG_ROOT}/installed/${VCPKG_TARGET_TRIPLET}")
-  endif()
-  find_path(GMP_INCLUDE_DIR gmp.h HINTS ${_GMP_HINTS} PATH_SUFFIXES include)
-  find_library(GMP_LIBRARY NAMES gmp libgmp HINTS ${_GMP_HINTS} PATH_SUFFIXES lib debug/lib)
-  if(GMP_INCLUDE_DIR AND GMP_LIBRARY)
-    target_include_directories(hoominer PRIVATE ${GMP_INCLUDE_DIR})
-    target_link_libraries(hoominer PRIVATE ${GMP_LIBRARY})
-  else()
-    message(FATAL_ERROR "GMP not found. Install via vcpkg: 'vcpkg install gmp:x64-windows'")
-  endif()
+    find_library(GMP_LIB NAMES libgmp.a gmp)
+    target_link_libraries(hoominer PRIVATE ${GMP_LIB})
+endif()
+
+#  Add compiler flags for static std libs
+if(CMAKE_COMPILER_IS_GNUCC OR CMAKE_COMPILER_IS_GNUCXX)
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static-libgcc -static-libstdc++")
 endif()
 
 # Windows-specific libs
