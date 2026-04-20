@@ -152,6 +152,8 @@ static void cleanup_stratum_connection(StratumContext *ctx)
       free(ctx->ms->extranonce);
       ctx->ms->extranonce = NULL;
     }
+    ctx->ms->extranonce2_size = 0;
+    memset(ctx->ms->current_en2, 0, sizeof(ctx->ms->current_en2));
   }
 
   // As a safety net, close SSL/socket here too (thread normally does SSL cleanup).
@@ -297,10 +299,14 @@ static void self_test_pepepow(void)
   double mat[64][64];
   generateHoohashMatrix(matrix_seed, mat);
 
-  /* Test with nonce = 1 */
+  /* Test with nonce = 1: write as big-endian at offset 76 */
   uint8_t hdr_n1[PEPEPOW_HEADER_SIZE];
   memcpy(hdr_n1, test_header, PEPEPOW_HEADER_SIZE);
-  hdr_n1[76] = 1; /* nonce = 1, LE uint32 */
+  /* BE nonce=1: bytes [0x00, 0x00, 0x00, 0x01] */
+  hdr_n1[76] = 0x00;
+  hdr_n1[77] = 0x00;
+  hdr_n1[78] = 0x00;
+  hdr_n1[79] = 0x01;
 
   /* Compute first-pass hash and final PoW hash using hoohashv110 logic. */
   uint8_t first_pass[DOMAIN_HASH_SIZE];

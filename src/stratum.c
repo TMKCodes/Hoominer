@@ -518,14 +518,13 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
         int en2_size = ms->extranonce2_size > 0 ? ms->extranonce2_size : 4;
         if (en2_size > 16) en2_size = 16;
 
-        static uint8_t current_en2[16] = {0};
         uint8_t en2_snapshot[16] = {0};
-        memcpy(en2_snapshot, current_en2, en2_size);
+        memcpy(en2_snapshot, ms->current_en2, en2_size);
 
         /* Increment extranonce2 for the next job */
         for (int i = 0; i < en2_size; i++)
         {
-          if (++current_en2[i])
+          if (++ms->current_en2[i])
             break;
         }
 

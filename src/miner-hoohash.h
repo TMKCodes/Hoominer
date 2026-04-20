@@ -120,8 +120,9 @@ struct MiningState
   int num_opencl_threads;
   int num_cuda_threads;
   uint8_t *global_target;
-  char *extranonce;        /* extranonce1 hex string (owned memory) */
-  int extranonce2_size;    /* extranonce2 size in bytes (from subscribe response) */
+  char *extranonce;           /* extranonce1 hex string (owned memory) */
+  int extranonce2_size;       /* extranonce2 size in bytes (from subscribe response) */
+  uint8_t current_en2[16];   /* current extranonce2 value, incremented per job */
   MiningJob *job;
   pthread_mutex_t job_mutex;
   pthread_t *mining_cpu_threads;
