@@ -466,7 +466,12 @@ int pepepow_build_job(QueuedJob *job,
   size_t coinb2_len = strlen(coinb2_hex) / 2;
   size_t en1_len    = extranonce1_hex ? strlen(extranonce1_hex) / 2 : 0;
 
-  size_t coinbase_len = coinb1_len + en1_len + extranonce2_len + coinb2_len;
+  /* Guard against unreasonably large inputs to prevent overflow */
+  if (coinb1_len > 65536 || coinb2_len > 65536 || en1_len > 256 ||
+      (size_t)extranonce2_len > 256)
+    return -1;
+
+  size_t coinbase_len = coinb1_len + en1_len + (size_t)extranonce2_len + coinb2_len;
   uint8_t *coinbase = malloc(coinbase_len);
   if (!coinbase)
     return -1;
@@ -506,8 +511,8 @@ int pepepow_build_job(QueuedJob *job,
   sha256d(merkle_root, coinbase, coinbase_len);
   free(coinbase);
 
-  int branch_count = merkle_arr ? (int)json_object_array_length(merkle_arr) : 0;
-  for (int i = 0; i < branch_count; i++)
+  size_t branch_count = merkle_arr ? json_object_array_length(merkle_arr) : 0;
+  for (size_t i = 0; i < branch_count; i++)
   {
     json_object *branch_obj = json_object_array_get_idx(merkle_arr, i);
     const char *branch_hex  = json_object_get_string(branch_obj);
