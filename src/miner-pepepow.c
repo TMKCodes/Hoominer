@@ -226,23 +226,6 @@ int submit_pepepow_solution(int sockfd, const char *worker, const char *job_id,
     return -1;
   }
 
-  pthread_mutex_lock(&ms->job_queue.queue_mutex);
-  for (int i = 0; i < JOB_QUEUE_SIZE; i++)
-  {
-    int idx = (ms->job_queue.head + i) % JOB_QUEUE_SIZE;
-    if (ms->job_queue.jobs[idx].job_id &&
-        strcmp(ms->job_queue.jobs[idx].job_id, job_id) == 0)
-    {
-      ms->job_queue.jobs[idx].completed = 1;
-      ms->job_queue.jobs[idx].running   = 0;
-      if (idx == ms->job_queue.head)
-        ms->job_queue.head = (ms->job_queue.head + 1) % JOB_QUEUE_SIZE;
-      break;
-    }
-  }
-  pthread_cond_broadcast(&ms->job_queue.queue_cond);
-  pthread_mutex_unlock(&ms->job_queue.queue_mutex);
-
   /* Nonce as LE-bytes-as-hex: nonce value N → bytes [N&0xFF, N>>8, N>>16, N>>24] */
   char nonce_hex[9];
   snprintf(nonce_hex, sizeof(nonce_hex), "%02x%02x%02x%02x",
@@ -403,7 +386,8 @@ void *mining_cpu_thread_pepepow(void *arg)
         submit_pepepow_solution(ctx->sockfd, ctx->worker, current_job_id,
                                 nonce, job_extranonce2, job_extranonce2_len,
                                 job_ntime, ms, ctx, reporting_index);
-        break;
+        /* Do not break — continue mining the same job (submit multiple shares
+         * like a standard Bitcoin stratum miner does). */
       }
 
       nonce += step;
@@ -744,7 +728,8 @@ void *mining_opencl_thread_pepepow(void *arg)
           submit_pepepow_solution(ctx->sockfd, ctx->worker, current_job_id,
                                   winning_nonce, job_extranonce2, job_extranonce2_len,
                                   job_ntime, ms, ctx, reporting_index);
-          break;
+          /* Do not break — continue mining the same job (Bitcoin stratum allows
+           * multiple shares per job; keep hashing until the pool sends a new job). */
         }
       }
 

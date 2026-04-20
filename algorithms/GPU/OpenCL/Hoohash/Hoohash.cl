@@ -903,15 +903,15 @@ __kernel void Pepepow_hash(const ulong local_size, const ulong start_nonce,
   uchar final_hash[DOMAIN_HASH_SIZE];
   HoohashMatrixMultiplication(matrix, first_pass, final_hash, nonce_val);
 
-  /* Reverse and compare (matches CPU hoohashv110_compute reversal step) */
-  uchar reversed_hash[DOMAIN_HASH_SIZE];
-  for (int i = 0; i < DOMAIN_HASH_SIZE; i++)
-    reversed_hash[i] = final_hash[DOMAIN_HASH_SIZE - 1 - i];
-
-  if (compare_target(reversed_hash, target) <= 0) {
+  /* Compare final_hash directly (no reversal), matching the CPU miner which
+   * effectively compares final_hash[0] vs target[0] via its double-reversal:
+   * hoohashv110_compute reverses, then CPU compare_target reads from the end. */
+  if (compare_target(final_hash, target) <= 0) {
     if (atom_cmpxchg(&result->nonce, 0, (ulong)nonce32) == 0) {
+      /* Store the byte-reversed hash so the host-side CPU compare_target
+       * (which reads hash[31] first) also sees final_hash[0] first. */
       for (int i = 0; i < 32; i++)
-        result->hash[i] = final_hash[i];
+        result->hash[i] = final_hash[DOMAIN_HASH_SIZE - 1 - i];
     }
   }
 }
