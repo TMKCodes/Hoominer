@@ -727,6 +727,11 @@ cl_int opencl_reinit_device(StratumContext *ctx, OpenCLResources *resource, cons
   if (err != CL_SUCCESS)
     goto fail;
 
+  resource->pepepow_header_buf = clCreateBuffer(resource->context, CL_MEM_READ_ONLY, 80, NULL, &err);
+     if (err != CL_SUCCESS)
+	         goto fail;
+
+
   err = compile_opencl_kernel_from_xxd_header(ctx, resource, kernel, kernel_length, kernel_name, required_extensions, num_required_extensions);
   if (err != CL_SUCCESS)
   {
@@ -855,6 +860,7 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Buffer write failed for %s: %d\n", resource->device_name, err);
+    sleep(1);
     goto cleanup;
   }
 
@@ -921,6 +927,7 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Kernel execution failed for %s: %d\n", resource->device_name, err);
+    sleep(1);
     goto cleanup;
   }
 
@@ -1039,6 +1046,7 @@ cl_int run_opencl_pepepow_kernel(OpenCLResources *resource, cl_ulong global_work
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Buffer write failed for %s: %d\n", resource->device_name, err);
+    sleep(1);
     goto cleanup;
   }
 
@@ -1077,6 +1085,7 @@ cl_int run_opencl_pepepow_kernel(OpenCLResources *resource, cl_ulong global_work
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Kernel execution failed for %s: %d\n", resource->device_name, err);
+    sleep(1);
     goto cleanup;
   }
 
