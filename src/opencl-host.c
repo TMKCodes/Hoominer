@@ -728,9 +728,8 @@ cl_int opencl_reinit_device(StratumContext *ctx, OpenCLResources *resource, cons
     goto fail;
 
   resource->pepepow_header_buf = clCreateBuffer(resource->context, CL_MEM_READ_ONLY, 80, NULL, &err);
-     if (err != CL_SUCCESS)
-	         goto fail;
-
+  if (err != CL_SUCCESS)
+    goto fail;
 
   err = compile_opencl_kernel_from_xxd_header(ctx, resource, kernel, kernel_length, kernel_name, required_extensions, num_required_extensions);
   if (err != CL_SUCCESS)
@@ -860,7 +859,7 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Buffer write failed for %s: %d\n", resource->device_name, err);
-    sleep(1);
+    sleep_ms(1000);
     goto cleanup;
   }
 
@@ -927,7 +926,7 @@ cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Kernel execution failed for %s: %d\n", resource->device_name, err);
-    sleep(1);
+    sleep_ms(1000);
     goto cleanup;
   }
 
@@ -1000,9 +999,9 @@ void cleanup_all_opencl_gpus(OpenCLResources *resources, cl_uint device_count)
 }
 
 cl_int run_opencl_pepepow_kernel(OpenCLResources *resource, cl_ulong global_work_size, cl_ulong local_work_size,
-                                  unsigned char *header_template, unsigned char *target,
-                                  double matrix[64][64],
-                                  cl_ulong start_nonce, OpenCLResult *result)
+                                 unsigned char *header_template, unsigned char *target,
+                                 double matrix[64][64],
+                                 cl_ulong start_nonce, OpenCLResult *result)
 {
   cl_int err = CL_SUCCESS;
 
@@ -1046,7 +1045,7 @@ cl_int run_opencl_pepepow_kernel(OpenCLResources *resource, cl_ulong global_work
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Buffer write failed for %s: %d\n", resource->device_name, err);
-    sleep(1);
+    sleep_ms(1000);
     goto cleanup;
   }
 
@@ -1065,17 +1064,41 @@ cl_int run_opencl_pepepow_kernel(OpenCLResources *resource, cl_ulong global_work
   //   0: local_work_size, 1: start_nonce, 2: header_template,
   //   3: matrix,          4: target,      5: result
   err = clSetKernelArg(resource->kernel, 0, sizeof(cl_ulong), &local_work_size);
-  if (err != CL_SUCCESS) { fprintf(stderr, "Arg 0 failed for %s: %d\n", resource->device_name, err); goto cleanup; }
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Arg 0 failed for %s: %d\n", resource->device_name, err);
+    goto cleanup;
+  }
   err = clSetKernelArg(resource->kernel, 1, sizeof(cl_ulong), &start_nonce);
-  if (err != CL_SUCCESS) { fprintf(stderr, "Arg 1 failed for %s: %d\n", resource->device_name, err); goto cleanup; }
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Arg 1 failed for %s: %d\n", resource->device_name, err);
+    goto cleanup;
+  }
   err = clSetKernelArg(resource->kernel, 2, sizeof(cl_mem), &resource->pepepow_header_buf);
-  if (err != CL_SUCCESS) { fprintf(stderr, "Arg 2 failed for %s: %d\n", resource->device_name, err); goto cleanup; }
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Arg 2 failed for %s: %d\n", resource->device_name, err);
+    goto cleanup;
+  }
   err = clSetKernelArg(resource->kernel, 3, sizeof(cl_mem), &resource->matrix_buf);
-  if (err != CL_SUCCESS) { fprintf(stderr, "Arg 3 failed for %s: %d\n", resource->device_name, err); goto cleanup; }
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Arg 3 failed for %s: %d\n", resource->device_name, err);
+    goto cleanup;
+  }
   err = clSetKernelArg(resource->kernel, 4, sizeof(cl_mem), &resource->target_buf);
-  if (err != CL_SUCCESS) { fprintf(stderr, "Arg 4 failed for %s: %d\n", resource->device_name, err); goto cleanup; }
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Arg 4 failed for %s: %d\n", resource->device_name, err);
+    goto cleanup;
+  }
   err = clSetKernelArg(resource->kernel, 5, sizeof(cl_mem), &resource->result_buf);
-  if (err != CL_SUCCESS) { fprintf(stderr, "Arg 5 failed for %s: %d\n", resource->device_name, err); goto cleanup; }
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Arg 5 failed for %s: %d\n", resource->device_name, err);
+    goto cleanup;
+  }
 
   // Execute kernel
   err = clEnqueueNDRangeKernel(resource->queue, resource->kernel, 1, NULL,
@@ -1085,7 +1108,7 @@ cl_int run_opencl_pepepow_kernel(OpenCLResources *resource, cl_ulong global_work
   if (err != CL_SUCCESS)
   {
     fprintf(stderr, "Kernel execution failed for %s: %d\n", resource->device_name, err);
-    sleep(1);
+    sleep_ms(1000);
     goto cleanup;
   }
 
