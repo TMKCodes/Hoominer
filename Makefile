@@ -33,10 +33,10 @@ NVCC = nvcc
 # that don't have static archives for all deps).
 STATIC ?= 1
 
-CFLAGS = -Xcompiler "-fPIC -g -O0 -Wall -Wextra"
+CFLAGS = -Xcompiler "-fPIC -g -O0 -Wall -Wextra -fcommon"
 INCLUDES = -Ialgorithms/blake3/c -I/opt/cuda/include -I/usr/local/include -I/usr/include
 NVCCFLAGS = $(CFLAGS) $(INCLUDES)
-LDFLAGS = -lcudart_static -lm -lOpenCL -lssl -lcrypto -lgmp
+LDFLAGS = -lcudart_static -lm -lOpenCL -lssl -lcrypto -lgmp 
 
 ifeq ($(STATIC),1)
 	CFLAGS += -Xcompiler "-static-libgcc -static-libstdc++"

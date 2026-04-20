@@ -95,7 +95,7 @@ static void log_opencl_cache_telemetry(OpenCLResources *resource)
 
 #ifndef _WIN32
   long rss_bytes = get_rss_bytes();
-  struct mallinfo2 mi = mallinfo2();
+  struct mallinfo mi = mallinfo();
   long anon_kb = get_smaps_rollup_kb("Anonymous");
   long priv_dirty_kb = get_smaps_rollup_kb("Private_Dirty");
   long rss_kb = get_smaps_rollup_kb("Rss");
