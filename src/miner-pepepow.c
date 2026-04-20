@@ -1,5 +1,5 @@
 /*
- * PEPEPOW CPU mining support for Hoominer.
+ * PEPEPOW CPU and GPU mining support for Hoominer.
  *
  * PEPEPOW uses Bitcoin-style 80-byte block headers with standard stratum v1.
  * The pool sends: prevhash, coinbase1, coinbase2, merkle_branches, version,
@@ -744,8 +744,6 @@ void *mining_opencl_thread_pepepow(void *arg)
           submit_pepepow_solution(ctx->sockfd, ctx->worker, current_job_id,
                                   winning_nonce, job_extranonce2, job_extranonce2_len,
                                   job_ntime, ms, ctx, reporting_index);
-          current_job.completed = 1;
-          current_job.running   = 0;
           break;
         }
       }
