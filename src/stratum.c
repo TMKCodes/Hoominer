@@ -271,6 +271,13 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
           if (ms->global_target)
             free(ms->global_target);
           double difficulty = json_object_get_double(diff);
+          /*
+           * PEPEPOW uses a 65536x difficulty multiplier (same as the reference
+           * miner: sctx->job.diff / 65536.0).  Without this the target is
+           * 65536x too hard and no shares will ever be found.
+           */
+          if (strcmp(ctx->config->algorithm, "pepepow") == 0)
+            difficulty /= 65536.0;
           ms->global_target = target_from_pool_difficulty(difficulty, DOMAIN_HASH_SIZE);
           if (ctx->config->debug == 1)
             printf("Received new difficulty %f\n", difficulty);
