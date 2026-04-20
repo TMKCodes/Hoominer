@@ -500,6 +500,13 @@ OpenCLResources *initalize_all_opencl_gpus(StratumContext *ctx, cl_uint *device_
       fprintf(stderr, "Device %u (PCI-BUS-ID: %u) buffer creation failed: %d\n", idx, res[devices_found].pci_bus_id, err);
       goto cleanup;
     }
+
+    res[devices_found].pepepow_header_buf = clCreateBuffer(res[devices_found].context, CL_MEM_READ_ONLY, 80, NULL, &err);
+    if (err != CL_SUCCESS)
+    {
+      fprintf(stderr, "Device %u (PCI-BUS-ID: %u) pepepow header buffer creation failed: %d\n", idx, res[devices_found].pci_bus_id, err);
+      goto cleanup;
+    }
     devices_found++;
   }
 
@@ -539,6 +546,8 @@ cleanup:
       clReleaseMemObject(res[j].target_buf);
     if (res[j].result_buf)
       clReleaseMemObject(res[j].result_buf);
+    if (res[j].pepepow_header_buf)
+      clReleaseMemObject(res[j].pepepow_header_buf);
     if (res[j].queue)
       clReleaseCommandQueue(res[j].queue);
     if (res[j].context)
@@ -956,6 +965,8 @@ void cleanup_opencl_resources(OpenCLResources *resource)
     clReleaseMemObject(resource->target_buf);
   if (resource->result_buf)
     clReleaseMemObject(resource->result_buf);
+  if (resource->pepepow_header_buf)
+    clReleaseMemObject(resource->pepepow_header_buf);
   if (resource->kernel)
     clReleaseKernel(resource->kernel);
   if (resource->program)
@@ -979,4 +990,109 @@ void cleanup_all_opencl_gpus(OpenCLResources *resources, cl_uint device_count)
     cleanup_opencl_resources(&resources[i]);
   }
   free(resources);
+}
+
+cl_int run_opencl_pepepow_kernel(OpenCLResources *resource, cl_ulong global_work_size, cl_ulong local_work_size,
+                                  unsigned char *header_template, unsigned char *target,
+                                  double matrix[64][64],
+                                  cl_ulong start_nonce, OpenCLResult *result)
+{
+  cl_int err = CL_SUCCESS;
+
+  if (!resource || !header_template || !target || !matrix || !result)
+  {
+    fprintf(stderr, "Invalid input pointers for %s\n",
+            resource ? resource->device_name : "unknown");
+    return CL_INVALID_VALUE;
+  }
+
+  // Flatten matrix into row-major 1D array
+  const size_t MAT_DIM = 64;
+  const size_t MAT_COUNT = MAT_DIM * MAT_DIM;
+  const size_t MAT_BYTES = MAT_COUNT * sizeof(double);
+  if (!resource->flat_matrix_host || resource->flat_matrix_bytes < MAT_BYTES)
+  {
+    double *new_buf = (double *)realloc(resource->flat_matrix_host, MAT_BYTES);
+    if (!new_buf)
+    {
+      fprintf(stderr, "Failed to allocate host buffer for flattened matrix\n");
+      return CL_OUT_OF_HOST_MEMORY;
+    }
+    resource->flat_matrix_host = new_buf;
+    resource->flat_matrix_bytes = MAT_BYTES;
+  }
+  double *flat_matrix = resource->flat_matrix_host;
+  for (size_t r = 0; r < MAT_DIM; ++r)
+    for (size_t c = 0; c < MAT_DIM; ++c)
+      flat_matrix[r * MAT_DIM + c] = matrix[r][c];
+
+  // Write buffers
+  err = clEnqueueWriteBuffer(resource->queue, resource->pepepow_header_buf,
+                             CL_TRUE, 0, 80, header_template,
+                             0, NULL, NULL);
+  err |= clEnqueueWriteBuffer(resource->queue, resource->matrix_buf,
+                              CL_TRUE, 0, MAT_BYTES, flat_matrix,
+                              0, NULL, NULL);
+  err |= clEnqueueWriteBuffer(resource->queue, resource->target_buf,
+                              CL_TRUE, 0, DOMAIN_HASH_SIZE, target,
+                              0, NULL, NULL);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Buffer write failed for %s: %d\n", resource->device_name, err);
+    goto cleanup;
+  }
+
+  // Initialize result buffer to zero
+  OpenCLResult init_result = {0};
+  err = clEnqueueWriteBuffer(resource->queue, resource->result_buf, CL_TRUE,
+                             0, sizeof(OpenCLResult), &init_result,
+                             0, NULL, NULL);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Result buffer write failed for %s: %d\n", resource->device_name, err);
+    goto cleanup;
+  }
+
+  // Set kernel arguments:
+  //   0: local_work_size, 1: start_nonce, 2: header_template,
+  //   3: matrix,          4: target,      5: result
+  err = clSetKernelArg(resource->kernel, 0, sizeof(cl_ulong), &local_work_size);
+  if (err != CL_SUCCESS) { fprintf(stderr, "Arg 0 failed for %s: %d\n", resource->device_name, err); goto cleanup; }
+  err = clSetKernelArg(resource->kernel, 1, sizeof(cl_ulong), &start_nonce);
+  if (err != CL_SUCCESS) { fprintf(stderr, "Arg 1 failed for %s: %d\n", resource->device_name, err); goto cleanup; }
+  err = clSetKernelArg(resource->kernel, 2, sizeof(cl_mem), &resource->pepepow_header_buf);
+  if (err != CL_SUCCESS) { fprintf(stderr, "Arg 2 failed for %s: %d\n", resource->device_name, err); goto cleanup; }
+  err = clSetKernelArg(resource->kernel, 3, sizeof(cl_mem), &resource->matrix_buf);
+  if (err != CL_SUCCESS) { fprintf(stderr, "Arg 3 failed for %s: %d\n", resource->device_name, err); goto cleanup; }
+  err = clSetKernelArg(resource->kernel, 4, sizeof(cl_mem), &resource->target_buf);
+  if (err != CL_SUCCESS) { fprintf(stderr, "Arg 4 failed for %s: %d\n", resource->device_name, err); goto cleanup; }
+  err = clSetKernelArg(resource->kernel, 5, sizeof(cl_mem), &resource->result_buf);
+  if (err != CL_SUCCESS) { fprintf(stderr, "Arg 5 failed for %s: %d\n", resource->device_name, err); goto cleanup; }
+
+  // Execute kernel
+  err = clEnqueueNDRangeKernel(resource->queue, resource->kernel, 1, NULL,
+                               (const size_t *)&global_work_size,
+                               (const size_t *)&local_work_size,
+                               0, NULL, NULL);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "Kernel execution failed for %s: %d\n", resource->device_name, err);
+    goto cleanup;
+  }
+
+  err = clFinish(resource->queue);
+  if (err != CL_SUCCESS)
+  {
+    fprintf(stderr, "clFinish failed for %s: %d\n", resource->device_name, err);
+    goto cleanup;
+  }
+
+  err = clEnqueueReadBuffer(resource->queue, resource->result_buf, CL_TRUE,
+                            0, sizeof(OpenCLResult), result,
+                            0, NULL, NULL);
+  if (err != CL_SUCCESS)
+    fprintf(stderr, "Read failed for %s: %d\n", resource->device_name, err);
+
+cleanup:
+  return err;
 }

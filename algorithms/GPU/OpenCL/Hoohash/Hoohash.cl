@@ -862,6 +862,60 @@ typedef struct {
   uchar hash[32];
 } Result;
 
+__kernel void Pepepow_hash(const ulong local_size, const ulong start_nonce,
+                            __global const uchar *header_template,
+                            __global const double *matrix,
+                            __global const uchar *target,
+                            volatile __global Result *result) {
+#if defined(PAL)
+  int workId = get_group_id(0) * local_size + get_local_id(0);
+#else
+  int workId = get_global_id(0);
+#endif
+
+  uint nonce32 = (uint)(start_nonce + (ulong)workId);
+
+  /* Copy 80-byte header template to private memory and inject BE32(nonce32)
+   * at offset 76, matching the CPU miner's be32enc(&endiandata[19], nonce). */
+  __private uchar header[80];
+  for (int i = 0; i < 80; i++)
+    header[i] = header_template[i];
+  header[76] = (uchar)((nonce32 >> 24) & 0xFF);
+  header[77] = (uchar)((nonce32 >> 16) & 0xFF);
+  header[78] = (uchar)((nonce32 >>  8) & 0xFF);
+  header[79] = (uchar)( nonce32        & 0xFF);
+
+  /* BLAKE3(full 80-byte header with nonce injected) → first_pass */
+  blake3_hasher hasher;
+  blake3_hasher_init(&hasher);
+  blake3_hasher_update(&hasher, header, 80);
+  uchar first_pass[DOMAIN_HASH_SIZE];
+  blake3_hasher_finalize(&hasher, first_pass, DOMAIN_HASH_SIZE);
+
+  /* nonce_val = LE32(header+76) = byte-swap of nonce32, matching the CPU's
+   * le32dec of the BE-stored nonce value. */
+  ulong nonce_val = ((ulong)header[76])
+                  | ((ulong)header[77] << 8)
+                  | ((ulong)header[78] << 16)
+                  | ((ulong)header[79] << 24);
+
+  /* Matrix multiply */
+  uchar final_hash[DOMAIN_HASH_SIZE];
+  HoohashMatrixMultiplication(matrix, first_pass, final_hash, nonce_val);
+
+  /* Reverse and compare (matches CPU hoohashv110_compute reversal step) */
+  uchar reversed_hash[DOMAIN_HASH_SIZE];
+  for (int i = 0; i < DOMAIN_HASH_SIZE; i++)
+    reversed_hash[i] = final_hash[DOMAIN_HASH_SIZE - 1 - i];
+
+  if (compare_target(reversed_hash, target) <= 0) {
+    if (atom_cmpxchg(&result->nonce, 0, (ulong)nonce32) == 0) {
+      for (int i = 0; i < 32; i++)
+        result->hash[i] = final_hash[i];
+    }
+  }
+}
+
 __kernel void Hoohash_hash(const ulong local_size, const ulong start_nonce,
                            __global uchar *previous_header,
                            __global long *timestamp, __global double *matrix,

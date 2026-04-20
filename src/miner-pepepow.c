@@ -28,6 +28,8 @@
  */
 
 #include "miner-pepepow.h"
+#include "opencl-host.h"
+#include "hoohash_cl.h"
 #include <blake3.h>
 #include <openssl/sha.h>
 #include <time.h>
@@ -35,6 +37,9 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#ifndef _WIN32
+#include <malloc.h>
+#endif
 #include "platform_compat.h"
 
 #ifdef _WIN32
@@ -559,4 +564,197 @@ int pepepow_build_job(QueuedJob *job,
   job->completed = 0;
 
   return job->job_id ? 0 : -1;
+}
+
+/* ---------------------------------------------------------------------------
+ * mining_opencl_thread_pepepow
+ *
+ * OpenCL GPU mining thread for PEPEPOW.  Each GPU device iterates its own
+ * partition of the 32-bit nonce space, submitting via submit_pepepow_solution
+ * when the GPU kernel finds a hash that meets the target.
+ * -------------------------------------------------------------------------*/
+void *mining_opencl_thread_pepepow(void *arg)
+{
+  MiningThread *mt    = (MiningThread *)arg;
+  StratumContext *ctx = mt->ctx;
+  const int thread_index = mt->threadIndex;
+  free(mt);
+
+  MiningState *ms = ctx->ms;
+  char *current_job_id = NULL;
+  unsigned int trim_counter = 0;
+
+  cl_ulong local_work_size  = ctx->opencl_resources[thread_index].max_work_group_size;
+  cl_ulong global_work_size = ctx->opencl_resources[thread_index].max_global_work_size;
+  time_t last_opencl_reset  = time(NULL);
+
+  /* Partition the 32-bit nonce space evenly across GPU devices. */
+  int num_devices = ms->num_opencl_threads > 0 ? ms->num_opencl_threads : 1;
+  uint32_t nonce_stride = (uint32_t)(0x100000000ULL / (uint64_t)num_devices);
+  uint32_t start_nonce32 = (uint32_t)thread_index * nonce_stride;
+
+  int reporting_index = ctx->cpu_device_count + thread_index;
+  if (reporting_index >= ctx->hd->device_count)
+  {
+    fprintf(stderr, "PEPEPOW OpenCL reporting index %d exceeds device count %d\n",
+            reporting_index, ctx->hd->device_count);
+    return NULL;
+  }
+  ReportingDevice *opencl_reporting_device = ctx->hd->devices[reporting_index];
+
+  while (ctx->running)
+  {
+    /* Fetch the latest job from the queue. */
+    QueuedJob current_job = {0};
+    pthread_mutex_lock(&ms->job_queue.queue_mutex);
+    int job_available = (ms->job_queue.head != ms->job_queue.tail);
+    if (job_available)
+    {
+      int tail_idx = (ms->job_queue.tail - 1 + JOB_QUEUE_SIZE) % JOB_QUEUE_SIZE;
+      current_job = ms->job_queue.jobs[tail_idx];
+      if (current_job_id == NULL ||
+          strcmp(current_job_id, current_job.job_id) != 0)
+      {
+        free(current_job_id);
+        current_job_id = strdup(current_job.job_id);
+        if (!current_job_id)
+        {
+          pthread_mutex_unlock(&ms->job_queue.queue_mutex);
+          fprintf(stderr, "PEPEPOW OpenCL: memory allocation failed for job_id\n");
+          sleep_ms(100);
+          continue;
+        }
+      }
+      job_available = current_job.running && !current_job.completed;
+    }
+    pthread_mutex_unlock(&ms->job_queue.queue_mutex);
+
+    if (!job_available)
+    {
+      sleep_ms(100);
+      continue;
+    }
+
+    /* Snapshot job data. */
+    double mat[64][64];
+    uint8_t hdr_template[PEPEPOW_HEADER_SIZE];
+    uint8_t job_ntime[4];
+    uint8_t job_extranonce2[16];
+    int job_extranonce2_len;
+
+    memcpy(mat, current_job.matrix, sizeof(double) * 64 * 64);
+    memcpy(hdr_template, current_job.pepepow_header, PEPEPOW_HEADER_SIZE);
+    memcpy(job_ntime, current_job.ntime, 4);
+    job_extranonce2_len = current_job.extranonce2_len;
+    if (job_extranonce2_len > (int)sizeof(job_extranonce2))
+      job_extranonce2_len = (int)sizeof(job_extranonce2);
+    memcpy(job_extranonce2, current_job.extranonce2, job_extranonce2_len);
+
+    while (ctx->running)
+    {
+      /* Check that this is still the latest job. */
+      pthread_mutex_lock(&ms->job_queue.queue_mutex);
+      int job_valid = 0;
+      int tail_idx  = (ms->job_queue.tail - 1 + JOB_QUEUE_SIZE) % JOB_QUEUE_SIZE;
+      if (ms->job_queue.head != ms->job_queue.tail &&
+          ms->job_queue.jobs[tail_idx].job_id &&
+          strcmp(ms->job_queue.jobs[tail_idx].job_id, current_job_id) == 0 &&
+          ms->job_queue.jobs[tail_idx].running &&
+          !ms->job_queue.jobs[tail_idx].completed)
+      {
+        job_valid = 1;
+      }
+      pthread_mutex_unlock(&ms->job_queue.queue_mutex);
+
+      if (!job_valid)
+        break;
+
+      if (ctx->config->opencl_reset_interval > 0 &&
+          time(NULL) - last_opencl_reset >= ctx->config->opencl_reset_interval)
+      {
+        const char *required_extensions[] = {"cl_khr_fp64"};
+        printf("Resetting OpenCL device %d (interval %d s)\n",
+               thread_index, ctx->config->opencl_reset_interval);
+        cl_int reset_err = opencl_reinit_device(ctx, &ctx->opencl_resources[thread_index],
+                                                Hoohash_cl, Hoohash_cl_len, "Pepepow_hash",
+                                                required_extensions, 1);
+        if (reset_err != CL_SUCCESS)
+        {
+          fprintf(stderr, "PEPEPOW OpenCL reset failed for device %d: %d\n",
+                  thread_index, reset_err);
+          sleep_ms(1000);
+        }
+        local_work_size  = ctx->opencl_resources[thread_index].max_work_group_size;
+        global_work_size = ctx->opencl_resources[thread_index].max_global_work_size;
+        last_opencl_reset = time(NULL);
+      }
+
+      pthread_mutex_lock(&ms->target_mutex);
+      uint8_t local_target[DOMAIN_HASH_SIZE];
+      memcpy(local_target, ms->global_target, DOMAIN_HASH_SIZE);
+      pthread_mutex_unlock(&ms->target_mutex);
+
+      OpenCLResult result = {0};
+      cl_int status = run_opencl_pepepow_kernel(&ctx->opencl_resources[thread_index],
+                                                global_work_size, local_work_size,
+                                                hdr_template, local_target, mat,
+                                                (cl_ulong)start_nonce32, &result);
+
+#ifndef _WIN32
+      if (++trim_counter >= 1000)
+      {
+        malloc_trim(0);
+        trim_counter = 0;
+      }
+#endif
+
+      pthread_mutex_lock(&ctx->hd->hashrate_mutex);
+      opencl_reporting_device->nonces_processed += global_work_size;
+      pthread_mutex_unlock(&ctx->hd->hashrate_mutex);
+
+      if (status != CL_SUCCESS)
+      {
+        if (status == -54)
+        {
+          fprintf(stderr, "PEPEPOW device %d: CL_INVALID_WORK_GROUP_SIZE; halving local work size\n",
+                  thread_index);
+          local_work_size /= 2;
+        }
+        else
+        {
+          fprintf(stderr, "PEPEPOW device %d: kernel execution failed: %d\n",
+                  thread_index, status);
+        }
+        start_nonce32 += (uint32_t)global_work_size;
+        break;
+      }
+
+      if (result.nonce != 0)
+      {
+        pthread_mutex_lock(&ms->target_mutex);
+        int meets_target = compare_target(result.hash, ms->global_target, DOMAIN_HASH_SIZE);
+        pthread_mutex_unlock(&ms->target_mutex);
+
+        if (meets_target <= 0)
+        {
+          uint32_t winning_nonce = (uint32_t)result.nonce;
+          if (ctx->config->debug == 1)
+            printf("PEPEPOW GPU solution found: job=%s nonce=0x%08x\n",
+                   current_job_id, winning_nonce);
+          submit_pepepow_solution(ctx->sockfd, ctx->worker, current_job_id,
+                                  winning_nonce, job_extranonce2, job_extranonce2_len,
+                                  job_ntime, ms, ctx, reporting_index);
+          current_job.completed = 1;
+          current_job.running   = 0;
+          break;
+        }
+      }
+
+      start_nonce32 += (uint32_t)global_work_size;
+    }
+    current_job.running = 0;
+  }
+
+  free(current_job_id);
+  return NULL;
 }

@@ -56,6 +56,7 @@ struct OpenCLResources
   cl_uint pci_bus_id;
   double *flat_matrix_host;
   size_t flat_matrix_bytes;
+  cl_mem pepepow_header_buf;  /* 80-byte header template buffer for PEPEPOW */
 };
 
 OpenCLResources *initalize_all_opencl_gpus(StratumContext *ctx, cl_uint *device_count);
@@ -69,4 +70,8 @@ void cleanup_all_opencl_gpus(OpenCLResources *resources, cl_uint device_count);
 cl_int run_opencl_hoohash_kernel(OpenCLResources *resource, cl_ulong global_work_size, cl_ulong local_work_size,
                                  unsigned char *previous_header, unsigned char *target, double matrix[64][64],
                                  cl_long timestamp, cl_ulong start_nonce, OpenCLResult *result);
+
+cl_int run_opencl_pepepow_kernel(OpenCLResources *resource, cl_ulong global_work_size, cl_ulong local_work_size,
+                                 unsigned char *header_template, unsigned char *target, double matrix[64][64],
+                                 cl_ulong start_nonce, OpenCLResult *result);
 #endif

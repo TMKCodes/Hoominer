@@ -43,4 +43,10 @@ int submit_pepepow_solution(int sockfd, const char *worker, const char *job_id,
  */
 void *mining_cpu_thread_pepepow(void *arg);
 
+/*
+ * OpenCL GPU mining thread for PEPEPOW.
+ * arg must be a heap-allocated MiningThread *.
+ */
+void *mining_opencl_thread_pepepow(void *arg);
+
 #endif /* MINER_PEPEPOW_H */

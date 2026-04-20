@@ -402,6 +402,8 @@ void cleanup(int sig)
         clReleaseMemObject(ctx->opencl_resources[i].target_buf);
       if (ctx->opencl_resources[i].result_buf)
         clReleaseMemObject(ctx->opencl_resources[i].result_buf);
+      if (ctx->opencl_resources[i].pepepow_header_buf)
+        clReleaseMemObject(ctx->opencl_resources[i].pepepow_header_buf);
       if (ctx->opencl_resources[i].random_state_buf)
         clReleaseMemObject(ctx->opencl_resources[i].random_state_buf);
       if (ctx->opencl_resources[i].kernel)
@@ -479,9 +481,7 @@ int initialize_mining(StratumContext *ctx, const char *username, const char *alg
   ctx->ms->num_opencl_threads = 0;
   ctx->ms->num_cuda_threads = 0;
 
-  /* GPU support is not implemented for PEPEPOW in this release; skip. */
-  if (ctx->config->disable_gpu == false &&
-      strcmp(algorithm, "pepepow") != 0)
+  if (ctx->config->disable_gpu == false)
   {
     if (ctx->config->disable_opencl == false)
     {
@@ -504,9 +504,26 @@ int initialize_mining(StratumContext *ctx, const char *username, const char *alg
             printf("Loaded OpenCL Hoohash kernel for device %u\n", ctx->cpu_device_count + i);
           }
         }
+        else if (strcmp(algorithm, "pepepow") == 0)
+        {
+          for (cl_uint i = 0; i < ctx->opencl_device_count; i++)
+          {
+            const char *required_extensions[] = {"cl_khr_fp64"};
+            size_t num_required_extensions = 1;
+            cl_int compile_kernel_error = compile_opencl_kernel_from_xxd_header(ctx, &ctx->opencl_resources[i], Hoohash_cl, Hoohash_cl_len, "Pepepow_hash", required_extensions, num_required_extensions);
+            if (compile_kernel_error != CL_SUCCESS)
+            {
+              printf("Failed to initialize OpenCL Pepepow kernel, Error code %d.\n", compile_kernel_error);
+              return -1;
+            }
+            printf("Loaded OpenCL Pepepow kernel for device %u\n", ctx->cpu_device_count + i);
+          }
+        }
       }
     }
-    if (ctx->config->disable_cuda == false)
+    /* CUDA is not supported for PEPEPOW. */
+    if (ctx->config->disable_cuda == false &&
+        strcmp(algorithm, "pepepow") != 0)
     {
       ctx->cuda_resources = initialize_all_cuda_gpus(&ctx->cuda_device_count, ctx->config->selected_gpus, ctx->config->selected_gpus_num);
       if (ctx->cuda_resources != NULL && ctx->config->list_gpus == false)
