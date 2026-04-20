@@ -56,6 +56,10 @@ struct QueuedJob
 {
   char *job_id;
   uint8_t header[DOMAIN_HASH_SIZE];
+  uint8_t pepepow_header[80];   /* BE-encoded 80-byte endiandata template (nonce zeroed) */
+  uint8_t ntime[4];             /* ntime bytes for PEPEPOW submission */
+  uint8_t extranonce2[16];      /* extranonce2 bytes used when building this job */
+  int     extranonce2_len;      /* length of extranonce2 in bytes */
   long long timestamp;
   double matrix[64][64];
   volatile int running;
@@ -116,7 +120,8 @@ struct MiningState
   int num_opencl_threads;
   int num_cuda_threads;
   uint8_t *global_target;
-  char *extranonce; // Owned memory - must be freed
+  char *extranonce;        /* extranonce1 hex string (owned memory) */
+  int extranonce2_size;    /* extranonce2 size in bytes (from subscribe response) */
   MiningJob *job;
   pthread_mutex_t job_mutex;
   pthread_t *mining_cpu_threads;

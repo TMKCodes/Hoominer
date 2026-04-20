@@ -1,4 +1,5 @@
 #include "stratum.h"
+#include "miner-pepepow.h"
 #include "platform_compat.h"
 
 long get_memory_usage()
@@ -160,6 +161,19 @@ int start_stratum_connection(StratumContext *ctx, HoominerConfig *config)
     socket_close_portable(ctx->sockfd);
     ctx->sockfd = -1;
     return -1;
+  }
+
+  /* For PEPEPOW, subscribe to extranonce notifications so the pool can
+   * update extranonce1 mid-session (optional but expected by some pools). */
+  if (strcmp(config->algorithm, "pepepow") == 0)
+  {
+    const char *en_sub = "{\"id\": 3, \"method\": \"mining.extranonce.subscribe\", \"params\": []}\n";
+    SSL *ssl_conn = stratumConfig->ssl_enabled ? ctx->ssl : NULL;
+    if (ssl_conn)
+      SSL_write(ssl_conn, en_sub, (int)strlen(en_sub));
+    else
+      send(ctx->sockfd, en_sub, strlen(en_sub), 0);
+    printf("Sent mining.extranonce.subscribe\n");
   }
 
   if (pthread_create(&ctx->recv_thread, NULL, stratum_receive_thread, ctx) != 0)
@@ -467,12 +481,131 @@ void process_stratum_message(json_object *message, StratumContext *ctx, MiningSt
         }
         pthread_mutex_unlock(&ms->job_queue.queue_mutex);
       }
+      else if (!strcmp(ctx->config->algorithm, "pepepow"))
+      {
+        /*
+         * Standard Bitcoin stratum v1 mining.notify for PEPEPOW:
+         * params: [job_id, prevhash(64), coinb1, coinb2, merkle_branches[],
+         *          version(8), nbits(8), ntime(8), clean_jobs]
+         */
+        json_object *params;
+        if (!json_object_object_get_ex(message, "params", &params) ||
+            !json_object_is_type(params, json_type_array))
+        {
+          printf("pepepow mining.notify: params missing or not an array\n");
+          return;
+        }
+
+        const char *job_id_str = json_object_get_string(json_object_array_get_idx(params, 0));
+        const char *prevhash   = json_object_get_string(json_object_array_get_idx(params, 1));
+        const char *coinb1     = json_object_get_string(json_object_array_get_idx(params, 2));
+        const char *coinb2     = json_object_get_string(json_object_array_get_idx(params, 3));
+        json_object *merkle_arr = json_object_array_get_idx(params, 4);
+        const char *version    = json_object_get_string(json_object_array_get_idx(params, 5));
+        const char *nbits      = json_object_get_string(json_object_array_get_idx(params, 6));
+        const char *ntime      = json_object_get_string(json_object_array_get_idx(params, 7));
+
+        if (!job_id_str || !prevhash || !coinb1 || !coinb2 ||
+            !version || !nbits || !ntime ||
+            strlen(prevhash) != 64 || strlen(version) != 8 ||
+            strlen(nbits) != 8 || strlen(ntime) != 8)
+        {
+          printf("pepepow mining.notify: invalid parameters\n");
+          return;
+        }
+
+        /* Build extranonce2 for this job (incremented per notify). */
+        int en2_size = ms->extranonce2_size > 0 ? ms->extranonce2_size : 4;
+        if (en2_size > 16) en2_size = 16;
+
+        static uint8_t current_en2[16] = {0};
+        uint8_t en2_snapshot[16] = {0};
+        memcpy(en2_snapshot, current_en2, en2_size);
+
+        /* Increment extranonce2 for the next job */
+        for (int i = 0; i < en2_size; i++)
+        {
+          if (++current_en2[i])
+            break;
+        }
+
+        pthread_mutex_lock(&ms->job_queue.queue_mutex);
+
+        /* Evict stale jobs */
+        while (ms->job_queue.head != ms->job_queue.tail &&
+               ms->job_queue.jobs[ms->job_queue.head].timestamp <
+                 (long long)time(NULL) * 1000 - JOB_MAX_AGE * 1000LL)
+        {
+          free(ms->job_queue.jobs[ms->job_queue.head].job_id);
+          ms->job_queue.jobs[ms->job_queue.head].job_id = NULL;
+          ms->job_queue.head = (ms->job_queue.head + 1) % JOB_QUEUE_SIZE;
+        }
+
+        int pp_next_tail = (ms->job_queue.tail + 1) % JOB_QUEUE_SIZE;
+        if (pp_next_tail == ms->job_queue.head)
+        {
+          free(ms->job_queue.jobs[ms->job_queue.head].job_id);
+          ms->job_queue.jobs[ms->job_queue.head].job_id = NULL;
+          ms->job_queue.head = (ms->job_queue.head + 1) % JOB_QUEUE_SIZE;
+        }
+
+        QueuedJob *pp_job = &ms->job_queue.jobs[ms->job_queue.tail];
+
+        if (pepepow_build_job(pp_job, job_id_str, prevhash, coinb1, coinb2,
+                              merkle_arr, version, nbits, ntime,
+                              ms->extranonce, en2_snapshot, en2_size) == 0)
+        {
+          if (ctx->config->debug == 1)
+            printf("PEPEPOW: new job %s ntime=%s\n", pp_job->job_id, ntime);
+
+          ms->job_queue.tail    = pp_next_tail;
+          ms->new_job_available = 1;
+          pthread_cond_broadcast(&ms->job_queue.queue_cond);
+          malloc_trim(0);
+        }
+        else
+        {
+          printf("PEPEPOW: failed to build job %s\n", job_id_str);
+        }
+
+        pthread_mutex_unlock(&ms->job_queue.queue_mutex);
+      }
     }
   }
   else
   {
     json_object *result;
     json_object *error;
+
+    /* Handle subscribe response: result is an array containing extranonce1
+     * and extranonce2_size.  Must be processed before any mining.notify. */
+    if (json_object_object_get_ex(message, "result", &result) &&
+        json_object_is_type(result, json_type_array) &&
+        strcmp(ctx->config->algorithm, "pepepow") == 0)
+    {
+      /* result = [[subscriptions], extranonce1_hex, extranonce2_size] */
+      json_object *en1_obj  = json_object_array_get_idx(result, 1);
+      json_object *en2s_obj = json_object_array_get_idx(result, 2);
+      if (en1_obj && json_object_is_type(en1_obj, json_type_string))
+      {
+        const char *en1 = json_object_get_string(en1_obj);
+        if (en1)
+        {
+          pthread_mutex_lock(&ms->target_mutex);
+          free(ms->extranonce);
+          ms->extranonce = strdup(en1);
+          if (en2s_obj)
+            ms->extranonce2_size = json_object_get_int(en2s_obj);
+          if (ms->extranonce2_size <= 0)
+            ms->extranonce2_size = 4;
+          pthread_mutex_unlock(&ms->target_mutex);
+          printf("PEPEPOW: extranonce1=%s extranonce2_size=%d\n",
+                 en1, ms->extranonce2_size);
+        }
+      }
+      return;
+    }
+
     int devices = ctx->cpu_device_count + ctx->opencl_device_count + ctx->cuda_device_count;
     if (devices > 0)
     {
