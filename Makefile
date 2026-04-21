@@ -36,12 +36,12 @@ STATIC ?= 1
 CFLAGS = -Xcompiler "-fPIC -g -O0 -Wall -Wextra -fcommon"
 INCLUDES = -Ialgorithms/blake3/c -I/opt/cuda/include -I/usr/local/include -I/usr/include
 NVCCFLAGS = $(CFLAGS) $(INCLUDES)
-LDFLAGS = -lcudart_static -lm -lOpenCL -lssl -lcrypto -lgmp 
+LDFLAGS = -lcudart_static -lm -lOpenCL
 
 ifeq ($(STATIC),1)
 	CFLAGS += -Xcompiler "-static-libgcc -static-libstdc++"
 	NVCCFLAGS += --linker-options "-static"
-	PCIACCESS_LIB = /usr/local/lib/libpciaccess.a
+	PCIACCESS_LIB = /usr/local/lib/x86_64-linux-gnu/libpciaccess.a
 else
 	PCIACCESS_LIB = -lpciaccess
 endif
@@ -92,6 +92,10 @@ $(MINER_BIN): $(OBJS) | $(BUILD_DIR)
 		/usr/local/lib/libblake3.a \
 		/usr/local/lib/libmicrohttpd.a \
 		/usr/local/lib/libjson-c.a \
+		/usr/local/lib/x86_64-linux-gnu/libpciaccess.a \
+		/usr/lib/x86_64-linux-gnu/libssl.a \
+		/usr/lib/x86_64-linux-gnu/libcrypto.a \
+		 /usr/lib/x86_64-linux-gnu/libgmp.a \
 			$(PCIACCESS_LIB) \
 		$(LDFLAGS)
 	chmod +x $@
