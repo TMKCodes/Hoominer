@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import sys
 import subprocess
@@ -9,8 +10,7 @@ import urllib.request
 import zipfile
 from tkinter import messagebox, ttk
 
-
-HOOMINER_VERSION = "0.3.4"
+HOOMINER_VERSION = "0.4.1"
 DOWNLOAD_URL = f"https://github.com/Hoosat-Oy/hoominer/releases/download/{HOOMINER_VERSION}/hoominer-{HOOMINER_VERSION}-windows.zip"
 
 
@@ -97,11 +97,12 @@ def _build_command(
     wallet: str,
     device_mode: str,
     disable_cuda: bool,
+    algorithm: str,
 ) -> list[str]:
     cmd = [
         miner_exe,
         "--algorithm",
-        "hoohash",
+        algorithm,
         "--stratum",
         stratum,
         "--user",
@@ -124,11 +125,75 @@ def _build_command(
 
     return cmd
 
+
+def _get_settings_file() -> str:
+    """Get the path to the settings file."""
+    if getattr(sys, 'frozen', False):
+        # Running as executable
+        exe_dir = os.path.dirname(sys.executable)
+    else:
+        # Running as script
+        exe_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(exe_dir, "hoosat-miner-settings.json")
+
+
+def _save_settings() -> None:
+    """Save current settings to file."""
+    settings = {
+        "stratum": stratum_entry.get().strip(),
+        "wallet": wallet_entry.get().strip(),
+        "algorithm": algorithm_var.get(),
+        "device_mode": device_mode_var.get(),
+        "disable_cuda": bool(disable_cuda_var.get()),
+    }
+    try:
+        with open(_get_settings_file(), "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=2)
+    except Exception:
+        # Silently ignore save errors
+        pass
+
+
+def _load_settings() -> None:
+    """Load settings from file and apply them."""
+    settings_file = _get_settings_file()
+    if not os.path.exists(settings_file):
+        return
+
+    try:
+        with open(settings_file, "r", encoding="utf-8") as f:
+            settings = json.load(f)
+
+        # Apply loaded settings
+        if "stratum" in settings and settings["stratum"]:
+            stratum_entry.delete(0, tk.END)
+            stratum_entry.insert(0, settings["stratum"])
+
+        if "wallet" in settings and settings["wallet"]:
+            wallet_entry.delete(0, tk.END)
+            wallet_entry.insert(0, settings["wallet"])
+
+        if "algorithm" in settings:
+            algorithm_var.set(settings["algorithm"])
+
+        if "device_mode" in settings:
+            device_mode_var.set(settings["device_mode"])
+
+        if "disable_cuda" in settings:
+            disable_cuda_var.set(settings["disable_cuda"])
+
+    except Exception:
+        # Silently ignore load errors
+        pass
+
+
 def _set_busy(is_busy: bool, status_text: str | None = None) -> None:
     state = (tk.DISABLED if is_busy else tk.NORMAL)
     start_button.config(state=state)
     stratum_entry.config(state=state)
     wallet_entry.config(state=state)
+    for rb in algorithm_radiobuttons:
+        rb.config(state=state)
     for rb in device_mode_radiobuttons:
         rb.config(state=state)
     disable_cuda_check.config(state=state)
@@ -143,7 +208,7 @@ def _set_busy(is_busy: bool, status_text: str | None = None) -> None:
         status_var.set(status_text)
 
 
-def _start_mining_worker(stratum: str, wallet: str, device_mode: str, disable_cuda: bool) -> None:
+def _start_mining_worker(stratum: str, wallet: str, device_mode: str, disable_cuda: bool, algorithm: str) -> None:
     global miner_process
     try:
         cache_dir = _get_cache_dir()
@@ -154,7 +219,7 @@ def _start_mining_worker(stratum: str, wallet: str, device_mode: str, disable_cu
         _extract_if_needed(zip_path, extract_dir)
         miner_exe = _find_exe(extract_dir, "hoominer.exe")
 
-        cmd = _build_command(miner_exe, stratum, wallet, device_mode, disable_cuda)
+        cmd = _build_command(miner_exe, stratum, wallet, device_mode, disable_cuda, algorithm)
 
         creationflags = 0
         # if os.name == "nt" and hasattr(subprocess, "CREATE_NEW_CONSOLE"):
@@ -167,6 +232,8 @@ def _start_mining_worker(stratum: str, wallet: str, device_mode: str, disable_cu
             start_button.config(text="Stop Mining", command=stop_mining, state=tk.NORMAL)
             stratum_entry.config(state=tk.DISABLED)
             wallet_entry.config(state=tk.DISABLED)
+            for rb in algorithm_radiobuttons:
+                rb.config(state=tk.DISABLED)
             for rb in device_mode_radiobuttons:
                 rb.config(state=tk.DISABLED)
             disable_cuda_check.config(state=tk.DISABLED)
@@ -195,6 +262,8 @@ def stop_mining():
     status_var.set("Stopped")
     stratum_entry.config(state=tk.NORMAL)
     wallet_entry.config(state=tk.NORMAL)
+    for rb in algorithm_radiobuttons:
+        rb.config(state=tk.NORMAL)
     for rb in device_mode_radiobuttons:
         rb.config(state=tk.NORMAL)
     disable_cuda_check.config(state=tk.NORMAL)
@@ -212,6 +281,10 @@ def start_mining() -> None:
     wallet = wallet_entry.get().strip()
     device_mode = device_mode_var.get()
     disable_cuda = bool(disable_cuda_var.get())
+    algorithm = algorithm_var.get()
+
+    # Save current settings
+    _save_settings()
 
     if not stratum or not wallet:
         messagebox.showerror("Error", "Stratum address and wallet address are required.")
@@ -226,7 +299,7 @@ def start_mining() -> None:
     _set_busy(True, "Downloading / starting…")
     thread = threading.Thread(
         target=_start_mining_worker,
-        args=(stratum, wallet, device_mode, disable_cuda),
+        args=(stratum, wallet, device_mode, disable_cuda, algorithm),
         daemon=True,
     )
     thread.start()
@@ -265,23 +338,34 @@ options_frame = ttk.LabelFrame(main, text="Options", padding=10)
 options_frame.grid(row=1, column=0, sticky="ew", pady=(12, 0))
 options_frame.columnconfigure(0, weight=1)
 
-ttk.Label(options_frame, text="Device:").grid(row=0, column=0, sticky="w")
+ttk.Label(options_frame, text="Algorithm:").grid(row=0, column=0, sticky="w")
+algorithm_var = tk.StringVar(value="hoohash")
+algorithm_radiobuttons: list[tk.Radiobutton] = []
+rb_alg_hoohash = tk.Radiobutton(options_frame, text="Hoohash", variable=algorithm_var, value="hoohash")
+rb_alg_pepepow = tk.Radiobutton(options_frame, text="Pepepow", variable=algorithm_var, value="pepepow")
+algorithm_radiobuttons.extend([rb_alg_hoohash, rb_alg_pepepow])
+rb_alg_hoohash.grid(row=1, column=0, sticky="w")
+rb_alg_pepepow.grid(row=2, column=0, sticky="w")
+
+ttk.Separator(options_frame).grid(row=3, column=0, sticky="ew", pady=(8, 8))
+
+ttk.Label(options_frame, text="Device:").grid(row=4, column=0, sticky="w")
 device_mode_var = tk.StringVar(value="both")
 device_mode_radiobuttons: list[tk.Radiobutton] = []
 rb_dev_both = tk.Radiobutton(options_frame, text="CPU + GPU (default)", variable=device_mode_var, value="both")
 rb_dev_cpu = tk.Radiobutton(options_frame, text="CPU only (--disable-gpu)", variable=device_mode_var, value="cpu")
 rb_dev_gpu = tk.Radiobutton(options_frame, text="GPU only (--disable-cpu)", variable=device_mode_var, value="gpu")
 device_mode_radiobuttons.extend([rb_dev_both, rb_dev_cpu, rb_dev_gpu])
-rb_dev_both.grid(row=1, column=0, sticky="w")
-rb_dev_cpu.grid(row=2, column=0, sticky="w")
-rb_dev_gpu.grid(row=3, column=0, sticky="w")
+rb_dev_both.grid(row=5, column=0, sticky="w")
+rb_dev_cpu.grid(row=6, column=0, sticky="w")
+rb_dev_gpu.grid(row=7, column=0, sticky="w")
 
-ttk.Separator(options_frame).grid(row=4, column=0, sticky="ew", pady=(8, 8))
+ttk.Separator(options_frame).grid(row=8, column=0, sticky="ew", pady=(8, 8))
 
-ttk.Label(options_frame, text="GPU options:").grid(row=5, column=0, sticky="w")
+ttk.Label(options_frame, text="GPU options:").grid(row=9, column=0, sticky="w")
 disable_cuda_var = tk.BooleanVar(value=False)
 disable_cuda_check = ttk.Checkbutton(options_frame, text="Disable CUDA (--disable-cuda)", variable=disable_cuda_var)
-disable_cuda_check.grid(row=6, column=0, sticky="w")
+disable_cuda_check.grid(row=10, column=0, sticky="w")
 
 disable_mode_radiobuttons: list[tk.Radiobutton] = []
 
@@ -302,5 +386,21 @@ def _on_enter(_: object) -> None:
 
 root.bind("<Return>", _on_enter)
 stratum_entry.focus_set()
+
+# Load saved settings
+_load_settings()
+
+
+def _on_algorithm_change(*args) -> None:
+    """Automatically disable CUDA for pepepow algorithm since it only supports OpenCL and CPU."""
+    if algorithm_var.get() == "pepepow":
+        disable_cuda_var.set(True)
+    else:
+        disable_cuda_var.set(False)
+
+
+# Add trace after variables are defined
+algorithm_var.trace_add("write", _on_algorithm_change)
+_on_algorithm_change()  # Set initial state
 
 root.mainloop()
