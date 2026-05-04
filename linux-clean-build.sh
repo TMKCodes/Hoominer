@@ -1,6 +1,6 @@
 #!/bin/bash
 
-make clean && make
+make clean && make STATIC=1 -j$(nproc)
 # cd ./algorithms/GPU/CUDA
 # ./compile.sh
 # cd ../../..
