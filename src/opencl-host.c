@@ -754,40 +754,48 @@ cl_int compile_opencl_kernel_from_xxd_header(StratumContext *ctx, OpenCLResource
   // Compile program
   // const char *build_options = "-cl-opt-disable"; // No optimizations.
   char build_options[512];
+  const char *build_options_ptr = NULL;
   if (ctx->config->build_options)
   {
     snprintf(build_options, sizeof(build_options), "%s", ctx->config->build_options);
+    build_options_ptr = build_options;
   }
   else if (ctx->config->opencl_optimization_level >= 0)
   {
     /*
      * NVIDIA OpenCL has historically had issues with higher optimization
      * levels for some kernels. Keep the default behavior for other vendors,
-     * but avoid -O2/+ on NVIDIA unless the user explicitly overrides build
+     * but avoid -O on NVIDIA unless the user explicitly overrides build
      * options.
      */
     char vendor[128] = {0};
     cl_int vendor_err = clGetDeviceInfo(resource->device, CL_DEVICE_VENDOR, sizeof(vendor), vendor, NULL);
     if (vendor_err == CL_SUCCESS && strstr(vendor, "NVIDIA") != NULL)
     {
-      /* NVIDIA: disable OpenCL compiler optimizations by default. */
-      snprintf(build_options, sizeof(build_options), "");
+      /* NVIDIA: do not pass any build options (NULL) by default. */
+      build_options_ptr = NULL;
     }
     else
     {
       snprintf(build_options, sizeof(build_options), "-O%d", ctx->config->opencl_optimization_level);
+      build_options_ptr = build_options;
     }
   }
   else
   {
     build_options[0] = '\0'; // Initialize empty string
+    build_options_ptr = NULL;
   }
-  err = clBuildProgram(resource->program, 1, &resource->device, build_options, NULL, NULL);
+
+  err = clBuildProgram(resource->program, 1, &resource->device, build_options_ptr, NULL, NULL);
   if (err != CL_SUCCESS)
   {
     char log[4096];
     clGetProgramBuildInfo(resource->program, resource->device, CL_PROGRAM_BUILD_LOG, sizeof(log), log, NULL);
-    fprintf(stderr, "Build failed for %s with options '%s': %s\n", resource->device_name, build_options, log);
+    fprintf(stderr, "Build failed for %s with options '%s': %s\n",
+            resource->device_name,
+            build_options_ptr ? build_options_ptr : "(null)",
+            log);
     clReleaseProgram(resource->program);
     return err;
   }
