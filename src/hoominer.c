@@ -522,8 +522,7 @@ int initialize_mining(StratumContext *ctx, const char *username, const char *alg
       }
     }
     /* CUDA is not supported for PEPEPOW. */
-    if (ctx->config->disable_cuda == false &&
-        strcmp(algorithm, "pepepow") != 0)
+    if (ctx->config->disable_cuda == false && strcmp(algorithm, "pepepow") != 0)
     {
       ctx->cuda_resources = initialize_all_cuda_gpus(&ctx->cuda_device_count, ctx->config->selected_gpus, ctx->config->selected_gpus_num);
       if (ctx->cuda_resources != NULL && ctx->config->list_gpus == false)

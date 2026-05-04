@@ -10,6 +10,7 @@ import urllib.request
 import zipfile
 from tkinter import messagebox, ttk
 
+
 HOOMINER_VERSION = "0.4.1"
 DOWNLOAD_URL = f"https://github.com/Hoosat-Oy/hoominer/releases/download/{HOOMINER_VERSION}/hoominer-{HOOMINER_VERSION}-windows.zip"
 
