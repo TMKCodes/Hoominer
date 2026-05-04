@@ -1,9 +1,13 @@
 #!/bin/bash
-
+git pull
 make clean && make STATIC=1 -j$(nproc)
 # cd ./algorithms/GPU/CUDA
 # ./compile.sh
 # cd ../../..
+cd ./algorithms/GPU/OpenCL/Hoohash/
+xxd -i Hoohash.cl > hoohash_cl.h
+mv hoohash_cl.h ../../../../src/hoohash_cl.h
+cd ../../../../
 cp ./build/hoominer ./releases/hoominer/hoominer
 chmod +x ./releases/hoominer/hoominer
 cd ./releases/
