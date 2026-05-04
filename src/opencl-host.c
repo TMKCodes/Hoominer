@@ -768,13 +768,15 @@ cl_int compile_opencl_kernel_from_xxd_header(StratumContext *ctx, OpenCLResource
      */
     char vendor[128] = {0};
     cl_int vendor_err = clGetDeviceInfo(resource->device, CL_DEVICE_VENDOR, sizeof(vendor), vendor, NULL);
-    int opt_level = ctx->config->opencl_optimization_level;
     if (vendor_err == CL_SUCCESS && strstr(vendor, "NVIDIA") != NULL)
     {
-      if (opt_level > 1)
-        opt_level = 1;
+      /* NVIDIA: disable OpenCL compiler optimizations by default. */
+      snprintf(build_options, sizeof(build_options), "");
     }
-    snprintf(build_options, sizeof(build_options), "-O%d", opt_level);
+    else
+    {
+      snprintf(build_options, sizeof(build_options), "-O%d", ctx->config->opencl_optimization_level);
+    }
   }
   else
   {
