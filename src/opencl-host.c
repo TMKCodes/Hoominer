@@ -825,6 +825,7 @@ cl_int compile_opencl_kernel_from_xxd_header(StratumContext *ctx, OpenCLResource
   // const char *build_options = "-cl-opt-disable"; // No optimizations.
   char build_options[512];
   const char *build_options_ptr = NULL;
+  const char *default_std_opt = NULL;
   if (ctx->config->build_options)
   {
     snprintf(build_options, sizeof(build_options), "%s", ctx->config->build_options);
@@ -853,6 +854,31 @@ cl_int compile_opencl_kernel_from_xxd_header(StratumContext *ctx, OpenCLResource
   {
     build_options[0] = '\0'; // Initialize empty string
     build_options_ptr = NULL;
+  }
+
+  if (!build_options_ptr || !strstr(build_options_ptr, "-cl-std="))
+  {
+    if (strstr(version, "OpenCL C 1.0") || strstr(version, "OpenCL C 1.1"))
+      default_std_opt = "-cl-std=CL1.1";
+    else
+      default_std_opt = "-cl-std=CL1.2";
+
+    if (build_options_ptr == NULL)
+    {
+      snprintf(build_options, sizeof(build_options), "%s", default_std_opt);
+      build_options_ptr = build_options;
+    }
+    else if (build_options[0] == '\0')
+    {
+      snprintf(build_options, sizeof(build_options), "%s", default_std_opt);
+      build_options_ptr = build_options;
+    }
+    else
+    {
+      size_t len = strlen(build_options);
+      snprintf(build_options + len, sizeof(build_options) - len, " %s", default_std_opt);
+      build_options_ptr = build_options;
+    }
   }
 
   err = clBuildProgram(resource->program, 1, &resource->device, build_options_ptr, NULL, NULL);

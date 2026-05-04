@@ -5,8 +5,8 @@ make clean && make STATIC=1 -j$(nproc)
 # ./compile.sh
 # cd ../../..
 cd ./algorithms/GPU/OpenCL/Hoohash/
-xxd -i Hoohash.cl > hoohash_cl.h
-mv hoohash_cl.h ../../../../src/hoohash_cl.h
+xxd -i Hoohash.cl > hoohash_cl_data.inc
+mv hoohash_cl_data.inc ../../../../src/hoohash_cl_data.inc
 cd ../../../../
 cp ./build/hoominer ./releases/hoominer/hoominer
 chmod +x ./releases/hoominer/hoominer

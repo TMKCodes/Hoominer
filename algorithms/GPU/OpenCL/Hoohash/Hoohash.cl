@@ -227,7 +227,8 @@ void store_cv_words(uchar bytes_out[32], uint cv_words[8]) {
   }
 }
 
-void output_chaining_value(const output_t *self, uchar cv[32]) {
+void output_chaining_value(__private const output_t *self,
+                           __private uchar cv[32]) {
   uint cv_words[8];
   for (int i = 0; i < 8; i++) {
     cv_words[i] = self->input_cv[i];
@@ -357,6 +358,8 @@ void hash_one_portable(const uchar *input, size_t blocks, const uint key[8],
   store_cv_words(out, cv);
 }
 
+#if defined(BLAKE3_ENABLE_TREEHASH)
+
 void blake3_hash_many_portable(const uchar *const *inputs, size_t num_inputs,
                                size_t blocks, const uint key[8], ulong counter,
                                bool increment_counter, uchar flags,
@@ -485,66 +488,15 @@ void compress_subtree_to_parent_node(const uchar *input, size_t input_len,
   }
 }
 
+#endif
+
 void blake3_hasher_update_base(blake3_hasher *self, __private void *input,
                                size_t input_len, bool use_tbb) {
+  (void)use_tbb;
   if (input_len == 0) {
     return;
   }
-  __private uchar *private_input_bytes = (__private uchar *)input;
-  if (chunk_state_len(&self->chunk) > 0) {
-    size_t take = BLAKE3_CHUNK_LEN - chunk_state_len(&self->chunk);
-    if (take > input_len) {
-      take = input_len;
-    }
-    chunk_state_update(&self->chunk, (const uchar *)private_input_bytes, take);
-    private_input_bytes += take;
-    input_len -= take;
-    if (input_len > 0) {
-      output_t output = chunk_state_output(&self->chunk);
-      uchar chunk_cv[32];
-      output_chaining_value(&output, chunk_cv);
-      hasher_push_cv(self, chunk_cv, self->chunk.chunk_counter);
-      chunk_state_reset(&self->chunk, self->key, self->chunk.chunk_counter + 1);
-    } else {
-      return;
-    }
-  }
-  while (input_len > BLAKE3_CHUNK_LEN) {
-    size_t subtree_len = round_down_to_power_of_2(input_len);
-    ulong count_so_far = self->chunk.chunk_counter * BLAKE3_CHUNK_LEN;
-    while ((((ulong)(subtree_len - 1)) & count_so_far) != 0) {
-      subtree_len /= 2;
-    }
-    size_t subtree_chunks = subtree_len >> BLAKE3_CHUNK_LEN_LOG2;
-    if (subtree_len <= BLAKE3_CHUNK_LEN) {
-      blake3_chunk_state chunk_state;
-      chunk_state_init(&chunk_state, self->key, self->chunk.flags);
-      chunk_state.chunk_counter = self->chunk.chunk_counter;
-      chunk_state_update(&chunk_state, (const uchar *)private_input_bytes,
-                         subtree_len);
-      output_t output = chunk_state_output(&chunk_state);
-      uchar cv[BLAKE3_OUT_LEN];
-      output_chaining_value(&output, cv);
-      hasher_push_cv(self, cv, chunk_state.chunk_counter);
-    } else {
-      uchar cv_pair[2 * BLAKE3_OUT_LEN];
-      compress_subtree_to_parent_node(
-          (const uchar *)private_input_bytes, subtree_len, self->key,
-          self->chunk.chunk_counter, self->chunk.flags, (uchar *)cv_pair,
-          use_tbb);
-      hasher_push_cv(self, (uchar *)cv_pair, self->chunk.chunk_counter);
-      hasher_push_cv(self, (uchar *)&cv_pair[BLAKE3_OUT_LEN],
-                     self->chunk.chunk_counter + (subtree_chunks / 2));
-    }
-    self->chunk.chunk_counter += subtree_chunks;
-    private_input_bytes += subtree_len;
-    input_len -= subtree_len;
-  }
-  if (input_len > 0) {
-    chunk_state_update(&self->chunk, (const uchar *)private_input_bytes,
-                       input_len);
-    hasher_merge_cv_stack(self, self->chunk.chunk_counter);
-  }
+  chunk_state_update(&self->chunk, (const uchar *)input, input_len);
 }
 
 void hasher_init_base(blake3_hasher *self, uint key[8], uchar flags) {
@@ -601,7 +553,8 @@ void blake3_xof_many(uint cv[8], uchar block[BLAKE3_BLOCK_LEN], uchar block_len,
   }
 }
 
-void output_root_bytes(output_t *self, ulong seek, uchar *out, size_t out_len) {
+void output_root_bytes(__private output_t *self, ulong seek,
+                       __private uchar *out, size_t out_len) {
   if (out_len == 0) {
     return;
   }
@@ -682,7 +635,7 @@ void ConvertBytesToUint32Array(uint *H, uchar *bytes) {
 
 double MediumComplexNonLinear(double x) {
   double sin_x, cos_x;
-  sin_x = sincos(x, &cos_x); 
+  sin_x = sincos(x, &cos_x);
   return exp(sin_x + cos_x);
 }
 
@@ -696,8 +649,10 @@ double IntermediateComplexNonLinear(double x) {
 double HighComplexNonLinear(double x) { return 1.0 / sqrt(fabs(x) + 1); }
 
 double ComplexNonLinear(double x) {
-  double transformFactorOne = (x * COMPLEX_TRANSFORM_MULTIPLIER) / 8.0 - floor((x * COMPLEX_TRANSFORM_MULTIPLIER) / 8.0);
-  double transformFactorTwo = (x * COMPLEX_TRANSFORM_MULTIPLIER) / 4.0 - floor((x * COMPLEX_TRANSFORM_MULTIPLIER) / 4.0);
+  double transformFactorOne = (x * COMPLEX_TRANSFORM_MULTIPLIER) / 8.0 -
+                              floor((x * COMPLEX_TRANSFORM_MULTIPLIER) / 8.0);
+  double transformFactorTwo = (x * COMPLEX_TRANSFORM_MULTIPLIER) / 4.0 -
+                              floor((x * COMPLEX_TRANSFORM_MULTIPLIER) / 4.0);
   if (transformFactorOne < 0.33) {
     if (transformFactorTwo < 0.25) {
       return MediumComplexNonLinear(x + (1 + transformFactorTwo));
@@ -863,10 +818,9 @@ typedef struct {
 } Result;
 
 __kernel void Pepepow_hash(const ulong local_size, const ulong start_nonce,
-                            __global const uchar *header_template,
-                            __global const double *matrix,
-                            __global const uchar *target,
-                            volatile __global Result *result) {
+                           __global const uchar *header_template,
+                           __global double *matrix, __global uchar *target,
+                           volatile __global Result *result) {
 #if defined(PAL)
   int workId = get_group_id(0) * local_size + get_local_id(0);
 #else
@@ -882,8 +836,8 @@ __kernel void Pepepow_hash(const ulong local_size, const ulong start_nonce,
     header[i] = header_template[i];
   header[76] = (uchar)((nonce32 >> 24) & 0xFF);
   header[77] = (uchar)((nonce32 >> 16) & 0xFF);
-  header[78] = (uchar)((nonce32 >>  8) & 0xFF);
-  header[79] = (uchar)( nonce32        & 0xFF);
+  header[78] = (uchar)((nonce32 >> 8) & 0xFF);
+  header[79] = (uchar)(nonce32 & 0xFF);
 
   /* BLAKE3(full 80-byte header with nonce injected) → first_pass */
   blake3_hasher hasher;
@@ -894,10 +848,8 @@ __kernel void Pepepow_hash(const ulong local_size, const ulong start_nonce,
 
   /* nonce_val = LE32(header+76) = byte-swap of nonce32, matching the CPU's
    * le32dec of the BE-stored nonce value. */
-  ulong nonce_val = ((ulong)header[76])
-                  | ((ulong)header[77] << 8)
-                  | ((ulong)header[78] << 16)
-                  | ((ulong)header[79] << 24);
+  ulong nonce_val = ((ulong)header[76]) | ((ulong)header[77] << 8) |
+                    ((ulong)header[78] << 16) | ((ulong)header[79] << 24);
 
   /* Matrix multiply */
   uchar final_hash[DOMAIN_HASH_SIZE];
@@ -905,7 +857,8 @@ __kernel void Pepepow_hash(const ulong local_size, const ulong start_nonce,
 
   /* Compare final_hash directly (no reversal), matching the CPU miner which
    * effectively compares final_hash[0] vs target[0] via its double-reversal:
-   * hoohashv110_compute reverses, then CPU compare_target reads from the end. */
+   * hoohashv110_compute reverses, then CPU compare_target reads from the end.
+   */
   if (compare_target(final_hash, target) <= 0) {
     if (atom_cmpxchg(&result->nonce, 0, (ulong)nonce32) == 0) {
       /* Store the byte-reversed hash so the host-side CPU compare_target
