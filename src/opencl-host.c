@@ -694,6 +694,23 @@ cleanup_candidates:
 cl_int compile_opencl_kernel_from_xxd_header(StratumContext *ctx, OpenCLResources *resource, const unsigned char *kernel, unsigned int kernel_length, const char *kernel_name, const char **required_extensions, size_t num_required_extensions)
 {
   cl_int err;
+  char vendor[128] = {0};
+  char platform_name[128] = {0};
+  char platform_version[256] = {0};
+
+  if (resource && resource->platform)
+  {
+    (void)clGetPlatformInfo(resource->platform, CL_PLATFORM_NAME, sizeof(platform_name), platform_name, NULL);
+    (void)clGetPlatformInfo(resource->platform, CL_PLATFORM_VERSION, sizeof(platform_version), platform_version, NULL);
+  }
+
+  if (resource && resource->device)
+  {
+    (void)clGetDeviceInfo(resource->device, CL_DEVICE_VENDOR, sizeof(vendor), vendor, NULL);
+  }
+
+  const bool is_nvidia = (vendor[0] != '\0' && strstr(vendor, "NVIDIA") != NULL);
+
   char *source = malloc(kernel_length + 1);
   if (!source)
   {
@@ -704,6 +721,59 @@ cl_int compile_opencl_kernel_from_xxd_header(StratumContext *ctx, OpenCLResource
   source[kernel_length] = '\0';
   const char *src_ptr = source;
   size_t source_len = (size_t)kernel_length;
+
+  /*
+   * NVIDIA OpenCL compiler compatibility workaround (PEPEPOW only):
+   * Some NVIDIA OpenCL stacks reject/ignore rounding-mode and FP-contract pragmas.
+   * When the user has not explicitly provided build options, strip those pragmas
+   * from the kernel source to improve compilation success.
+   */
+  if (is_nvidia && ctx->config->algorithm && strcmp(ctx->config->algorithm, "pepepow") == 0 &&
+      ctx->config->build_options == NULL)
+  {
+    const char *needles[] = {
+        "#pragma OPENCL SELECT_ROUNDING_MODE",
+        "#pragma OPENCL FP_CONTRACT",
+    };
+
+    char *filtered = malloc(source_len + 1);
+    if (filtered)
+    {
+      size_t out = 0;
+      const char *s = source;
+      const char *end = source + source_len;
+      while (s < end)
+      {
+        const char *line_end = memchr(s, '\n', (size_t)(end - s));
+        size_t line_len = line_end ? (size_t)(line_end - s + 1) : (size_t)(end - s);
+
+        int skip = 0;
+        for (size_t k = 0; k < sizeof(needles) / sizeof(needles[0]); k++)
+        {
+          size_t nlen = strlen(needles[k]);
+          if (line_len >= nlen && strncmp(s, needles[k], nlen) == 0)
+          {
+            skip = 1;
+            break;
+          }
+        }
+
+        if (!skip)
+        {
+          memcpy(filtered + out, s, line_len);
+          out += line_len;
+        }
+
+        s += line_len;
+      }
+      filtered[out] = '\0';
+
+      free(source);
+      source = filtered;
+      src_ptr = source;
+      source_len = out;
+    }
+  }
 
   // printf("Kernel source size: %u bytes\n", kernel_length);
   printf("Attempting to create kernel: %s\n", kernel_name);
@@ -768,9 +838,7 @@ cl_int compile_opencl_kernel_from_xxd_header(StratumContext *ctx, OpenCLResource
      * but avoid -O on NVIDIA unless the user explicitly overrides build
      * options.
      */
-    char vendor[128] = {0};
-    cl_int vendor_err = clGetDeviceInfo(resource->device, CL_DEVICE_VENDOR, sizeof(vendor), vendor, NULL);
-    if (vendor_err == CL_SUCCESS && strstr(vendor, "NVIDIA") != NULL)
+    if (is_nvidia)
     {
       /* NVIDIA: do not pass any build options (NULL) by default. */
       build_options_ptr = NULL;
@@ -790,12 +858,57 @@ cl_int compile_opencl_kernel_from_xxd_header(StratumContext *ctx, OpenCLResource
   err = clBuildProgram(resource->program, 1, &resource->device, build_options_ptr, NULL, NULL);
   if (err != CL_SUCCESS)
   {
-    char log[4096];
-    clGetProgramBuildInfo(resource->program, resource->device, CL_PROGRAM_BUILD_LOG, sizeof(log), log, NULL);
-    fprintf(stderr, "Build failed for %s with options '%s': %s\n",
+    cl_build_status build_status = 0;
+    size_t log_size = 0;
+    size_t opts_size = 0;
+    (void)clGetProgramBuildInfo(resource->program, resource->device, CL_PROGRAM_BUILD_STATUS,
+                                sizeof(build_status), &build_status, NULL);
+    (void)clGetProgramBuildInfo(resource->program, resource->device, CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
+    (void)clGetProgramBuildInfo(resource->program, resource->device, CL_PROGRAM_BUILD_OPTIONS, 0, NULL, &opts_size);
+
+    char *log = NULL;
+    char *opts = NULL;
+    if (log_size > 0)
+    {
+      log = malloc(log_size + 1);
+      if (log)
+      {
+        memset(log, 0, log_size + 1);
+        (void)clGetProgramBuildInfo(resource->program, resource->device, CL_PROGRAM_BUILD_LOG, log_size, log, NULL);
+        log[log_size] = '\0';
+      }
+    }
+    if (opts_size > 0)
+    {
+      opts = malloc(opts_size + 1);
+      if (opts)
+      {
+        memset(opts, 0, opts_size + 1);
+        (void)clGetProgramBuildInfo(resource->program, resource->device, CL_PROGRAM_BUILD_OPTIONS, opts_size, opts, NULL);
+        opts[opts_size] = '\0';
+      }
+    }
+
+    fprintf(stderr,
+            "Build failed for %s (vendor=%s, platform=%s, version=%s) with options '%s' (driver options: '%s') status=%d err=%d\n",
             resource->device_name,
+            vendor[0] ? vendor : "(unknown)",
+            platform_name[0] ? platform_name : "(unknown)",
+            platform_version[0] ? platform_version : "(unknown)",
             build_options_ptr ? build_options_ptr : "(null)",
-            log);
+            opts ? opts : "(unknown)",
+            (int)build_status,
+            (int)err);
+    if (log && log[0])
+    {
+      fprintf(stderr, "OpenCL build log (%zu bytes):\n%s\n", log_size, log);
+    }
+    else
+    {
+      fprintf(stderr, "OpenCL build log is empty (reported size=%zu).\n", log_size);
+    }
+    free(log);
+    free(opts);
     clReleaseProgram(resource->program);
     return err;
   }
