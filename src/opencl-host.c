@@ -760,7 +760,21 @@ cl_int compile_opencl_kernel_from_xxd_header(StratumContext *ctx, OpenCLResource
   }
   else if (ctx->config->opencl_optimization_level >= 0)
   {
-    snprintf(build_options, sizeof(build_options), "-O%d", ctx->config->opencl_optimization_level);
+    /*
+     * NVIDIA OpenCL has historically had issues with higher optimization
+     * levels for some kernels. Keep the default behavior for other vendors,
+     * but avoid -O2/+ on NVIDIA unless the user explicitly overrides build
+     * options.
+     */
+    char vendor[128] = {0};
+    cl_int vendor_err = clGetDeviceInfo(resource->device, CL_DEVICE_VENDOR, sizeof(vendor), vendor, NULL);
+    int opt_level = ctx->config->opencl_optimization_level;
+    if (vendor_err == CL_SUCCESS && strstr(vendor, "NVIDIA") != NULL)
+    {
+      if (opt_level > 1)
+        opt_level = 1;
+    }
+    snprintf(build_options, sizeof(build_options), "-O%d", opt_level);
   }
   else
   {
